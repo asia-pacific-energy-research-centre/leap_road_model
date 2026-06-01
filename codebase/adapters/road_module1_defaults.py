@@ -861,8 +861,10 @@ def load_module1_for_economy(
         "phev_utilisation_rate": get_phev_utilisation_rate(defaults_df, economy),
         "scalar_bounds": get_scalar_bounds(defaults_df, economy),
         "passenger_saturation_level": get_passenger_saturation_level(defaults_df, economy),
+        "passenger_saturation_reached": get_passenger_saturation_reached(defaults_df, economy),
         "reconciliation_weights": get_reconciliation_weights(defaults_df, economy),
         "vehicle_equivalent_weights": get_vehicle_equivalent_weights(defaults_df, economy),
+        "vehicle_equivalent_weight_bounds": get_vehicle_equivalent_weight_bounds(defaults_df, economy),
     }
 
 

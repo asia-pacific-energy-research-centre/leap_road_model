@@ -18,6 +18,7 @@ from modules.module3_stock_targets import (
     estimate_freight_elasticity,
     project_passenger_stocks,
     project_freight_stocks,
+    calibrate_passenger_vehicle_equivalent_weights,
     _read_base_stocks,
 )
 
@@ -247,6 +248,73 @@ class TestProjectPassengerStocks:
 
         for vt, series in result["target_stocks"].items():
             assert (series >= 0).all(), f"Negative stock for {vt}"
+
+    def test_saturation_flag_calibrates_base_year_to_saturation(self, passenger_energy_series):
+        years = list(range(2022, 2061))
+        population = pd.Series(1000.0, index=years)
+        base_stocks = {"LPVs": 100_000, "Motorcycles": 100_000, "Buses": 10_000}
+        weights = {"LPVs": 1.0, "Motorcycles": 0.25, "Buses": 12.0}
+        target_sat = 300.0
+
+        result = project_passenger_stocks(
+            years=years,
+            population=population,
+            energy_series=passenger_energy_series,
+            base_stocks=base_stocks,
+            weights=weights,
+            saturation_overrides={"researcher": target_sat},
+            passenger_saturation_reached=True,
+            vehicle_equivalent_weight_bounds={
+                "Motorcycles": (0.05, 0.80),
+                "Buses": (8.0, 30.0),
+            },
+        )
+
+        assert result["M_envelope"][2022] == pytest.approx(target_sat)
+        assert result["adjusted_weights"]["LPVs"] == pytest.approx(1.0)
+        assert result["weight_calibration_applied"] is True
+
+
+class TestPassengerWeightCalibration:
+    def test_disabled_returns_original_weights(self):
+        weights = {"LPVs": 1.1, "Motorcycles": 0.25, "Buses": 12.0}
+        result = calibrate_passenger_vehicle_equivalent_weights(
+            base_stocks={"LPVs": 100.0, "Motorcycles": 50.0, "Buses": 5.0},
+            weights=weights,
+            population_base=1000.0,
+            saturation_level=0.5,
+            passenger_saturation_reached=False,
+        )
+
+        assert result["adjusted_weights"] == weights
+        assert result["applied"] is False
+
+    def test_exact_feasible_solution_hits_saturation_and_keeps_lpv_fixed(self):
+        result = calibrate_passenger_vehicle_equivalent_weights(
+            base_stocks={"LPVs": 100.0, "Motorcycles": 100.0, "Buses": 10.0},
+            weights={"LPVs": 1.0, "Motorcycles": 0.25, "Buses": 12.0},
+            population_base=1000.0,
+            saturation_level=0.30,
+            passenger_saturation_reached=True,
+            bounds={"Motorcycles": (0.05, 0.80), "Buses": (8.0, 30.0)},
+        )
+
+        adjusted = result["adjusted_weights"]
+        weighted_stock = 100.0 + 100.0 * adjusted["Motorcycles"] + 10.0 * adjusted["Buses"]
+        assert adjusted["LPVs"] == pytest.approx(1.0)
+        assert weighted_stock == pytest.approx(300.0)
+        assert result["gap"] == pytest.approx(0.0)
+
+    def test_infeasible_bounds_raise(self):
+        with pytest.raises(ValueError, match="infeasible"):
+            calibrate_passenger_vehicle_equivalent_weights(
+                base_stocks={"LPVs": 100.0, "Motorcycles": 10.0, "Buses": 1.0},
+                weights={"LPVs": 1.0, "Motorcycles": 0.25, "Buses": 12.0},
+                population_base=1000.0,
+                saturation_level=1.0,
+                passenger_saturation_reached=True,
+                bounds={"Motorcycles": (0.05, 0.80), "Buses": (8.0, 30.0)},
+            )
 
 
 class TestReadBaseStocks:

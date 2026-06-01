@@ -268,6 +268,47 @@ passenger/freight energy split is documented
 researcher overrides are reported
 ```
 
+#### Saturated-economy X-LPV weight calibration
+
+Module 1 may explicitly mark an economy as already passenger-saturated using:
+
+```text
+Passenger Saturation Reached
+```
+
+When this flag is true, Module 3 keeps the LPV X-LPV weight fixed at `1.0` and
+calibrates only the motorcycle/2W and bus X-LPV weights so the base-year
+passenger motorisation level equals the Module 1 passenger saturation level.
+The calibration equation is:
+
+```text
+LPV_stock * 1.0
+  + motorcycle_stock * adjusted_motorcycle_weight
+  + bus_stock * adjusted_bus_weight
+  = passenger_saturation_level * base_year_population
+```
+
+Among feasible solutions, Module 3 chooses the smallest normalized squared
+change from the original motorcycle and bus weights. Default bounds are:
+
+```text
+Motorcycles / 2W: 0.05 to 0.80 X-LPV
+Buses:            8.00 to 30.00 X-LPV
+```
+
+Module 1 can override these bounds with vehicle-type rows for:
+
+```text
+Vehicle Equivalent Weight Lower Bound
+Vehicle Equivalent Weight Upper Bound
+```
+
+If the saturation target cannot be reached within bounds, the workflow stops
+with an error showing the target, current level, bounds, and closest feasible
+level. Module 3 diagnostics report original and adjusted weights, whether
+calibration was applied, the target weighted passenger stock, and any residual
+gap.
+
 ---
 
 ### 3.2 Passenger vehicle type split

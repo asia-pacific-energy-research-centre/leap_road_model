@@ -14,7 +14,12 @@ from adapters.leap_expressions import (
     parse_expression_column,
 )
 from adapters.combined_exports import parse_branch_path
-from adapters.road_module1_defaults import _load_single_economy, get_passenger_saturation_level
+from adapters.road_module1_defaults import (
+    _load_single_economy,
+    get_passenger_saturation_level,
+    get_passenger_saturation_reached,
+    get_vehicle_equivalent_weight_bounds,
+)
 
 
 # ===========================================================================
@@ -134,3 +139,53 @@ class TestModule1DefaultsSaturationUnits:
         loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="test")
         sat = get_passenger_saturation_level(loaded, economy="20_USA")
         assert sat == pytest.approx(0.95)
+
+    def test_saturation_reached_flag_parsed(self, tmp_path: Path):
+        df = pd.DataFrame([{
+            "Branch Path": "Demand\\Passenger road",
+            "Variable": "Passenger Saturation Reached",
+            "Units": "Boolean",
+            "Per...": "",
+            "2022": "TRUE",
+            "source_name": "test",
+            "researcher_review_recommended": False,
+            "review_reason": "",
+        }])
+        csv_path = tmp_path / "defaults.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="test")
+
+        assert get_passenger_saturation_reached(loaded, economy="20_USA") is True
+
+    def test_vehicle_equivalent_weight_bounds_parsed(self, tmp_path: Path):
+        df = pd.DataFrame([
+            {
+                "Branch Path": "Demand\\Passenger road\\Motorcycles",
+                "Variable": "Vehicle Equivalent Weight Lower Bound",
+                "Units": "Vehicle equivalent",
+                "Per...": "",
+                "2022": 0.10,
+                "source_name": "test",
+                "researcher_review_recommended": False,
+                "review_reason": "",
+            },
+            {
+                "Branch Path": "Demand\\Passenger road\\Motorcycles",
+                "Variable": "Vehicle Equivalent Weight Upper Bound",
+                "Units": "Vehicle equivalent",
+                "Per...": "",
+                "2022": 0.70,
+                "source_name": "test",
+                "researcher_review_recommended": False,
+                "review_reason": "",
+            },
+        ])
+        csv_path = tmp_path / "defaults.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="test")
+        bounds = get_vehicle_equivalent_weight_bounds(loaded, economy="20_USA")
+
+        assert bounds["Motorcycles"] == pytest.approx((0.10, 0.70))
+        assert bounds["Buses"] == pytest.approx((8.0, 30.0))

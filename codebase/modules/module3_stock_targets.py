@@ -59,8 +59,10 @@ def run_module3(
     projection_years: Collection[int],
     vehicle_type_shares: dict[str, pd.Series] | None = None,
     saturation_overrides: dict[str, float] | None = None,
+    passenger_saturation_reached: bool = False,
     elasticity_overrides: dict[str, float] | None = None,
     vehicle_equivalent_weights: dict[str, float] | None = None,
+    vehicle_equivalent_weight_bounds: dict[str, tuple[float, float]] | None = None,
     config: dict | None = None,
     diagnostics_dir: str | None = None,
     economy: str = "",
@@ -119,6 +121,8 @@ def run_module3(
         weights=weights,
         vehicle_type_shares=vehicle_type_shares,
         saturation_overrides=saturation_overrides or {},
+        passenger_saturation_reached=passenger_saturation_reached,
+        vehicle_equivalent_weight_bounds=vehicle_equivalent_weight_bounds,
         cfg=cfg,
     )
 
@@ -155,6 +159,11 @@ def run_module3(
                     row["k_clamped"] = stocks_dict["k_clamped"]
                     row["is_saturated"] = stocks_dict["is_saturated"]
                     row["saturation_source_flag"] = stocks_dict["saturation_source_flag"]
+                    row["original_vehicle_equivalent_weight"] = stocks_dict["original_weights"].get(vt)
+                    row["adjusted_vehicle_equivalent_weight"] = stocks_dict["adjusted_weights"].get(vt)
+                    row["weight_calibration_applied"] = stocks_dict["weight_calibration_applied"]
+                    row["weight_calibration_target"] = stocks_dict["weight_calibration_target"]
+                    row["weight_calibration_gap"] = stocks_dict["weight_calibration_gap"]
                 else:
                     row["gdp_elasticity_used"] = stocks_dict["elasticities"].get(vt)
                 rows.append(row)
@@ -186,6 +195,8 @@ def project_passenger_stocks(
     weights: dict[str, float],
     vehicle_type_shares: dict[str, pd.Series] | None = None,
     saturation_overrides: dict[str, float] | None = None,
+    passenger_saturation_reached: bool = False,
+    vehicle_equivalent_weight_bounds: dict[str, tuple[float, float]] | None = None,
     cfg: dict | None = None,
 ) -> dict:
     """
@@ -209,17 +220,29 @@ def project_passenger_stocks(
     cfg = cfg or _DEFAULTS
     base_year = years[0]
 
-    M_base, capacity_shares = compute_motorisation_base(
-        base_stocks, weights, population[base_year]
-    )
-    log.info("Base-year motorisation M_base=%.4f car-equiv/capita", M_base)
+    original_weights = dict(weights)
 
     M_sat, sat_source = resolve_saturation(
-        M_base,
+        compute_motorisation_base(base_stocks, weights, population[base_year])[0],
         saturation_overrides=saturation_overrides or {},
         fallback_multiplier=cfg["saturation_fallback_multiplier"],
     )
     log.info("Saturation level M_sat=%.4f (source: %s)", M_sat, sat_source)
+
+    calibration = calibrate_passenger_vehicle_equivalent_weights(
+        base_stocks=base_stocks,
+        weights=weights,
+        population_base=float(population[base_year]),
+        saturation_level=M_sat,
+        passenger_saturation_reached=passenger_saturation_reached,
+        bounds=vehicle_equivalent_weight_bounds,
+    )
+    weights = calibration["adjusted_weights"]
+
+    M_base, capacity_shares = compute_motorisation_base(
+        base_stocks, weights, population[base_year]
+    )
+    log.info("Base-year motorisation M_base=%.4f car-equiv/capita", M_base)
 
     is_saturated = M_base >= cfg["saturation_already_reached_threshold"] * M_sat
 
@@ -277,6 +300,11 @@ def project_passenger_stocks(
         "saturation_source_flag": sat_source,
         "target_stocks": target_stocks,
         "vehicle_type_shares": vehicle_type_shares,
+        "original_weights": original_weights,
+        "adjusted_weights": weights,
+        "weight_calibration_applied": calibration["applied"],
+        "weight_calibration_target": calibration["target_weighted_stock"],
+        "weight_calibration_gap": calibration["gap"],
     }
 
 
@@ -310,6 +338,129 @@ def compute_motorisation_base(
         for vt, count in base_stocks.items()
     }
     return M_base, capacity_shares
+
+
+def calibrate_passenger_vehicle_equivalent_weights(
+    base_stocks: dict[str, float],
+    weights: dict[str, float],
+    population_base: float,
+    saturation_level: float,
+    passenger_saturation_reached: bool,
+    bounds: dict[str, tuple[float, float]] | None = None,
+) -> dict:
+    """
+    Calibrate motorcycle and bus X-LPV weights to hit passenger saturation.
+
+    LPVs remain fixed at 1.0.  If calibration is disabled, adjusted weights are
+    identical to original weights and the reported gap is the pre-calibration gap.
+    """
+    default_bounds = {
+        "Motorcycles": (0.05, 0.80),
+        "Buses": (8.0, 30.0),
+    }
+    bounds = {**default_bounds, **(bounds or {})}
+    adjusted_weights = dict(weights)
+
+    target_weighted_stock = float(saturation_level) * float(population_base)
+    current_weighted_stock = sum(
+        float(base_stocks.get(vt, 0.0)) * float(adjusted_weights.get(vt, 1.0))
+        for vt in base_stocks
+    )
+
+    if not passenger_saturation_reached:
+        return {
+            "adjusted_weights": adjusted_weights,
+            "applied": False,
+            "target_weighted_stock": target_weighted_stock,
+            "gap": current_weighted_stock - target_weighted_stock,
+        }
+
+    adjusted_weights["LPVs"] = 1.0
+    lpv_stock = float(base_stocks.get("LPVs", 0.0))
+    motorcycle_stock = float(base_stocks.get("Motorcycles", 0.0))
+    bus_stock = float(base_stocks.get("Buses", 0.0))
+    fixed_weighted_stock = lpv_stock * 1.0
+    required_flexible_stock = target_weighted_stock - fixed_weighted_stock
+
+    motorcycle_bounds = bounds["Motorcycles"]
+    bus_bounds = bounds["Buses"]
+    motorcycle_lo, motorcycle_hi = map(float, motorcycle_bounds)
+    bus_lo, bus_hi = map(float, bus_bounds)
+
+    min_flexible_stock = motorcycle_stock * motorcycle_lo + bus_stock * bus_lo
+    max_flexible_stock = motorcycle_stock * motorcycle_hi + bus_stock * bus_hi
+    if required_flexible_stock < min_flexible_stock or required_flexible_stock > max_flexible_stock:
+        closest = fixed_weighted_stock + (
+            min_flexible_stock
+            if required_flexible_stock < min_flexible_stock
+            else max_flexible_stock
+        )
+        raise ValueError(
+            "Passenger saturation weight calibration is infeasible: "
+            f"target_weighted_stock={target_weighted_stock:.6f}, "
+            f"current_weighted_stock={current_weighted_stock:.6f}, "
+            f"motorcycle_bounds={motorcycle_bounds}, bus_bounds={bus_bounds}, "
+            f"closest_possible_weighted_stock={closest:.6f}"
+        )
+
+    if motorcycle_stock <= 0 and bus_stock <= 0:
+        raise ValueError(
+            "Passenger saturation weight calibration is infeasible: no motorcycle or bus stock "
+            f"available to adjust, target_weighted_stock={target_weighted_stock:.6f}"
+        )
+
+    original_motorcycle = float(weights.get("Motorcycles", adjusted_weights.get("Motorcycles", 1.0)))
+    original_bus = float(weights.get("Buses", adjusted_weights.get("Buses", 1.0)))
+    motorcycle_width = motorcycle_hi - motorcycle_lo
+    bus_width = bus_hi - bus_lo
+    if motorcycle_width <= 0 or bus_width <= 0:
+        raise ValueError(
+            "Passenger saturation weight calibration requires positive-width bounds: "
+            f"motorcycle_bounds={motorcycle_bounds}, bus_bounds={bus_bounds}"
+        )
+
+    if bus_stock == 0:
+        motorcycle_weight = required_flexible_stock / motorcycle_stock
+        bus_weight = original_bus
+    elif motorcycle_stock == 0:
+        motorcycle_weight = original_motorcycle
+        bus_weight = required_flexible_stock / bus_stock
+    else:
+        # Minimize normalized squared distance from the original weights along
+        # the exact target line: motorcycle_stock*x + bus_stock*y = required.
+        feasible_lo = max(
+            motorcycle_lo,
+            (required_flexible_stock - bus_stock * bus_hi) / motorcycle_stock,
+        )
+        feasible_hi = min(
+            motorcycle_hi,
+            (required_flexible_stock - bus_stock * bus_lo) / motorcycle_stock,
+        )
+        a = motorcycle_stock
+        b = bus_stock
+        c = required_flexible_stock
+        wm = motorcycle_width
+        wb = bus_width
+        numerator = (
+            original_motorcycle / (wm * wm)
+            - (a / b) * ((c / b - original_bus) / (wb * wb))
+        )
+        denominator = (1.0 / (wm * wm)) + ((a * a) / (b * b * wb * wb))
+        motorcycle_weight = float(np.clip(numerator / denominator, feasible_lo, feasible_hi))
+        bus_weight = (required_flexible_stock - motorcycle_stock * motorcycle_weight) / bus_stock
+
+    adjusted_weights["Motorcycles"] = float(motorcycle_weight)
+    adjusted_weights["Buses"] = float(bus_weight)
+    calibrated_weighted_stock = sum(
+        float(base_stocks.get(vt, 0.0)) * float(adjusted_weights.get(vt, 1.0))
+        for vt in base_stocks
+    )
+    return {
+        "adjusted_weights": adjusted_weights,
+        "applied": True,
+        "target_weighted_stock": target_weighted_stock,
+        "gap": calibrated_weighted_stock - target_weighted_stock,
+    }
 
 
 def estimate_recent_energy_growth(

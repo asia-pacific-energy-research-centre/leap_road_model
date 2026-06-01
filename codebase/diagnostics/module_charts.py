@@ -181,6 +181,45 @@ def write_module3_charts(t5: pd.DataFrame, diagnostics_dir: str | Path) -> list[
             ax.grid(alpha=0.3)
             saved.append(_save(fig, out / "module3_motorisation_envelope.png"))
 
+    weight_cols = {
+        "vehicle_type",
+        "original_vehicle_equivalent_weight",
+        "adjusted_vehicle_equivalent_weight",
+    }
+    if weight_cols.issubset(t5.columns):
+        weights_df = (
+            t5[t5["transport_type"] == "passenger"]
+            [["vehicle_type", "original_vehicle_equivalent_weight", "adjusted_vehicle_equivalent_weight"]]
+            .dropna(subset=["vehicle_type"])
+            .drop_duplicates("vehicle_type")
+            .sort_values("vehicle_type")
+        )
+        if not weights_df.empty:
+            fig, ax = plt.subplots(figsize=(7, 4))
+            x = np.arange(len(weights_df))
+            width = 0.35
+            ax.bar(
+                x - width / 2,
+                weights_df["original_vehicle_equivalent_weight"],
+                width,
+                label="Original",
+                color="#5E6AD2",
+            )
+            ax.bar(
+                x + width / 2,
+                weights_df["adjusted_vehicle_equivalent_weight"],
+                width,
+                label="Adjusted",
+                color="#EF6C00",
+            )
+            ax.set_xticks(x)
+            ax.set_xticklabels(weights_df["vehicle_type"])
+            ax.set_title("Module 3: Passenger X-LPV weight calibration")
+            ax.set_ylabel("X-LPV-equivalent weight")
+            ax.legend(fontsize=8)
+            ax.grid(axis="y", alpha=0.3)
+            saved.append(_save(fig, out / "module3_xlpv_weight_calibration.png"))
+
     if {"vehicle_type", "gdp_elasticity_used"}.issubset(t5.columns):
         el = t5[["vehicle_type", "gdp_elasticity_used"]].dropna().drop_duplicates()
         if not el.empty:

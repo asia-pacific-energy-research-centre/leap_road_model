@@ -119,6 +119,97 @@ def test_run_module7_calculates_stock_activity_and_energy():
     assert pytest.approx(row["mirror_energy_pj"], rel=1e-9) == 0.1
 
 
+def test_run_module7_splits_vehicle_level_turnover_by_sales_share():
+    sales_turnover = pd.DataFrame([
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "year": 2022,
+            "transport_type": "passenger",
+            "vehicle_type": "LPVs",
+            "stock": 1000.0,
+            "new_sales": 0.0,
+            "total_retirements": 0.0,
+        },
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "year": 2023,
+            "transport_type": "passenger",
+            "vehicle_type": "LPVs",
+            "stock": 1100.0,
+            "new_sales": 200.0,
+            "total_retirements": 100.0,
+        },
+    ])
+    scalars = pd.DataFrame([
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "transport_type": "passenger",
+            "vehicle_type": "LPVs",
+            "drive_type": "ICE",
+            "fuel": "Motor gasoline",
+            "adjusted_stock": 900.0,
+            "adjusted_mileage_km_per_year": 10_000.0,
+            "adjusted_efficiency_km_per_gj": 100.0,
+            "leap_branch_path": "Demand\\Passenger road\\LPVs\\ICE\\Motor gasoline",
+        },
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "transport_type": "passenger",
+            "vehicle_type": "LPVs",
+            "drive_type": "BEV",
+            "fuel": "Electricity",
+            "adjusted_stock": 100.0,
+            "adjusted_mileage_km_per_year": 10_000.0,
+            "adjusted_efficiency_km_per_gj": 400.0,
+            "leap_branch_path": "Demand\\Passenger road\\LPVs\\BEV\\Electricity",
+        },
+    ])
+    device_shares = pd.DataFrame([
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "transport_type": "passenger",
+            "vehicle_type": "LPVs",
+            "drive_type": "ICE",
+            "fuel": "Motor gasoline",
+            "device_share": 1.0,
+        },
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "transport_type": "passenger",
+            "vehicle_type": "LPVs",
+            "drive_type": "BEV",
+            "fuel": "Electricity",
+            "device_share": 1.0,
+        },
+    ])
+    sales_shares = pd.DataFrame([
+        {"economy": "12_NZ", "scenario": "Reference", "year": 2022, "vehicle_type": "LPVs", "drive_type": "ICE", "sales_share": 0.9},
+        {"economy": "12_NZ", "scenario": "Reference", "year": 2022, "vehicle_type": "LPVs", "drive_type": "BEV", "sales_share": 0.1},
+        {"economy": "12_NZ", "scenario": "Reference", "year": 2023, "vehicle_type": "LPVs", "drive_type": "ICE", "sales_share": 0.25},
+        {"economy": "12_NZ", "scenario": "Reference", "year": 2023, "vehicle_type": "LPVs", "drive_type": "BEV", "sales_share": 0.75},
+    ])
+
+    outputs = run_module7_mirror(
+        sales_turnover=sales_turnover,
+        reconciliation_scalars=scalars,
+        device_shares=device_shares,
+        sales_shares=sales_shares,
+        projection_years=[2022, 2023],
+    )
+
+    stocks = outputs["T13"].set_index(["year", "drive_type"])["mirror_stock"]
+    assert stocks[(2022, "ICE")] == 900.0
+    assert stocks[(2022, "BEV")] == 100.0
+    assert pytest.approx(stocks[(2023, "ICE")], rel=1e-9) == 860.0
+    assert pytest.approx(stocks[(2023, "BEV")], rel=1e-9) == 240.0
+
+
 def test_mileage_and_efficiency_adjustments_are_applied():
     mileage_adj = pd.DataFrame([{
         "economy": "12_NZ",

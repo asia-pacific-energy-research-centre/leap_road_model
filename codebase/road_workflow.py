@@ -193,6 +193,8 @@ def parse_leap_format_inputs(
         "source_name",
         "source_scope",
         "default_version",
+        "researcher_review_recommended",
+        "review_reason",
     ]
     id_cols = [
         c for c in [
@@ -430,12 +432,16 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         phev_rate=m1["phev_utilisation_rate"],
         scalar_bounds=m1["scalar_bounds"],
         passenger_saturation_level=m1.get("passenger_saturation_level"),
+        passenger_saturation_reached=m1.get("passenger_saturation_reached"),
         reconciliation_weights=m1.get("reconciliation_weights"),
         survival_curve_types=list(m1["survival_curves"].keys()),
         vintage_profile_types=list(m1["vintage_profiles"].keys()),
     )
-    # Expose parsed Module 1 inputs for downstream dashboard writing
+    # Expose parsed Module 1 inputs for downstream dashboard writing.
+    # Also keep the raw LEAP DataFrame so the dashboard can find rows that were
+    # dropped for missing year values — those disappear from merged_inputs.
     outputs["module1_merged"] = _merged
+    outputs["module1_raw_df"] = m1["raw_leap_df"]
 
     if diagnostics_dir is not None:
         try:
@@ -489,8 +495,10 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             projection_years=config.projection_years(),
             vehicle_type_shares=inputs.vehicle_type_shares,
             saturation_overrides=_saturation_overrides,
+            passenger_saturation_reached=bool(m1.get("passenger_saturation_reached", False)),
             elasticity_overrides=inputs.elasticity_overrides,
             vehicle_equivalent_weights=m1["vehicle_equivalent_weights"] or None,
+            vehicle_equivalent_weight_bounds=m1.get("vehicle_equivalent_weight_bounds"),
             config=config.module3_config,
             diagnostics_dir=str(diagnostics_dir) if diagnostics_dir else None,
             economy=config.economy,
@@ -638,6 +646,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         t6 = outputs.get("T6") if t6 is None else t6
         t9 = outputs.get("T9")
         t10 = outputs.get("T10")
+        t7f = outputs.get("T7f") if t7f is None else t7f
         if t6 is None or t9 is None or t10 is None:
             raise ValueError("Module 7 requires T6, T9, and T10 (from Modules 4 and 6)")
 
@@ -647,6 +656,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             sales_turnover=t6,
             reconciliation_scalars=t9,
             device_shares=t10,
+            sales_shares=t7f,
             projection_years=config.projection_years(),
             mileage_adjustment_variables=inputs.module7_mileage_adjustment_variables,
             efficiency_adjustment_variables=inputs.module7_efficiency_adjustment_variables,

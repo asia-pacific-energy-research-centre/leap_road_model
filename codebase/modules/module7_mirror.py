@@ -47,6 +47,7 @@ def run_module7_mirror(
     sales_turnover: pd.DataFrame,
     reconciliation_scalars: pd.DataFrame,
     device_shares: pd.DataFrame,
+    sales_shares: pd.DataFrame | None = None,
     projection_years: list[int] | range | None = None,
     mileage_adjustment_variables: pd.DataFrame | None = None,
     efficiency_adjustment_variables: pd.DataFrame | None = None,
@@ -60,6 +61,9 @@ def run_module7_mirror(
         sales_turnover: T6_sales_turnover DataFrame from Module 4.
         reconciliation_scalars: T9_reconciliation_scalars DataFrame from Module 6.
         device_shares: T10_device_shares DataFrame from Module 6.
+        sales_shares: Optional T7f sales shares. Used to split vehicle-level
+            turnover into technology-level mirror stocks when T6 has no
+            drive_type column.
         projection_years: Optional year filter. If omitted, all T6 years are used.
         mileage_adjustment_variables: Optional DataFrame with mileage
             adjustment factors by year. Value column can be 'value',
@@ -86,6 +90,7 @@ def run_module7_mirror(
         sales_turnover=sales_turnover,
         base_assumptions=base_assumptions,
         projection_years=years,
+        sales_shares=sales_shares,
         mileage_adjustment_variables=mileage_adjustment_variables,
         efficiency_adjustment_variables=efficiency_adjustment_variables,
         scrappage_by_year=scrappage_by_year,
@@ -156,6 +161,7 @@ def calculate_mirror_technology_outputs(
     sales_turnover: pd.DataFrame,
     base_assumptions: pd.DataFrame,
     projection_years: list[int],
+    sales_shares: pd.DataFrame | None = None,
     mileage_adjustment_variables: pd.DataFrame | None = None,
     efficiency_adjustment_variables: pd.DataFrame | None = None,
     scrappage_by_year: pd.DataFrame | Mapping[str, Mapping[int, float]] | None = None,
@@ -174,6 +180,13 @@ def calculate_mirror_technology_outputs(
 
     t6 = sales_turnover.copy()
     t6 = t6[t6["year"].astype(int).isin(set(projection_years))].copy()
+
+    if "drive_type" not in t6.columns and sales_shares is not None and not sales_shares.empty:
+        t6 = _split_vehicle_turnover_to_technology(
+            sales_turnover=t6,
+            base_assumptions=base_assumptions,
+            sales_shares=sales_shares,
+        )
 
     join_keys = _common_dimension_columns(t6, base_assumptions)
     if not join_keys:
@@ -364,6 +377,129 @@ def compare_with_leap(
         out["mirror_energy_pj"] - pd.to_numeric(out.get("leap_energy_pj"), errors="coerce")
     )
     return out.reset_index(drop=True)
+
+
+def _split_vehicle_turnover_to_technology(
+    sales_turnover: pd.DataFrame,
+    base_assumptions: pd.DataFrame,
+    sales_shares: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Split vehicle-level stock turnover to technology branches.
+
+    Module 4 produces vehicle-type totals. Module 7 needs technology-level
+    rows, otherwise each drive receives the full vehicle stock and drive-share
+    charts become artificially even. This keeps the reconciled base-year
+    technology stocks from T9 and allocates future sales by T7f sales shares.
+    """
+    if "base_stock" not in base_assumptions.columns:
+        return sales_turnover.copy()
+
+    vt_keys = [
+        c for c in ["economy", "scenario", "transport_type", "vehicle_type"]
+        if c in sales_turnover.columns and c in base_assumptions.columns
+    ]
+    if "year" not in sales_turnover.columns or not vt_keys:
+        return sales_turnover.copy()
+
+    tech_cols = [c for c in _DIMENSION_COLUMNS if c in base_assumptions.columns]
+    tech = base_assumptions[tech_cols + ["base_stock"]].copy()
+    tech["base_stock"] = pd.to_numeric(tech["base_stock"], errors="coerce").fillna(0.0)
+    if tech.empty:
+        return sales_turnover.copy()
+
+    share_cols = [
+        c for c in ["economy", "scenario", "transport_type", "vehicle_type", "drive_type", "year"]
+        if c in sales_shares.columns
+    ]
+    share_lookup = sales_shares[share_cols + ["sales_share"]].copy()
+    share_lookup["year"] = pd.to_numeric(share_lookup["year"], errors="coerce").astype("Int64")
+    share_lookup["sales_share"] = pd.to_numeric(share_lookup["sales_share"], errors="coerce").fillna(0.0)
+
+    out_rows: list[dict[str, Any]] = []
+    for vt_key, vt_turnover in sales_turnover.groupby(vt_keys, dropna=False):
+        if not isinstance(vt_key, tuple):
+            vt_key = (vt_key,)
+        key_filter = pd.Series(True, index=tech.index)
+        for col, value in zip(vt_keys, vt_key):
+            key_filter &= tech[col].eq(value)
+        tech_rows = tech[key_filter].copy()
+        if tech_rows.empty:
+            out_rows.extend(vt_turnover.to_dict("records"))
+            continue
+
+        tech_rows["_base_drive_total"] = tech_rows.groupby("drive_type")["base_stock"].transform("sum")
+        tech_rows["_size_share"] = np.where(
+            tech_rows["_base_drive_total"] > 0,
+            tech_rows["base_stock"] / tech_rows["_base_drive_total"],
+            1.0 / tech_rows.groupby("drive_type")["drive_type"].transform("count"),
+        )
+
+        current_stock = tech_rows["base_stock"].copy()
+        first_year = int(pd.to_numeric(vt_turnover["year"], errors="coerce").min())
+        for _, total_row in vt_turnover.sort_values("year").iterrows():
+            year = int(total_row["year"])
+            row_total_stock = float(pd.to_numeric(pd.Series([total_row.get("stock", np.nan)]), errors="coerce").iloc[0])
+            new_sales = float(pd.to_numeric(pd.Series([total_row.get("new_sales", 0.0)]), errors="coerce").fillna(0.0).iloc[0])
+            retirements = float(pd.to_numeric(
+                pd.Series([total_row.get("total_retirements", total_row.get("natural_retirements", 0.0))]),
+                errors="coerce",
+            ).fillna(0.0).iloc[0])
+
+            if year != first_year:
+                previous_total = current_stock.sum()
+                retirement_share = current_stock / previous_total if previous_total > 0 else 0.0
+                current_stock = (current_stock - retirements * retirement_share).clip(lower=0.0)
+
+                sales_by_drive = _sales_share_for_technology_rows(
+                    sales_shares=share_lookup,
+                    tech_rows=tech_rows,
+                    vt_keys=vt_keys,
+                    vt_key=vt_key,
+                    year=year,
+                )
+                current_stock = current_stock + new_sales * sales_by_drive * tech_rows["_size_share"]
+
+                current_total = current_stock.sum()
+                if row_total_stock > 0 and current_total > 0:
+                    current_stock = current_stock * (row_total_stock / current_total)
+
+            for idx, tech_row in tech_rows.iterrows():
+                out = total_row.to_dict()
+                for col in tech_cols:
+                    out[col] = tech_row[col]
+                out["stock"] = float(current_stock.loc[idx])
+                out_rows.append(out)
+
+    return pd.DataFrame(out_rows).reset_index(drop=True)
+
+
+def _sales_share_for_technology_rows(
+    sales_shares: pd.DataFrame,
+    tech_rows: pd.DataFrame,
+    vt_keys: list[str],
+    vt_key: tuple[Any, ...],
+    year: int,
+) -> pd.Series:
+    """Return one drive-level sales share per technology row."""
+    mask = sales_shares["year"].eq(year)
+    for col, value in zip(vt_keys, vt_key):
+        if col in sales_shares.columns:
+            mask &= sales_shares[col].eq(value)
+    year_shares = sales_shares.loc[mask]
+
+    if year_shares.empty:
+        base_drive = tech_rows.groupby("drive_type")["base_stock"].sum()
+        total = base_drive.sum()
+        share_map = (base_drive / total).to_dict() if total > 0 else {}
+    else:
+        share_map = (
+            year_shares.groupby("drive_type")["sales_share"]
+            .sum()
+            .to_dict()
+        )
+
+    return tech_rows["drive_type"].map(share_map).fillna(0.0)
 
 
 def _resolve_projection_years(

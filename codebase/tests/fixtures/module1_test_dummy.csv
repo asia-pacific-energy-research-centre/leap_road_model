@@ -1,0 +1,293 @@
+Branch Path,Variable,Scenario,Region,Scale,Units,2022,input_source,source_type,source_name,source_scope,default_version,researcher_review_recommended,review_reason
+Demand\Passenger road\LPVs\ICE small\Motor gasoline,Stock,Reference,20_USA,Thousand,,85000,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE small\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,7.2,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE small\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.28,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE medium\Motor gasoline,Stock,Reference,20_USA,Thousand,,135000,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE medium\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,8.5,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,True,Efficiency looks high for US market — EPA combined fleet average is closer to 8.0
+Demand\Passenger road\LPVs\ICE medium\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.4,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE large\Motor gasoline,Stock,Reference,20_USA,Thousand,,28000,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE large\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,10.8,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\ICE large\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.08,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\HEV medium\Motor gasoline,Stock,Reference,20_USA,Thousand,,9500,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\HEV medium\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,4.9,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\HEV medium\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.06,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\PHEV medium\Motor gasoline,Stock,Reference,20_USA,Thousand,,1800,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\PHEV medium\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,5.5,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\PHEV medium\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.05,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\PHEV medium\Electricity,Stock,Reference,20_USA,Thousand,,1800,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\PHEV medium\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,380,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV small\Electricity,Stock,Reference,20_USA,Thousand,,800,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,True,Updated from 2023 EV registration data — small BEV share higher than multinode default
+Demand\Passenger road\LPVs\BEV small\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,490,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV small\Electricity,Sales Share,Reference,20_USA,,Share,0.05,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV medium\Electricity,Stock,Reference,20_USA,Thousand,,2100,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,True,Default underestimated total BEV uptake
+Demand\Passenger road\LPVs\BEV medium\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,440,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV medium\Electricity,Sales Share,Reference,20_USA,,Share,0.07,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV large\Electricity,Stock,Reference,20_USA,Thousand,,300,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV large\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,390,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\BEV large\Electricity,Sales Share,Reference,20_USA,,Share,0.01,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\FCEV medium\Hydrogen,Stock,Reference,20_USA,Thousand,,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\FCEV medium\Hydrogen,Fuel Economy,Reference,20_USA,,km/GJ,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs\FCEV medium\Hydrogen,Sales Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles\ICE medium\Motor gasoline,Stock,Reference,20_USA,Thousand,,10200,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles\ICE medium\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,3.1,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles\ICE medium\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.92,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles\BEV medium\Electricity,Stock,Reference,20_USA,Thousand,,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles\BEV medium\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,520,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles\BEV medium\Electricity,Sales Share,Reference,20_USA,,Share,0.08,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses\ICE large\Gas and diesel oil,Stock,Reference,20_USA,Thousand,,800,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses\ICE large\Gas and diesel oil,Fuel Economy,Reference,20_USA,,MJ/100 km,38,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses\ICE large\Gas and diesel oil,Sales Share,Reference,20_USA,,Share,0.88,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses\BEV large\Electricity,Stock,Reference,20_USA,Thousand,,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses\BEV large\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,180,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses\BEV large\Electricity,Sales Share,Reference,20_USA,,Share,0.12,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\ICE medium\Gas and diesel oil,Stock,Reference,20_USA,Thousand,,4800,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\ICE medium\Gas and diesel oil,Fuel Economy,Reference,20_USA,,MJ/100 km,45,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\ICE medium\Gas and diesel oil,Sales Share,Reference,20_USA,,Share,0.55,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\ICE heavy\Gas and diesel oil,Stock,Reference,20_USA,Thousand,,8200,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\ICE heavy\Gas and diesel oil,Fuel Economy,Reference,20_USA,,MJ/100 km,62,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\ICE heavy\Gas and diesel oil,Sales Share,Reference,20_USA,,Share,0.35,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\BEV heavy\Electricity,Stock,Reference,20_USA,Thousand,,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\BEV heavy\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,140,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\BEV heavy\Electricity,Sales Share,Reference,20_USA,,Share,0.06,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\FCEV heavy\Hydrogen,Stock,Reference,20_USA,Thousand,,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\FCEV heavy\Hydrogen,Fuel Economy,Reference,20_USA,,km/GJ,120,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks\FCEV heavy\Hydrogen,Sales Share,Reference,20_USA,,Share,0.04,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\ICE medium\Motor gasoline,Stock,Reference,20_USA,Thousand,,11500,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\ICE medium\Motor gasoline,Fuel Economy,Reference,20_USA,,MJ/100 km,12,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\ICE medium\Motor gasoline,Sales Share,Reference,20_USA,,Share,0.45,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\ICE medium\Gas and diesel oil,Stock,Reference,20_USA,Thousand,,3200,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\ICE medium\Gas and diesel oil,Fuel Economy,Reference,20_USA,,MJ/100 km,11,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\ICE medium\Gas and diesel oil,Sales Share,Reference,20_USA,,Share,0.3,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\BEV medium\Electricity,Stock,Reference,20_USA,Thousand,,420,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\BEV medium\Electricity,Fuel Economy,Reference,20_USA,,km/GJ,320,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\LCVs\BEV medium\Electricity,Sales Share,Reference,20_USA,,Share,0.25,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\LPVs,Mileage,Reference,20_USA,,km per vehicle per year,20000,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,True,FHWA 2022 aligns with default but flagged for cross-check against state-level data
+Demand\Passenger road\Motorcycles,Mileage,Reference,20_USA,,km per vehicle per year,8200,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses,Mileage,Reference,20_USA,,km per vehicle per year,42000,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Trucks,Mileage,Reference,20_USA,,km per vehicle per year,75000,transport_leap_export,transport_leap_export,transport_model_leap_export,20_USA,v2025_01,True,IEA 2023 freight mileage for HDVs — researcher estimate higher than multinode default
+Demand\Freight road\LCVs,Mileage,Reference,20_USA,,km per vehicle per year,24000,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 0,Survival Rate,Reference,20_USA,,Rate,0.9918,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 1,Survival Rate,Reference,20_USA,,Rate,0.9879,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 2,Survival Rate,Reference,20_USA,,Rate,0.982,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 3,Survival Rate,Reference,20_USA,,Rate,0.9734,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 4,Survival Rate,Reference,20_USA,,Rate,0.9608,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 5,Survival Rate,Reference,20_USA,,Rate,0.9427,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 6,Survival Rate,Reference,20_USA,,Rate,0.9168,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 7,Survival Rate,Reference,20_USA,,Rate,0.8808,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 8,Survival Rate,Reference,20_USA,,Rate,0.832,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 9,Survival Rate,Reference,20_USA,,Rate,0.7685,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 10,Survival Rate,Reference,20_USA,,Rate,0.69,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 11,Survival Rate,Reference,20_USA,,Rate,0.5987,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 12,Survival Rate,Reference,20_USA,,Rate,0.5,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 13,Survival Rate,Reference,20_USA,,Rate,0.4013,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 14,Survival Rate,Reference,20_USA,,Rate,0.31,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 15,Survival Rate,Reference,20_USA,,Rate,0.2315,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 16,Survival Rate,Reference,20_USA,,Rate,0.168,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 17,Survival Rate,Reference,20_USA,,Rate,0.1192,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 18,Survival Rate,Reference,20_USA,,Rate,0.0832,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 19,Survival Rate,Reference,20_USA,,Rate,0.0573,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 20,Survival Rate,Reference,20_USA,,Rate,0.0392,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 21,Survival Rate,Reference,20_USA,,Rate,0.0266,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 22,Survival Rate,Reference,20_USA,,Rate,0.018,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 23,Survival Rate,Reference,20_USA,,Rate,0.0121,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 24,Survival Rate,Reference,20_USA,,Rate,0.0082,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 25,Survival Rate,Reference,20_USA,,Rate,0.0055,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 26,Survival Rate,Reference,20_USA,,Rate,0.0037,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 27,Survival Rate,Reference,20_USA,,Rate,0.0025,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 28,Survival Rate,Reference,20_USA,,Rate,0.0017,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 29,Survival Rate,Reference,20_USA,,Rate,0.0011,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Passenger road\Age 30,Survival Rate,Reference,20_USA,,Rate,0.0007,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Sourced from 2022 IEA survival study — applies to all age steps
+Demand\Freight road\Age 0,Survival Rate,Reference,20_USA,,Rate,0.9918,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 1,Survival Rate,Reference,20_USA,,Rate,0.9879,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 2,Survival Rate,Reference,20_USA,,Rate,0.982,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 3,Survival Rate,Reference,20_USA,,Rate,0.9734,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 4,Survival Rate,Reference,20_USA,,Rate,0.9608,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 5,Survival Rate,Reference,20_USA,,Rate,0.9427,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 6,Survival Rate,Reference,20_USA,,Rate,0.9168,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 7,Survival Rate,Reference,20_USA,,Rate,0.8808,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 8,Survival Rate,Reference,20_USA,,Rate,0.832,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 9,Survival Rate,Reference,20_USA,,Rate,0.7685,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 10,Survival Rate,Reference,20_USA,,Rate,0.69,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 11,Survival Rate,Reference,20_USA,,Rate,0.5987,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 12,Survival Rate,Reference,20_USA,,Rate,0.5,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 13,Survival Rate,Reference,20_USA,,Rate,0.4013,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 14,Survival Rate,Reference,20_USA,,Rate,0.31,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 15,Survival Rate,Reference,20_USA,,Rate,0.2315,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 16,Survival Rate,Reference,20_USA,,Rate,0.168,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 17,Survival Rate,Reference,20_USA,,Rate,0.1192,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 18,Survival Rate,Reference,20_USA,,Rate,0.0832,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 19,Survival Rate,Reference,20_USA,,Rate,0.0573,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 20,Survival Rate,Reference,20_USA,,Rate,0.0392,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 21,Survival Rate,Reference,20_USA,,Rate,0.0266,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 22,Survival Rate,Reference,20_USA,,Rate,0.018,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 23,Survival Rate,Reference,20_USA,,Rate,0.0121,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 24,Survival Rate,Reference,20_USA,,Rate,0.0082,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 25,Survival Rate,Reference,20_USA,,Rate,0.0055,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 26,Survival Rate,Reference,20_USA,,Rate,0.0037,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 27,Survival Rate,Reference,20_USA,,Rate,0.0025,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 28,Survival Rate,Reference,20_USA,,Rate,0.0017,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 29,Survival Rate,Reference,20_USA,,Rate,0.0011,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 30,Survival Rate,Reference,20_USA,,Rate,0.0007,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 0,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 1,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 2,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 3,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 4,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 5,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 6,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 7,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 8,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 9,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 10,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 11,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 12,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 13,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 14,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 15,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 16,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 17,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 18,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 19,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 20,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 21,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 22,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 23,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 24,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 25,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 26,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 27,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 28,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 29,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\BEV\Age 30,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 0,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 1,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 2,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 3,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 4,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 5,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 6,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 7,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 8,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 9,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 10,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 11,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 12,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 13,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 14,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 15,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 16,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 17,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 18,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 19,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 20,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 21,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 22,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 23,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 24,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 25,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 26,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 27,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 28,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 29,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\FCEV\Age 30,Survival Rate,Reference,20_USA,,Rate,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 0,Vintage Profile Share,Reference,20_USA,,Share,0.028986,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 1,Vintage Profile Share,Reference,20_USA,,Share,0.036232,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 2,Vintage Profile Share,Reference,20_USA,,Share,0.043478,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 3,Vintage Profile Share,Reference,20_USA,,Share,0.050725,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 4,Vintage Profile Share,Reference,20_USA,,Share,0.057971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 5,Vintage Profile Share,Reference,20_USA,,Share,0.065217,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 6,Vintage Profile Share,Reference,20_USA,,Share,0.072464,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 7,Vintage Profile Share,Reference,20_USA,,Share,0.07971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 8,Vintage Profile Share,Reference,20_USA,,Share,0.086957,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 9,Vintage Profile Share,Reference,20_USA,,Share,0.07971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 10,Vintage Profile Share,Reference,20_USA,,Share,0.072464,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 11,Vintage Profile Share,Reference,20_USA,,Share,0.065217,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 12,Vintage Profile Share,Reference,20_USA,,Share,0.057971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 13,Vintage Profile Share,Reference,20_USA,,Share,0.050725,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 14,Vintage Profile Share,Reference,20_USA,,Share,0.043478,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 15,Vintage Profile Share,Reference,20_USA,,Share,0.036232,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 16,Vintage Profile Share,Reference,20_USA,,Share,0.028986,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 17,Vintage Profile Share,Reference,20_USA,,Share,0.021739,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 18,Vintage Profile Share,Reference,20_USA,,Share,0.014493,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 19,Vintage Profile Share,Reference,20_USA,,Share,0.007246,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 20,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 21,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 22,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 23,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 24,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 25,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 26,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 27,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 28,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 29,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Age 30,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Age 0,Vintage Profile Share,Reference,20_USA,,Share,0.028986,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 1,Vintage Profile Share,Reference,20_USA,,Share,0.036232,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 2,Vintage Profile Share,Reference,20_USA,,Share,0.043478,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 3,Vintage Profile Share,Reference,20_USA,,Share,0.050725,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 4,Vintage Profile Share,Reference,20_USA,,Share,0.057971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 5,Vintage Profile Share,Reference,20_USA,,Share,0.065217,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 6,Vintage Profile Share,Reference,20_USA,,Share,0.072464,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 7,Vintage Profile Share,Reference,20_USA,,Share,0.07971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 8,Vintage Profile Share,Reference,20_USA,,Share,0.086957,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 9,Vintage Profile Share,Reference,20_USA,,Share,0.07971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 10,Vintage Profile Share,Reference,20_USA,,Share,0.072464,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 11,Vintage Profile Share,Reference,20_USA,,Share,0.065217,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 12,Vintage Profile Share,Reference,20_USA,,Share,0.057971,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 13,Vintage Profile Share,Reference,20_USA,,Share,0.050725,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 14,Vintage Profile Share,Reference,20_USA,,Share,0.043478,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 15,Vintage Profile Share,Reference,20_USA,,Share,0.036232,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 16,Vintage Profile Share,Reference,20_USA,,Share,0.028986,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 17,Vintage Profile Share,Reference,20_USA,,Share,0.021739,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 18,Vintage Profile Share,Reference,20_USA,,Share,0.014493,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 19,Vintage Profile Share,Reference,20_USA,,Share,0.007246,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 20,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 21,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 22,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 23,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 24,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 25,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 26,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 27,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 28,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 29,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Age 30,Vintage Profile Share,Reference,20_USA,,Share,0.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,Freight age distribution updated from national truck census 2023
+Demand\Freight road\Hydrogen\Age 0,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 1,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 2,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 3,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 4,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 5,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 6,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 7,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 8,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 9,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 10,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 11,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 12,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 13,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 14,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 15,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 16,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 17,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 18,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 19,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 20,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 21,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 22,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 23,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 24,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 25,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 26,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 27,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 28,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 29,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road\Hydrogen\Age 30,Vintage Profile Share,Reference,20_USA,,Share,,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\PHEV,PHEV Electric Driving Share,Reference,20_USA,,Share,0.62,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,True,PHEV utility factor from DOE 2023 — differs from APEC default of 0.50
+Demand\Passenger road,Passenger Vehicle Saturation,Reference,20_USA,,Device,0.82,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road,Reconciliation Bound Lower,Reference,20_USA,,,0.8,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road,Reconciliation Bound Upper,Reference,20_USA,,,1.2,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road,Reconciliation Bound Lower,Reference,20_USA,,,0.75,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Freight road,Reconciliation Bound Upper,Reference,20_USA,,,1.25,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Motorcycles,Vehicle Equivalent Weight,Reference,20_USA,,,0.25,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,
+Demand\Passenger road\Buses,Vehicle Equivalent Weight,Reference,20_USA,,,12.0,default_filled,default_input_workbook,multinode_energy_balance,20_USA,v2025_01,,

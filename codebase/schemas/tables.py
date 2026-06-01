@@ -201,6 +201,11 @@ SCHEMAS: dict[str, dict] = {
             "saturation_source_flag": _col("str",   False, "Source of saturation assumption"),
             "k_clamped":              _col("bool",  False, "True if k was clamped to bounds"),
             "is_saturated":           _col("bool",  False, "True if economy treated as saturated"),
+            "original_vehicle_equivalent_weight": _col("float", False, "Pre-calibration X-LPV-equivalent weight"),
+            "adjusted_vehicle_equivalent_weight": _col("float", False, "Post-calibration X-LPV-equivalent weight"),
+            "weight_calibration_applied": _col("bool", False, "True if passenger saturation weight calibration ran"),
+            "weight_calibration_target": _col("float", False, "Target weighted passenger stock from saturation"),
+            "weight_calibration_gap": _col("float", False, "Adjusted weighted passenger stock minus target"),
         },
         "validation_rules": [
             "target_stock >= 0",

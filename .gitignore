@@ -40,9 +40,18 @@ Thumbs.db
 # These are produced by running the model and are not committed.
 # results/ and plotting_output/ are recreated on each run.
 # ===========================
-results/
+results/*
 plotting_output/
 intermediate_data/
+
+# Commit the dashboard HTML + diagram PNGs for deployment (served on HuggingFace Space).
+# Git requires each directory level to be explicitly un-ignored when the parent is ignored.
+!results/20_USA/
+results/20_USA/*
+!results/20_USA/diagnostics/
+results/20_USA/diagnostics/*
+!results/20_USA/diagnostics/dashboard/
+!results/20_USA/diagnostics/dashboard/**
 
 # ===========================
 # Runtime-written Module 1 inputs
@@ -63,8 +72,10 @@ input_data/unprocessed data/
 
 # ===========================
 # Images
-# Docs diagrams are large and not needed for the model to run.
+# Generated output PNGs are excluded; doc diagrams are committed.
 # ===========================
 *.png
 *.jpg
 *.jpeg
+!docs/**/*.png
+!results/20_USA/diagnostics/dashboard/*.png

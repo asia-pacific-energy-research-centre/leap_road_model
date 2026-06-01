@@ -17,6 +17,7 @@ Or call per-module functions directly::
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -38,29 +39,95 @@ except ImportError:  # pragma: no cover
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+_PROFILE_VARIABLES = {"Survival Rate", "Vintage Profile Share"}
+
+
+def _collapse_age_series(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse survival/vintage profile age-series rows into one representative row.
+
+    Profile data has one row per age step (Age 0…Age 30) and all rows share the
+    same issue or comment, so showing 31 identical lines is not useful. Grouped
+    rows are collapsed to a single entry with the age range noted in Branch Path.
+    """
+    if df.empty:
+        return df
+
+    import re as _re
+    var_col = next((c for c in ["Variable", "variable"] if c in df.columns), None)
+    path_col = next((c for c in ["Branch Path", "leap_branch_path"] if c in df.columns), None)
+    if var_col is None:
+        return df
+
+    is_profile = df[var_col].isin(_PROFILE_VARIABLES)
+    non_profile = df[~is_profile].copy()
+    profile = df[is_profile].copy()
+    if profile.empty:
+        return non_profile
+
+    if path_col:
+        profile["_base"] = profile[path_col].apply(
+            lambda p: _re.sub(r"\\?Age\s+\d+", "", str(p)).strip("\\").strip()
+        )
+        group_cols = [c for c in ["_base", var_col, "review_reason"] if c in profile.columns]
+    else:
+        profile["_base"] = ""
+        group_cols = [c for c in [var_col, "review_reason"] if c in profile.columns]
+
+    collapsed: list[pd.Series] = []
+    for _key, grp in profile.groupby(group_cols, sort=False, dropna=False):
+        rep = grp.iloc[0].copy()
+        n = len(grp)
+        if path_col and n > 1:
+            rep[path_col] = rep.get("_base", "") + f"  (ages 0–{n - 1}, {n} steps)"
+        collapsed.append(rep)
+
+    collapsed_df = pd.DataFrame(collapsed).drop(columns=["_base"], errors="ignore")
+    return pd.concat([non_profile, collapsed_df], ignore_index=True)
+
+
 _COLOURS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 _TEMPLATE = "plotly_white"
 
-# Fuel colours aligned with the leap_dashboard product_color_legend (v3 JSON).
-_FUEL_COLOURS: dict[str, str] = {
+_COLORS_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "colors.json"
+
+
+def _load_colors_config() -> dict[str, dict[str, str]]:
+    """Load color config from config/colors.json, returning empty dicts on failure."""
+    try:
+        with open(_COLORS_CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            k: v for k, v in data.items()
+            if isinstance(v, dict) and not k.startswith("_")
+        }
+    except Exception:
+        return {}
+
+
+_COLORS_CONFIG = _load_colors_config()
+
+# Fuel colours — from config/colors.json (aligned with leap_dashboard product_color_legend).
+_FUEL_COLOURS: dict[str, str] = _COLORS_CONFIG.get("fuel_colors", {
     "Motor gasoline": "#842482",
-    "Gas and diesel oil": "#DB4F29",
+    "Gas and diesel oil": "#711D55",
     "Petroleum products": "#842482",
     "Hydrogen": "#F67AA3",
     "Hydrogen-based fuels": "#D46FA0",
     "Electricity": "#FFD757",
-    "Biogasoline": "#f09417",
+    "Biogasoline": "#F09417",
     "Biodiesel": "#304A1E",
     "Biojet kerosene": "#9ACD32",
     "Natural gas": "#0070C0",
     "Gas": "#0070C0",
     "LNG": "#A20042",
-    "LPG": "#4AA8A1",
+    "LPG": "#000099",
+    "CNG": "#FFCC00",
     "Biogas": "#00FE73",
-    "Efuel": "#8A8A8A",
+    "Efuel": "#7030A0",
+    "E-fuel": "#7030A0",
     "Coal": "#0D0D0D",
     "Nuclear": "#C6188C",
     "Hydro": "#B0D6F0",
@@ -68,16 +135,40 @@ _FUEL_COLOURS: dict[str, str] = {
     "Wind": "#000099",
     "Biomass": "#2E8B57",
     "Others": "#8A8A8A",
-}
+})
 
-# Drive-type colours: fossil-grey for ICE, technology colours for ZEVs.
-_DRIVE_COLOURS: dict[str, str] = {
-    "ICE": "#A6A6A6",
-    "BEV": "#FFD757",
-    "FCEV": "#F67AA3",
-    "PHEV": "#f09417",
-    "HEV": "#2E8B57",
-}
+# Drive-type colours — from config/colors.json (master_config.xlsx colors tab).
+_DRIVE_COLOURS: dict[str, str] = _COLORS_CONFIG.get("drive_type_colors", {
+    "ICE": "#632B8D",
+    "BEV": "#00B9CC",
+    "PHEV": "#B8D0ED",
+    "FCEV": "#D000D0",
+    "HEV": "#62BAB4",
+    "CNG": "#FFCC00",
+    "LPG": "#000099",
+})
+
+# Vehicle-type colours — from config/colors.json (master_config.xlsx colors tab).
+_VEHICLE_TYPE_COLOURS: dict[str, str] = _COLORS_CONFIG.get("vehicle_type_colors", {
+    "Light private vehicle": "#1F77B4",
+    "Light commercial vehicle": "#98DF8A",
+    "Bus": "#40928C",
+    "Truck": "#CF8DC2",
+    "truck": "#CF8DC2",
+    "Motorcycle": "#8E72BF",
+    "motorcycle": "#8E72BF",
+})
+
+# Transport-mode colours — from config/colors.json (master_config.xlsx colors tab).
+_TRANSPORT_MODE_COLOURS: dict[str, str] = _COLORS_CONFIG.get("transport_mode_colors", {
+    "Road": "#40928C",
+    "Rail": "#43506D",
+    "Aviation": "#ABD3EF",
+    "Marine": "#70A0DC",
+    "Pipeline": "#621674",
+    "Transport": "#0E71C2",
+    "Non-specified": "#8A8A8A",
+})
 
 
 def _fuel_colour(fuel: str, idx: int) -> str:
@@ -86,6 +177,14 @@ def _fuel_colour(fuel: str, idx: int) -> str:
 
 def _drive_colour(drive: str, idx: int) -> str:
     return _DRIVE_COLOURS.get(str(drive), _COLOURS[idx % len(_COLOURS)])
+
+
+def _vehicle_type_colour(vt: str, idx: int) -> str:
+    return _VEHICLE_TYPE_COLOURS.get(str(vt), _COLOURS[idx % len(_COLOURS)])
+
+
+def _transport_mode_colour(mode: str, idx: int) -> str:
+    return _TRANSPORT_MODE_COLOURS.get(str(mode), _COLOURS[idx % len(_COLOURS)])
 
 
 def _can_plot() -> bool:
@@ -206,7 +305,7 @@ def _module1_source_category(row: pd.Series) -> str:
     input_source = str(row.get("input_source", "") or "").strip().lower()
 
     if "transport_leap_export" in source_type or "transport_leap_export" in source_name:
-        return "Original LEAP export"
+        return "Researcher-provided"
     if source_type == "default_input_workbook" or input_source in {"default", "default_filled"}:
         return "Default value"
     return "Other model input"
@@ -244,7 +343,7 @@ def _module1_default_original_table(merged_inputs: pd.DataFrame) -> Any | None:
         .unstack(fill_value=0)
         .reset_index()
     )
-    for col in ["Default value", "Original LEAP export", "Other model input"]:
+    for col in ["Default value", "Researcher-provided", "Other model input"]:
         if col not in count_table.columns:
             count_table[col] = 0
 
@@ -253,8 +352,8 @@ def _module1_default_original_table(merged_inputs: pd.DataFrame) -> Any | None:
         .unstack()
         .reset_index()
     )
-    if {"Default value", "Original LEAP export"}.issubset(medians.columns):
-        original = pd.to_numeric(medians["Original LEAP export"], errors="coerce")
+    if {"Default value", "Researcher-provided"}.issubset(medians.columns):
+        original = pd.to_numeric(medians["Researcher-provided"], errors="coerce")
         default = pd.to_numeric(medians["Default value"], errors="coerce")
         medians["default_vs_original_median"] = np.where(
             original.ne(0) & original.notna() & default.notna(),
@@ -271,7 +370,7 @@ def _module1_default_original_table(merged_inputs: pd.DataFrame) -> Any | None:
     )
     table_df["total_values"] = (
         table_df["Default value"]
-        + table_df["Original LEAP export"]
+        + table_df["Researcher-provided"]
         + table_df["Other model input"]
     )
     table_df = table_df.sort_values(["major_branch", "variable"], key=lambda s: s.astype(str))
@@ -283,9 +382,9 @@ def _module1_default_original_table(merged_inputs: pd.DataFrame) -> Any | None:
                 "Measure",
                 "Total values",
                 "Default values",
-                "Original values",
+                "Researcher-provided",
                 "Other inputs",
-                "Default vs original median",
+                "Default vs researcher median",
             ],
             fill_color="#E8EDF7",
             align="left",
@@ -296,7 +395,7 @@ def _module1_default_original_table(merged_inputs: pd.DataFrame) -> Any | None:
                 table_df["variable"].tolist(),
                 table_df["total_values"].astype(int).tolist(),
                 table_df["Default value"].astype(int).tolist(),
-                table_df["Original LEAP export"].astype(int).tolist(),
+                table_df["Researcher-provided"].astype(int).tolist(),
                 table_df["Other model input"].astype(int).tolist(),
                 table_df["default_vs_original_median"].map(_format_pct).tolist(),
             ],
@@ -306,7 +405,46 @@ def _module1_default_original_table(merged_inputs: pd.DataFrame) -> Any | None:
         ),
         columnwidth=[2.0, 1.2, 0.9, 0.9, 0.9, 0.8, 1.2],
     )])
-    fig.update_layout(**_layout("Module 1 - Default and original values by branch/measure"))
+    fig.update_layout(**_layout("Module 1 - Default and researcher-provided values by branch/measure"))
+    return fig
+
+
+def _raw_missing_rows_table(raw_df: pd.DataFrame, max_rows: int = 50) -> Any | None:
+    """Return a table of raw CSV rows where every year-value column is blank.
+
+    These rows are silently dropped by parse_leap_format_inputs so they would
+    otherwise be invisible in the dashboard.
+    """
+    year_cols = [
+        c for c in raw_df.columns
+        if isinstance(c, str) and c.strip().isdigit() and len(c.strip()) == 4
+    ]
+    if not year_cols:
+        return None
+
+    missing_mask = raw_df[year_cols].isna().all(axis=1)
+    missing = raw_df.loc[missing_mask].copy()
+    if missing.empty:
+        return None
+
+    missing = _collapse_age_series(missing)
+    id_cols = [c for c in ["Branch Path", "Variable", "Scenario", "Region"] if c in missing.columns]
+    shown = missing[id_cols + [c for c in year_cols if c in missing.columns]].head(max_rows)
+
+    fig = go.Figure(data=[go.Table(
+        header=dict(
+            values=id_cols + year_cols,
+            fill_color="#E8EDF7",
+            align="left",
+        ),
+        cells=dict(
+            values=[shown[col].fillna("").astype(str).tolist() for col in id_cols + year_cols],
+            fill_color="white",
+            align="left",
+            height=24,
+        ),
+    )])
+    fig.update_layout(**_layout("Rows with missing year values (dropped before processing)"))
     return fig
 
 
@@ -316,69 +454,247 @@ def _missing_rows_table(
     display_cols: list[str],
     max_rows: int = 50,
 ) -> Any | None:
-    """Return a table listing rows with missing checked fields."""
-    cols_to_check = [c for c in check_cols if c in df.columns]
-    if not cols_to_check:
+    """Return a compact table for rows missing required dashboard fields."""
+    if df is None or df.empty:
         return None
 
-    missing_mask = df[cols_to_check].isna().any(axis=1)
+    available_check_cols = [c for c in check_cols if c in df.columns]
+    if not available_check_cols:
+        return None
+
+    missing_mask = df[available_check_cols].isna().any(axis=1)
     missing = df.loc[missing_mask].copy()
     if missing.empty:
         return None
 
-    missing["missing_fields"] = missing[cols_to_check].apply(
-        lambda row: ", ".join([col for col, value in row.items() if pd.isna(value)]),
-        axis=1,
-    )
-    shown = missing.head(max_rows)
-    cols = [c for c in display_cols if c in shown.columns] + ["missing_fields"]
+    shown_cols = [c for c in display_cols if c in missing.columns]
+    shown_cols += [c for c in available_check_cols if c not in shown_cols]
+    shown = missing[shown_cols].head(max_rows)
 
     fig = go.Figure(data=[go.Table(
-        header=dict(values=cols, fill_color="#E8EDF7", align="left"),
+        header=dict(
+            values=shown_cols,
+            fill_color="#E8EDF7",
+            align="left",
+        ),
         cells=dict(
-            values=[shown[col].fillna("").astype(str).tolist() for col in cols],
+            values=[shown[col].fillna("").astype(str).tolist() for col in shown_cols],
             fill_color="white",
             align="left",
             height=24,
         ),
     )])
-    fig.update_layout(**_layout("Rows with missing required fields"))
+    fig.update_layout(**_layout("Rows with missing required values"))
     return fig
 
 
-def module1_figures(merged_inputs: pd.DataFrame) -> list[tuple[str, Any]]:
+def _count_raw_missing(raw_df: pd.DataFrame) -> tuple[int, int]:
+    """Return (raw_count, collapsed_count) for rows where all year columns are blank.
+
+    raw_count is the true row count; collapsed_count is what the table shows after
+    profile age-series are merged into one representative row each.
+    """
+    year_cols = [
+        c for c in raw_df.columns
+        if isinstance(c, str) and c.strip().isdigit() and len(c.strip()) == 4
+    ]
+    if not year_cols:
+        return 0, 0
+    missing = raw_df[raw_df[year_cols].isna().all(axis=1)].copy()
+    raw_count = len(missing)
+    if raw_count == 0:
+        return 0, 0
+    collapsed = _collapse_age_series(missing)
+    return raw_count, len(collapsed)
+
+
+def _module1_summary_html(
+    merged_inputs: pd.DataFrame,
+    raw_df: pd.DataFrame | None = None,
+) -> str:
+    """Return an HTML summary banner with key input stats for the module 1 page."""
+    if merged_inputs is None or merged_inputs.empty:
+        return ""
+
+    df = merged_inputs.copy()
+    total = len(df)
+    if total == 0:
+        return ""
+
+    df["_src"] = df.apply(_module1_source_category, axis=1)
+    researcher = int((df["_src"] == "Researcher-provided").sum())
+    default = int((df["_src"] == "Default value").sum())
+    other = int((df["_src"] == "Other model input").sum())
+
+    # Missing values: check the raw CSV for blank year cells — these rows are dropped
+    # by parse_leap_format_inputs before they reach merged_inputs, so checking
+    # merged_inputs alone would never find them.
+    missing_raw, missing_collapsed = _count_raw_missing(raw_df) if raw_df is not None else (0, 0)
+
+    n_comments = 0
+    if "review_reason" in df.columns:
+        n_comments = int(
+            df["review_reason"].fillna("").astype(str).str.strip().ne("").sum()
+        )
+
+    def _pct(n: int) -> str:
+        return f"{n / total * 100:.0f}%" if total else "0%"
+
+    researcher_style = "color:#1565c0;font-weight:600" if researcher > 0 else "color:#757575"
+    if missing_raw == 0:
+        missing_html = '<span style="color:#2e7d32">&#10003; None</span>'
+    elif missing_raw == missing_collapsed:
+        missing_html = f'<span style="color:#e65100">&#9888; {missing_raw} rows — see table below</span>'
+    else:
+        missing_html = (
+            f'<span style="color:#e65100">&#9888; {missing_collapsed} issues'
+            f' ({missing_raw} raw rows incl. profile age steps) — see table below</span>'
+        )
+
+    items = [
+        f"<li><strong>Total input rows (with values):</strong> {total}</li>",
+        f"<li><strong>Default values:</strong> {default} ({_pct(default)})</li>",
+        f'<li><strong>Researcher-provided:</strong> <span style="{researcher_style}">{researcher} ({_pct(researcher)})</span></li>',
+        f"<li><strong>Other inputs:</strong> {other} ({_pct(other)})</li>",
+        f"<li><strong>Rows with missing year value (dropped):</strong> {missing_html}</li>",
+    ]
+    if n_comments > 0:
+        items.append(
+            f'<li><strong>Researcher comments:</strong> {n_comments} row{"s" if n_comments != 1 else ""} — see table below</li>'
+        )
+
+    return (
+        '<div class="intro-card">'
+        "<h3>Input overview</h3>"
+        f'<ul>{"".join(items)}</ul>'
+        "</div>"
+    )
+
+
+def _module1_comments_table(
+    merged_inputs: pd.DataFrame,
+    raw_df: pd.DataFrame | None = None,
+) -> Any | None:
+    """Return a table of rows that carry a researcher comment (review_reason).
+
+    Uses raw_df when available so that comments on survival/vintage profile rows
+    (which are filtered out of merged_inputs) are also captured. Profile age-series
+    rows that share the same comment are collapsed to a single representative line.
+    """
+    # Prefer raw_df: it covers all variable types including survival/vintage rows.
+    source = raw_df if raw_df is not None else merged_inputs
+    if "review_reason" not in source.columns:
+        return None
+
+    df = source.copy()
+    df["review_reason"] = df["review_reason"].fillna("").astype(str).str.strip()
+    commented = df[df["review_reason"] != ""].copy()
+    if commented.empty:
+        return None
+
+    # Collapse age-series profile rows before displaying.
+    commented = _collapse_age_series(commented)
+
+    if raw_df is not None:
+        # Raw LEAP format: use Branch Path, Variable, year value columns, comment.
+        year_cols = sorted(
+            [c for c in commented.columns if isinstance(c, str) and c.strip().isdigit()],
+            key=int,
+        )
+        value_col = year_cols[0] if year_cols else None
+        col_map: dict[str, str] = {"Branch Path": "Branch", "Variable": "Measure"}
+        if value_col:
+            col_map[value_col] = f"Value ({value_col})"
+        col_map["review_reason"] = "Researcher comment"
+        col_widths: dict[str, float] = {
+            "Branch Path": 2.2, "Variable": 0.9, "review_reason": 2.5,
+        }
+        if value_col:
+            col_widths[value_col] = 0.7
+    else:
+        col_map = {
+            "transport_type": "Transport",
+            "vehicle_type": "Vehicle type",
+            "drive_type": "Drive",
+            "fuel": "Fuel",
+            "variable": "Measure",
+            "value": "Value",
+            "unit": "Unit",
+            "review_reason": "Researcher comment",
+        }
+        col_widths = {
+            "transport_type": 0.8, "vehicle_type": 1.0, "drive_type": 0.6,
+            "fuel": 0.9, "variable": 0.8, "value": 0.6, "unit": 0.7,
+            "review_reason": 2.5,
+        }
+
+    display_cols = [c for c in col_map if c in commented.columns]
+    shown = commented[display_cols].copy()
+    for col in display_cols:
+        if col not in {"Branch Path", "Variable", "variable", "review_reason", "unit"}:
+            shown[col] = pd.to_numeric(shown[col], errors="coerce").round(3).astype(str).replace("nan", "")
+    shown = shown.fillna("").astype(str)
+
+    fig = go.Figure(data=[go.Table(
+        header=dict(values=[col_map[c] for c in display_cols], fill_color="#E8EDF7", align="left"),
+        cells=dict(
+            values=[shown[c].tolist() for c in display_cols],
+            fill_color="white", align="left", height=28,
+        ),
+        columnwidth=[col_widths.get(c, 1.0) for c in display_cols],
+    )])
+    fig.update_layout(**_layout("Module 1 — Researcher comments"))
+    return fig
+
+
+def module1_figures(
+    merged_inputs: pd.DataFrame,
+    raw_df: pd.DataFrame | None = None,
+) -> list[tuple[str, Any]]:
     """Interactive QA figures for Module 1 LEAP-format base-year inputs."""
     if not _can_plot() or merged_inputs is None or merged_inputs.empty:
         return []
 
     figs: list[tuple[str, Any]] = []
 
-    source_table = _module1_default_original_table(merged_inputs)
-    if source_table is not None:
-        figs.append((
-            "Default and original values by branch/measure",
-            source_table,
-            True,
-            "Counts base-year values by branch and measure. When both default and original values exist in a group, the last column compares their medians.",
-        ))
+    # Show the provenance detail table only when there are actually researcher-provided
+    # or other non-default values — an all-defaults run gains nothing from it.
+    df_src = merged_inputs.copy()
+    df_src["_src"] = df_src.apply(_module1_source_category, axis=1)
+    has_non_default = (df_src["_src"] != "Default value").any()
+    if has_non_default:
+        source_table = _module1_default_original_table(merged_inputs)
+        if source_table is not None:
+            figs.append((
+                "Default and researcher-provided values by branch/measure",
+                source_table,
+                True,
+                "Counts base-year values by branch and measure. When both default and researcher-provided values exist in a group, the last column compares their medians.",
+            ))
 
-    missing_table = _missing_rows_table(
-        merged_inputs,
-        check_cols=[
-            "economy", "scenario", "year", "transport_type", "vehicle_type",
-            "variable", "value", "unit", "source_type", "source_name",
-        ],
-        display_cols=[
-            "economy", "scenario", "year", "transport_type", "vehicle_type",
-            "drive_type", "size", "fuel", "variable",
-        ],
-    )
-    if missing_table is not None:
+    # Missing year values — checked against the raw CSV because parse_leap_format_inputs
+    # silently drops rows with blank year cells before they reach merged_inputs.
+    # The summary banner already signals "none" when this table is absent.
+    if raw_df is not None:
+        missing_table = _raw_missing_rows_table(raw_df)
+        if missing_table is not None:
+            figs.append((
+                "Rows with missing year value",
+                missing_table,
+                True,
+                "Rows in the raw input CSV where the year value column is blank. "
+                "These were dropped before processing and are not included in any model calculations.",
+            ))
+
+    # Comments table — only shown when at least one row has a review_reason.
+    # raw_df is preferred so comments on survival/vintage rows are captured too.
+    comments_table = _module1_comments_table(merged_inputs, raw_df=raw_df)
+    if comments_table is not None:
         figs.append((
-            "Rows with missing required input fields",
-            missing_table,
+            "Researcher comments",
+            comments_table,
             True,
-            "Lists input rows missing required fields. Structural blanks such as size/fuel on aggregate rows are not treated as missing here.",
+            "Rows where the researcher left a comment. Shows the branch, measure, value and the comment text.",
         ))
 
     return figs
@@ -542,7 +858,7 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                     go.Scatter(
                         x=series.index.tolist(), y=series.values.tolist(),
                         name=str(vt), mode="lines",
-                        line=dict(color=_COLOURS[i % len(_COLOURS)]),
+                        line=dict(color=_vehicle_type_colour(str(vt), i)),
                         legendgroup=str(vt), showlegend=(col_idx == 1),
                     ),
                     row=1, col=col_idx,
@@ -583,6 +899,49 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                 "Projected passenger stock converted to X-LPV-equivalent vehicles per 1,000 people, compared with the saturation level.",
             ))
 
+    weight_cols = {
+        "vehicle_type",
+        "original_vehicle_equivalent_weight",
+        "adjusted_vehicle_equivalent_weight",
+        "weight_calibration_applied",
+    }
+    if weight_cols.issubset(t5.columns):
+        weights_df = (
+            t5[t5["transport_type"] == "passenger"]
+            [["vehicle_type", "original_vehicle_equivalent_weight", "adjusted_vehicle_equivalent_weight", "weight_calibration_applied"]]
+            .dropna(subset=["vehicle_type"])
+            .drop_duplicates("vehicle_type")
+        )
+        if not weights_df.empty:
+            weights_df = weights_df.sort_values("vehicle_type")
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=weights_df["vehicle_type"].tolist(),
+                y=weights_df["original_vehicle_equivalent_weight"].tolist(),
+                name="Original X-LPV weight",
+                marker_color="#5E6AD2",
+            ))
+            fig.add_trace(go.Bar(
+                x=weights_df["vehicle_type"].tolist(),
+                y=weights_df["adjusted_vehicle_equivalent_weight"].tolist(),
+                name="Adjusted X-LPV weight",
+                marker_color="#EF6C00",
+            ))
+            applied = bool(weights_df["weight_calibration_applied"].fillna(False).any())
+            fig.update_layout(
+                **_layout("Module 3 - Passenger X-LPV weight calibration"),
+                barmode="group",
+                xaxis_title="Vehicle type",
+                yaxis_title="X-LPV-equivalent weight",
+            )
+            caption = (
+                "Original and adjusted passenger vehicle-equivalent weights. "
+                "Adjusted values are used only when Module 1 marks the economy as passenger-saturated."
+            )
+            if not applied:
+                caption += " Calibration was not applied for this run."
+            figs.append(("Passenger X-LPV weight calibration", fig, caption))
+
     if {"vehicle_type", "gdp_elasticity_used"}.issubset(t5.columns):
         el = t5[["vehicle_type", "gdp_elasticity_used"]].dropna().drop_duplicates()
         if not el.empty:
@@ -616,7 +975,7 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
             s = grp.groupby("year")["new_sales"].sum().sort_index()
             fig.add_trace(go.Scatter(
                 x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
-                line=dict(color=_COLOURS[i % len(_COLOURS)]),
+                line=dict(color=_vehicle_type_colour(str(vt), i)),
             ))
         fig.update_layout(
             **_layout("Module 4 — New sales by vehicle type"),
@@ -630,7 +989,7 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
             s = grp.groupby("year")["stock"].sum().sort_index()
             fig.add_trace(go.Scatter(
                 x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
-                line=dict(color=_COLOURS[i % len(_COLOURS)]),
+                line=dict(color=_vehicle_type_colour(str(vt), i)),
             ))
         fig.update_layout(
             **_layout("Module 4 — Stock trajectory by vehicle type"),
@@ -641,14 +1000,16 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
     if t6 is not None and not t6.empty and {"year", "natural_retirements", "additional_retirements"}.issubset(t6.columns):
         rr = t6.groupby("year")[["natural_retirements", "additional_retirements"]].sum().sort_index()
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=rr.index.tolist(), y=rr["natural_retirements"].tolist(),
-            name="natural", stackgroup="ret", mode="lines",
-        ))
-        fig.add_trace(go.Scatter(
-            x=rr.index.tolist(), y=rr["additional_retirements"].tolist(),
-            name="additional", stackgroup="ret", mode="lines",
-        ))
+        for ret_name, ret_col, ret_color in [
+            ("natural", "natural_retirements", "#5E6AD2"),
+            ("additional", "additional_retirements", "#EF6C00"),
+        ]:
+            fig.add_trace(go.Scatter(
+                x=rr.index.tolist(), y=rr[ret_col].tolist(),
+                name=ret_name, stackgroup="ret", mode="lines",
+                line=dict(color=ret_color, width=0.7),
+                fillcolor=ret_color,
+            ))
         fig.update_layout(
             **_layout("Module 4 — Retirements by type"),
             xaxis_title="Year", yaxis_title="Vehicles retired",
@@ -661,7 +1022,7 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
             g = grp.sort_values("age")
             fig.add_trace(go.Scatter(
                 x=g["age"].tolist(), y=g["vintage_share"].tolist(), name=str(vt), mode="lines",
-                line=dict(color=_COLOURS[i % len(_COLOURS)]),
+                line=dict(color=_vehicle_type_colour(str(vt), i)),
             ))
         fig.update_layout(
             **_layout("Module 4 — Base-year vintage profiles"),
@@ -716,23 +1077,25 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
             non_ice_cols = [c for c in pvt.columns if str(c).upper() != "ICE"]
             order_key = pvt[non_ice_cols].sum(axis=1) if non_ice_cols else pvt.sum(axis=1)
             pvt = pvt.loc[order_key.sort_values(ascending=False).index]
+            drive_order = pvt.sum(axis=0).sort_values(ascending=False).index.tolist()
 
             fig = go.Figure()
-            for j, col in enumerate(pvt.columns):
+            for j, col in enumerate(drive_order):
                 fig.add_trace(go.Bar(
-                    name=str(col), x=pvt.index.tolist(), y=pvt[col].tolist(),
-                    marker_color=_COLOURS[j % len(_COLOURS)],
+                    name=str(col), y=pvt.index.tolist(), x=pvt[col].tolist(),
+                    orientation="h",
+                    marker_color=_drive_colour(str(col), j),
                 ))
             fig.update_layout(
                 **_layout(f"Module 5 — Sales shares (base-year){base_year_label}"),
-                barmode="stack", xaxis_title="Vehicle type", yaxis_title="Sales share",
-                yaxis=dict(range=[0, 1.05]),
+                barmode="stack", xaxis_title="Sales share", yaxis_title="Vehicle type",
+                xaxis=dict(range=[0, 1.05]),
             )
             figs.append((
                 f"Sales shares (base-year){base_year_label}",
                 fig,
                 True,
-                "Vehicle types are sorted by non-ICE share (highest to lowest) so minor transition shares are easier to compare.",
+                "Vehicle types are sorted by non-ICE share, with the largest values at the bottom so smaller rows stay easier to compare.",
             ))
 
     # Projected chart (only show when true multi-year projected data exists)
@@ -748,12 +1111,15 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
                 .sort_index()
             )
             if not traj.empty:
+                drive_order = traj.mean(axis=0).sort_values(ascending=False).index.tolist()
                 fig = go.Figure()
-                for j, col in enumerate(traj.columns):
+                for j, col in enumerate(drive_order):
+                    _c = _drive_colour(str(col), j)
                     fig.add_trace(go.Scatter(
                         x=traj.index.tolist(), y=traj[col].tolist(),
                         name=str(col), stackgroup="share", mode="lines",
-                        line=dict(color=_COLOURS[j % len(_COLOURS)]),
+                        line=dict(color=_c, width=0.7),
+                        fillcolor=_c,
                     ))
                 year_range = f" ({unique_years[0]}-{unique_years[-1]})"
                 fig.update_layout(
@@ -918,8 +1284,8 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             fig = make_subplots(
                 rows=2, cols=2,
                 subplot_titles=tuple(label for _col, label in subplot_specs),
-                horizontal_spacing=0.08,
-                vertical_spacing=0.18,
+                horizontal_spacing=0.12,
+                vertical_spacing=0.34,
             )
             for i, (metric_col, _label) in enumerate(subplot_specs, start=1):
                 r = 1 if i <= 2 else 2
@@ -940,7 +1306,8 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
 
             fig.update_layout(
                 **_layout("Module 6 - Adjustment scalars by branch (top changing branches)"),
-                height=720,
+                height=920,
+                margin=dict(l=78, r=36, t=72, b=132),
             )
             for r in (1, 2):
                 for c in (1, 2):
@@ -1026,7 +1393,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                     x=share.index.tolist(),
                     y=share[fuel].tolist(),
                     name=str(fuel),
-                    marker_color=_COLOURS[i % len(_COLOURS)],
+                    marker_color=_fuel_colour(str(fuel), i),
                     customdata=heat[fuel].tolist(),
                     hovertemplate=(
                         "Vehicle/drive=%{x}<br>Fuel=" + str(fuel)
@@ -1090,7 +1457,7 @@ def module7_figures(
             s = grp.groupby("year")["mirror_stock"].sum().sort_index()
             fig.add_trace(go.Scatter(
                 x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
-                line=dict(color=_COLOURS[i % len(_COLOURS)]),
+                line=dict(color=_vehicle_type_colour(str(vt), i)),
             ))
         fig.update_layout(
             **_layout("Stock by vehicle type"),
@@ -1104,7 +1471,7 @@ def module7_figures(
             s = grp.groupby("year")["mirror_vehicle_km"].sum().sort_index()
             fig.add_trace(go.Scatter(
                 x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
-                line=dict(color=_COLOURS[i % len(_COLOURS)]),
+                line=dict(color=_vehicle_type_colour(str(vt), i)),
             ))
         fig.update_layout(
             **_layout("Vehicle-km by vehicle type"),
@@ -1120,9 +1487,12 @@ def module7_figures(
         if not energy.empty:
             fig = go.Figure()
             for i, col in enumerate(energy.columns):
+                _c = _transport_mode_colour(str(col), i)
                 fig.add_trace(go.Scatter(
                     x=energy.index.tolist(), y=energy[col].tolist(),
                     name=str(col), stackgroup="en", mode="lines",
+                    line=dict(color=_c, width=0.7),
+                    fillcolor=_c,
                 ))
             fig.update_layout(
                 **_layout("Energy by transport type"),
@@ -1142,10 +1512,12 @@ def module7_figures(
             fuel_order = [f for f in fuel_order if fe[f].sum() > 0]
             fig = go.Figure()
             for i, fuel in enumerate(fuel_order):
+                _c = _fuel_colour(fuel, i)
                 fig.add_trace(go.Scatter(
                     x=fe.index.tolist(), y=fe[fuel].tolist(),
                     name=str(fuel), stackgroup="fuel_en", mode="lines",
-                    line=dict(color=_fuel_colour(fuel, i)),
+                    line=dict(color=_c, width=0.7),
+                    fillcolor=_c,
                 ))
             fig.update_layout(
                 **_layout("Fuel energy mix"),
@@ -1167,11 +1539,13 @@ def module7_figures(
             dt_order = share_dt.iloc[-1].sort_values(ascending=False).index.tolist()
             fig = go.Figure()
             for i, dt in enumerate(dt_order):
+                _c = _drive_colour(str(dt), i)
                 fig.add_trace(go.Scatter(
                     x=share_dt.index.tolist(),
                     y=(share_dt[dt] * 100).tolist(),
                     name=str(dt), stackgroup="stock_share", mode="lines",
-                    line=dict(color=_drive_colour(dt, i)),
+                    line=dict(color=_c, width=0.7),
+                    fillcolor=_c,
                 ))
             fig.update_layout(
                 **_layout("Stock share by drive type"),
@@ -1192,11 +1566,13 @@ def module7_figures(
             dt_order = ss.iloc[-1].sort_values(ascending=False).index.tolist()
             fig = go.Figure()
             for i, dt in enumerate(dt_order):
+                _c = _drive_colour(str(dt), i)
                 fig.add_trace(go.Scatter(
                     x=ss.index.tolist(),
                     y=(ss[dt] * 100).tolist(),
                     name=str(dt), stackgroup="sales_share", mode="lines",
-                    line=dict(color=_drive_colour(dt, i)),
+                    line=dict(color=_c, width=0.7),
+                    fillcolor=_c,
                 ))
             fig.update_layout(
                 **_layout("Sales share by drive type"),
@@ -1217,10 +1593,12 @@ def module7_figures(
             dt_order = en_by_dt.sum(axis=0).sort_values(ascending=False).index.tolist()
             fig = go.Figure()
             for i, dt in enumerate(dt_order):
+                _c = _drive_colour(str(dt), i)
                 fig.add_trace(go.Scatter(
                     x=en_by_dt.index.tolist(), y=en_by_dt[dt].tolist(),
                     name=str(dt), stackgroup="en_dt", mode="lines",
-                    line=dict(color=_drive_colour(dt, i)),
+                    line=dict(color=_c, width=0.7),
+                    fillcolor=_c,
                 ))
             fig.update_layout(
                 **_layout("Energy use by drive type"),
@@ -1511,15 +1889,22 @@ _MODULE_META: dict[str, tuple[str, str]] = {
 }
 
 
-def _dashboard_diagram_uri(filename: str) -> str:
-    """Return file:// URI for a dashboard diagram under docs/new model, if present."""
+def _dashboard_diagram_source(filename: str) -> Path | None:
+    """Return the Path to a diagram under docs/new model, if present."""
     repo_root = Path(__file__).resolve().parents[2]
     diagram = repo_root / "docs" / "new model" / filename
-    return diagram.resolve().as_uri() if diagram.exists() else ""
+    return diagram if diagram.exists() else None
 
 
-def _index_extra_html() -> str:
-    """Build rich overview content for index page (module guide + system diagrams)."""
+def _index_extra_html(out_dir: Path | None = None) -> str:
+    """Build rich overview content for index page (module guide + system diagrams).
+
+    If *out_dir* is provided, diagram PNGs are copied there and referenced with
+    relative paths so the dashboard works when served from any host (not just the
+    local machine via file:// URIs).
+    """
+    import shutil
+
     module_cards: list[str] = []
     for href, label in _NAV_LINKS[1:]:
         key = href.replace(".html", "")
@@ -1531,24 +1916,37 @@ def _index_extra_html() -> str:
             f'</div>'
         )
 
-    quick_view_uri = _dashboard_diagram_uri("Road transport model — quick view.png")
-    researcher_uri = _dashboard_diagram_uri("Road transport model — researcher detail.png")
+    _DIAGRAMS = [
+        (
+            "Road transport model — quick view.png",
+            "road_transport_model_quick_view.png",
+            "Road transport model — quick view",
+            "High-level map of data flow from default inputs, through core modules, into reconciliation and LEAP-ready outputs.",
+        ),
+        (
+            "Road transport model — researcher detail.png",
+            "road_transport_model_researcher_detail.png",
+            "Road transport model — researcher detail",
+            "Detailed view of module internals, intermediate tables, and dependency paths used for deeper QA and method tracing.",
+        ),
+    ]
 
     diagrams: list[str] = []
-    if quick_view_uri:
+    for src_name, dest_name, title, caption in _DIAGRAMS:
+        src = _dashboard_diagram_source(src_name)
+        if src is None:
+            continue
+        if out_dir is not None:
+            dest = out_dir / dest_name
+            shutil.copy2(src, dest)
+            img_src = dest_name
+        else:
+            img_src = src.resolve().as_uri()
         diagrams.append(
             '<div class="diagram-card diagram-card--wide">'
-            '<div class="diagram-title">Road transport model — quick view</div>'
-            f'<img src="{quick_view_uri}" alt="Road transport model quick view diagram">'
-            '<div class="diagram-caption">High-level map of data flow from default inputs, through core modules, into reconciliation and LEAP-ready outputs.</div>'
-            '</div>'
-        )
-    if researcher_uri:
-        diagrams.append(
-            '<div class="diagram-card diagram-card--wide">'
-            '<div class="diagram-title">Road transport model — researcher detail</div>'
-            f'<img src="{researcher_uri}" alt="Road transport model researcher detail diagram">'
-            '<div class="diagram-caption">Detailed view of module internals, intermediate tables, and dependency paths used for deeper QA and method tracing.</div>'
+            f'<div class="diagram-title">{title}</div>'
+            f'<img src="{img_src}" alt="{title} diagram">'
+            f'<div class="diagram-caption">{caption}</div>'
             '</div>'
         )
 
@@ -1685,9 +2083,11 @@ def write_module_pages(
 
     # Combined workflow-stage pages
     m1_df = workflow_outputs.get("module1_merged")
-    input_figures = module1_figures(m1_df) if m1_df is not None else []
+    m1_raw = workflow_outputs.get("module1_raw_df")
+    input_figures = module1_figures(m1_df, raw_df=m1_raw) if m1_df is not None else []
     input_figures.extend(module2_figures(workflow_outputs.get("T4")))
-    _write("module1.html", input_figures)
+    m1_summary = _module1_summary_html(m1_df, raw_df=m1_raw) if m1_df is not None else ""
+    _write("module1.html", input_figures, extra=m1_summary)
 
     t6 = workflow_outputs.get("T6")
     t6v = workflow_outputs.get("T6v")
@@ -1712,7 +2112,7 @@ def write_module_pages(
            extra=recon_alert)
 
     # Index page — module guide + system diagrams
-    index_extra = _index_extra_html()
+    index_extra = _index_extra_html(out_dir=out)
     _write("index.html", [], extra=index_extra)
 
     return written
