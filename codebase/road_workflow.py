@@ -635,6 +635,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             _write_df(m6["T10"], output_root / "module6" / "T10_device_shares.csv")
             _write_df(m6["T11"], output_root / "module6" / "T11_leap_ready.csv")
             _write_df(m6["T12"], output_root / "module6" / "T12_reconciliation_diagnostics.csv")
+            _write_df(m6["T12_phev"], output_root / "module6" / "T12_phev_utilisation_diagnostics.csv")
             write_leap_import_workbook(
                 m6["T11"],
                 output_root / "module6" / f"{config.economy}_leap_import.xlsx",

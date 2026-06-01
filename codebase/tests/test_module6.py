@@ -21,6 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from modules.module6_leap_handoff import (
     apply_scalars,
+    build_phev_utilisation_diagnostics,
     calculate_device_shares,
     calculate_initial_branch_energy,
     calculate_remaining_esto,
@@ -269,6 +270,56 @@ class TestCalculateDeviceShares:
             sub = t10[t10["drive_type"] == drive]["device_share"].sum()
             assert pytest.approx(sub, abs=1e-6) == 1.0, f"{drive} device shares do not sum to 1"
 
+    def test_nan_size_group_device_shares_sum_to_one(self):
+        """Missing size should not cause pandas groupby to drop the branch."""
+        mileage = 12000.0
+        t9 = pd.DataFrame([
+            self._make_t9_row("PHEV", "Electricity", stock=300, mileage=mileage,
+                              efficiency=300, final_fuel_pj=0.006),
+            self._make_t9_row("PHEV", "Motor gasoline", stock=300, mileage=mileage,
+                              efficiency=100, final_fuel_pj=0.018),
+        ])
+        t9["size"] = np.nan
+        t10 = calculate_device_shares(t9)
+        assert pytest.approx(t10["device_share"].sum(), abs=1e-6) == 1.0
+
+
+class TestPHEVUtilisationDiagnostics:
+    def test_backcalculates_electric_km_share(self):
+        t9 = pd.DataFrame([
+            _branch("LPVs", "PHEV", "Electricity", stock=100, mileage=4000, efficiency=200),
+            _branch("LPVs", "PHEV", "Motor gasoline", stock=100, mileage=6000, efficiency=100),
+        ])
+        t9 = t9.rename(columns={
+            "stock": "adjusted_stock",
+            "mileage_km_per_year": "adjusted_mileage_km_per_year",
+            "efficiency_km_per_gj": "adjusted_efficiency_km_per_gj",
+        })
+        t9["final_branch_fuel_pj"] = [1.0, 3.0]
+
+        result = build_phev_utilisation_diagnostics(t9, phev_utilisation_rate=0.40, tolerance=0.10)
+
+        assert len(result) == 1
+        # electric km proxy = 1 PJ * 200 km/GJ; liquid = 3 PJ * 100 km/GJ
+        assert pytest.approx(result["backcalculated_phev_utilisation_rate"].iloc[0]) == 0.40
+        assert result["utilisation_status"].iloc[0] == "ok"
+
+    def test_flags_backcalculated_rate_outside_range(self):
+        t9 = pd.DataFrame([
+            _branch("LPVs", "PHEV", "Electricity", stock=100, mileage=4000, efficiency=200),
+            _branch("LPVs", "PHEV", "Motor gasoline", stock=100, mileage=6000, efficiency=100),
+        ])
+        t9 = t9.rename(columns={
+            "stock": "adjusted_stock",
+            "mileage_km_per_year": "adjusted_mileage_km_per_year",
+            "efficiency_km_per_gj": "adjusted_efficiency_km_per_gj",
+        })
+        t9["final_branch_fuel_pj"] = [0.1, 3.0]
+
+        result = build_phev_utilisation_diagnostics(t9, phev_utilisation_rate=0.40, tolerance=0.10)
+
+        assert result["utilisation_status"].iloc[0] == "below_range"
+
 
 # ---------------------------------------------------------------------------
 # Stock accounting identity after reconciliation
@@ -462,7 +513,7 @@ class TestAllocateFuelToBranches:
         assert pytest.approx(shares["LPVs"], rel=1e-4) == 0.60
         assert pytest.approx(shares["Buses"], rel=1e-4) == 0.40
 
-    def test_allocation_rule_is_stock_share(self):
+    def test_electricity_allocation_rule_uses_residual_energy_share(self):
         t4 = _make_t4(
             _branch("LPVs", "BEV", "Electricity", stock=100, mileage=10000, efficiency=300),
         )
@@ -471,7 +522,7 @@ class TestAllocateFuelToBranches:
             pd.DataFrame([{"fuel": "Electricity", "energy_pj": 1.0}]), pd.DataFrame()
         )
         t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
-        assert t8["allocation_rule"].iloc[0] == "stock_share"
+        assert t8["allocation_rule"].iloc[0] == "residual_electric_energy_share"
 
     def test_ineligible_fuel_excluded(self):
         """A branch with drive_type=BEV but fuel=Motor gasoline is ineligible and excluded."""

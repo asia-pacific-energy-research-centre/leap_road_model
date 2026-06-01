@@ -88,6 +88,7 @@ def run_module6(
     phev_electric_utilisation_rate: float | dict[str, float] = 0.50,
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]] | None = None,
     match_tolerance: float = 0.01,
+    phev_utilisation_tolerance: float = 0.10,
     diagnostics_dir: str | pathlib.Path | None = None,
 ) -> dict[str, pd.DataFrame]:
     """
@@ -108,6 +109,8 @@ def run_module6(
                         - dict with keys {'stock','mileage','efficiency'} each mapping to
                             (min_scalar, max_scalar).
         match_tolerance: Acceptable fractional gap between model and ESTO.
+        phev_utilisation_tolerance: Absolute tolerance band around the supplied
+            PHEV electric utilisation rate for the back-calculated diagnostic.
                 diagnostics_dir: Optional directory root for Module 6 PNG diagnostic
                     charts. When provided, charts are written to
                     diagnostics_dir/module6/.
@@ -120,28 +123,37 @@ def run_module6(
     assert abs(sum(weights.values()) - 1.0) < 1e-6, "Reconciliation weights must sum to 1.0"
 
     # Step 1
-    branch_energy = calculate_initial_branch_energy(base_year_branches)
+    branch_energy = calculate_initial_branch_energy(
+        base_year_branches,
+        phev_electric_utilisation_rate,
+    )
 
     # Step 2: BEV/PHEV electricity reconciliation
     electricity_esto = _get_esto_fuel(esto_fuel_totals, "Electricity")
     branch_energy, phev_liquid = reconcile_electricity(
         branch_energy, electricity_esto, phev_electric_utilisation_rate, weights, scalar_bounds
     )
+    phev_liquid = distribute_phev_liquid_by_esto_mix(phev_liquid, esto_fuel_totals)
 
     # Step 3: Remaining ESTO after PHEV liquid subtraction
     remaining_esto = calculate_remaining_esto(esto_fuel_totals, phev_liquid)
 
     # Step 4: Fuel allocation
-    t8 = allocate_esto_fuel_to_branches(branch_energy, remaining_esto, base_year_branches)
+    t8 = allocate_esto_fuel_to_branches(branch_energy, remaining_esto, base_year_branches, phev_liquid)
 
     # Steps 5–7: Simultaneous reconciliation
-    t9 = reconcile_stock_mileage_efficiency(t8, base_year_branches, weights, scalar_bounds)
+    t9 = reconcile_stock_mileage_efficiency(t8, branch_energy, weights, scalar_bounds)
 
     # Step 8: Device Shares
     t10 = calculate_device_shares(t9)
 
     # Step 9: Validate
     t12 = build_reconciliation_diagnostics(t9, esto_fuel_totals, phev_liquid, match_tolerance)
+    t12_phev = build_phev_utilisation_diagnostics(
+        t9,
+        phev_electric_utilisation_rate,
+        phev_utilisation_tolerance,
+    )
 
     # Build LEAP-ready output
     t11 = build_leap_ready_table(t9, t10, sales_turnover, sales_shares, projection_years)
@@ -149,7 +161,7 @@ def run_module6(
     errors = validate_table(t11, "T11_leap_ready")
     for err in errors:
         log.warning("Validation: %s", err)
-    outputs = {"T8": t8, "T9": t9, "T10": t10, "T11": t11, "T12": t12}
+    outputs = {"T8": t8, "T9": t9, "T10": t10, "T11": t11, "T12": t12, "T12_phev": t12_phev}
 
     if diagnostics_dir is not None:
         try:
@@ -165,7 +177,10 @@ def run_module6(
 # Step 1 — Initial branch energy
 # ===========================================================================
 
-def calculate_initial_branch_energy(base_year_branches: pd.DataFrame) -> pd.DataFrame:
+def calculate_initial_branch_energy(
+    base_year_branches: pd.DataFrame,
+    phev_utilisation_rate: float | dict[str, float] | None = None,
+) -> pd.DataFrame:
     """
     Calculate initial branch energy from base-year stock, mileage, and efficiency.
 
@@ -178,9 +193,75 @@ def calculate_initial_branch_energy(base_year_branches: pd.DataFrame) -> pd.Data
         DataFrame with all T4 columns plus 'initial_energy_pj'.
     """
     df = base_year_branches.copy()
+    if phev_utilisation_rate is not None:
+        df = apply_phev_mileage_split(df, phev_utilisation_rate)
     df["initial_energy_pj"] = (
         df["stock"] * df["mileage_km_per_year"] / df["efficiency_km_per_gj"] / 1_000_000
     )
+    return df
+
+
+def apply_phev_mileage_split(
+    base_year_branches: pd.DataFrame,
+    phev_utilisation_rate: float | dict[str, float],
+) -> pd.DataFrame:
+    """
+    Split PHEV annual mileage into electric-mode and liquid-mode mileage.
+
+    Module 1 supplies the PHEV electric utilisation rate as a km share. The
+    branch skeleton has separate PHEV Electricity and liquid-fuel rows, so each
+    row should carry only its relevant mode mileage before energy is calculated.
+    """
+    df = base_year_branches.copy()
+    if df.empty or "mileage_km_per_year" not in df.columns:
+        return df
+
+    group_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type"]
+    if "size" in df.columns:
+        group_keys.append("size")
+
+    phev_mask = df["drive_type"] == "PHEV"
+    for key, group in df[phev_mask].groupby(group_keys, dropna=False):
+        idx = group.index
+        electric_idx = group[group["fuel"] == "Electricity"].index
+        liquid_idx = group[group["fuel"] != "Electricity"].index
+        if electric_idx.empty or liquid_idx.empty:
+            continue
+
+        key_values = dict(zip(group_keys, key if isinstance(key, tuple) else (key,)))
+        rate = _lookup_phev_utilisation_rate(phev_utilisation_rate, key_values.get("vehicle_type"))
+        rate = min(1.0, max(0.0, rate))
+
+        electric_mileage = pd.to_numeric(df.loc[electric_idx, "mileage_km_per_year"], errors="coerce").dropna()
+        liquid_mileage = pd.to_numeric(df.loc[liquid_idx, "mileage_km_per_year"], errors="coerce").dropna()
+        if electric_mileage.empty or liquid_mileage.empty:
+            continue
+
+        electric_median = float(electric_mileage.median())
+        liquid_median = float(liquid_mileage.median())
+        if electric_median <= 0 and liquid_median <= 0:
+            continue
+
+        current_share = (
+            electric_median / (electric_median + liquid_median)
+            if (electric_median + liquid_median) > 0
+            else np.nan
+        )
+        if np.isfinite(current_share) and abs(current_share - rate) <= 0.02:
+            continue
+
+        if max(electric_median, liquid_median) > 0 and (
+            abs(electric_median - liquid_median) / max(electric_median, liquid_median) <= 0.10
+        ):
+            total_mileage = max(electric_median, liquid_median)
+        else:
+            total_mileage = electric_median + liquid_median
+
+        df.loc[electric_idx, "mileage_km_per_year"] = total_mileage * rate
+        df.loc[liquid_idx, "mileage_km_per_year"] = total_mileage * (1.0 - rate)
+        if "mileage_granularity" in df.columns:
+            df.loc[idx, "mileage_granularity"] = "phev_utilisation_split"
+
     return df
 
 
@@ -207,6 +288,8 @@ def reconcile_electricity(
     """
     df = branch_energy.copy()
     elec_mask = df["fuel"] == "Electricity"
+    phev_elec_mask = elec_mask & (df["drive_type"] == "PHEV")
+    non_phev_elec_mask = elec_mask & (df["drive_type"] != "PHEV")
 
     # Build phev_liquid_table from unadjusted data if reconciliation cannot run
     def _build_phev_liquid(source_df: pd.DataFrame) -> pd.DataFrame:
@@ -215,14 +298,25 @@ def reconcile_electricity(
     if electricity_esto_pj <= 0 or not elec_mask.any():
         return df, _build_phev_liquid(df)
 
-    total_initial_elec = df.loc[elec_mask, "initial_energy_pj"].sum()
+    phev_electric_pj = float(df.loc[phev_elec_mask, "initial_energy_pj"].sum())
+    residual_electricity_pj = max(0.0, float(electricity_esto_pj) - phev_electric_pj)
+    if phev_electric_pj > electricity_esto_pj:
+        log.warning(
+            "PHEV electricity implied by utilisation (%.3f PJ) exceeds ESTO road electricity (%.3f PJ)",
+            phev_electric_pj,
+            electricity_esto_pj,
+        )
+
+    total_initial_elec = df.loc[non_phev_elec_mask, "initial_energy_pj"].sum()
     if total_initial_elec <= 0:
         return df, _build_phev_liquid(df)
 
-    ecf = electricity_esto_pj / total_initial_elec
+    ecf = residual_electricity_pj / total_initial_elec
 
-    # Apply scalars to all electricity branches
-    for idx in df[elec_mask].index:
+    # Apply scalars to non-PHEV electricity branches only. PHEV electricity is
+    # governed by the utilisation factor and reconciled as paired electric /
+    # liquid demand.
+    for idx in df[non_phev_elec_mask].index:
         s = df.at[idx, "stock"]
         m = df.at[idx, "mileage_km_per_year"]
         e = df.at[idx, "efficiency_km_per_gj"]
@@ -283,11 +377,54 @@ def _compute_phev_liquid(
     )
 
     keep = ["vehicle_type", "drive_type", "fuel", "phev_liquid_pj"]
-    for extra in ["economy", "scenario", "transport_type"]:
+    for extra in ["economy", "scenario", "transport_type", "size"]:
         if extra in phev_liq.columns:
             keep.insert(0, extra)
 
     return phev_liq[[c for c in keep if c in phev_liq.columns]].reset_index(drop=True)
+
+
+def distribute_phev_liquid_by_esto_mix(
+    phev_liquid_table: pd.DataFrame,
+    esto_fuel_totals: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Distribute each PHEV fleet's liquid-mode demand across liquid fuels.
+
+    The branch table has one row per eligible liquid fuel. Those rows are fuel
+    alternatives, so summing their raw liquid-mode energy would count the same
+    PHEV fleet multiple times. Use the ESTO liquid fuel mix as the best
+    available split across eligible fuels.
+    """
+    if phev_liquid_table.empty:
+        return phev_liquid_table.copy()
+
+    df = phev_liquid_table.copy()
+    if "size" not in df.columns:
+        df["size"] = pd.NA
+
+    esto = esto_fuel_totals.copy()
+    esto["energy_pj"] = pd.to_numeric(esto["energy_pj"], errors="coerce").fillna(0.0)
+    esto_mix = esto.set_index("fuel")["energy_pj"].to_dict()
+
+    group_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type", "size"]
+    group_keys = [c for c in group_keys if c in df.columns]
+    rows: list[pd.DataFrame] = []
+    for _key, group in df.groupby(group_keys, dropna=False):
+        group = group.copy()
+        group["phev_liquid_pj"] = pd.to_numeric(group["phev_liquid_pj"], errors="coerce").fillna(0.0)
+        fuels = group["fuel"].tolist()
+        weights = pd.Series([max(0.0, float(esto_mix.get(fuel, 0.0))) for fuel in fuels], index=group.index)
+        if weights.sum() <= 0:
+            weights = pd.Series(1.0, index=group.index)
+        shares = weights / weights.sum()
+        total_liquid = float((group["phev_liquid_pj"] * shares).sum())
+        group["phev_liquid_pj"] = total_liquid * shares
+        rows.append(group)
+
+    if not rows:
+        return df
+    return pd.concat(rows, ignore_index=True)
 
 
 # ===========================================================================
@@ -337,6 +474,7 @@ def allocate_esto_fuel_to_branches(
     branch_energy: pd.DataFrame,
     remaining_esto: pd.DataFrame,
     base_year_branches: pd.DataFrame,
+    phev_liquid_table: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Allocate remaining ESTO fuel totals across eligible vehicle-drive branches.
@@ -369,13 +507,87 @@ def allocate_esto_fuel_to_branches(
     df["phev_liquid_subtracted_pj"] = df["phev_liquid_subtracted_pj"].fillna(0.0)
     df["remaining_esto_fuel_pj"] = df["remaining_esto_fuel_pj"].fillna(0.0)
 
-    # Stock shares per (economy, scenario, fuel) group
-    # Use post-electricity-reconciliation stock for accurate shares
-    group_keys = ["economy", "scenario", "fuel"]
-    total_stock = df.groupby(group_keys)["stock"].transform("sum")
-    df["branch_allocation_share"] = (df["stock"] / total_stock.replace(0.0, np.nan)).fillna(0.0)
-    df["allocated_branch_fuel_pj"] = df["branch_allocation_share"] * df["remaining_esto_fuel_pj"]
+    df["branch_allocation_share"] = 0.0
+    df["allocated_branch_fuel_pj"] = 0.0
     df["allocation_rule"] = "stock_share"
+
+    # Electricity has already been reconciled before this step. Preserve the
+    # BEV/PHEV split implied by reconciled electric branch energy.
+    electricity_mask = df["fuel"] == "Electricity"
+    if electricity_mask.any():
+        phev_electric_mask = electricity_mask & (df["drive_type"] == "PHEV")
+        non_phev_electric_mask = electricity_mask & (df["drive_type"] != "PHEV")
+        df.loc[phev_electric_mask, "branch_allocation_share"] = np.where(
+            df.loc[phev_electric_mask, "remaining_esto_fuel_pj"] > 0,
+            df.loc[phev_electric_mask, "initial_energy_pj"] / df.loc[phev_electric_mask, "remaining_esto_fuel_pj"],
+            0.0,
+        )
+        df.loc[phev_electric_mask, "allocated_branch_fuel_pj"] = df.loc[phev_electric_mask, "initial_energy_pj"]
+        df.loc[phev_electric_mask, "allocation_rule"] = "phev_utilisation_electric"
+
+        group_keys = ["economy", "scenario", "fuel"]
+        phev_electric_by_group = (
+            df.loc[phev_electric_mask]
+            .groupby(group_keys, dropna=False)["allocated_branch_fuel_pj"]
+            .sum()
+            .to_dict()
+        )
+        total_non_phev_electric = df.loc[non_phev_electric_mask].groupby(group_keys)["initial_energy_pj"].transform("sum")
+        residual_electric = []
+        for _, row in df.loc[non_phev_electric_mask, group_keys + ["remaining_esto_fuel_pj"]].iterrows():
+            key = tuple(row[c] for c in group_keys)
+            residual_electric.append(
+                max(0.0, float(row["remaining_esto_fuel_pj"]) - float(phev_electric_by_group.get(key, 0.0)))
+            )
+        residual_electric = pd.Series(residual_electric, index=df.loc[non_phev_electric_mask].index)
+        electric_share = (
+            df.loc[non_phev_electric_mask, "initial_energy_pj"] / total_non_phev_electric.replace(0.0, np.nan)
+        ).fillna(0.0)
+        df.loc[non_phev_electric_mask, "branch_allocation_share"] = electric_share
+        df.loc[non_phev_electric_mask, "allocated_branch_fuel_pj"] = (
+            electric_share * residual_electric
+        )
+        df.loc[non_phev_electric_mask, "allocation_rule"] = "residual_electric_energy_share"
+
+    # PHEV liquid demand is separately derived from the utilisation factor.
+    phev_liquid_mask = (df["drive_type"] == "PHEV") & (df["fuel"] != "Electricity")
+    if phev_liquid_mask.any():
+        if phev_liquid_table is not None and not phev_liquid_table.empty:
+            liq = phev_liquid_table.copy()
+            if "size" not in liq.columns:
+                liq["size"] = pd.NA
+            merge_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type", "fuel"]
+            if "size" in df.columns:
+                merge_keys.append("size")
+            liq = (
+                liq.groupby(merge_keys, dropna=False, as_index=False)["phev_liquid_pj"]
+                .sum()
+            )
+            df = df.merge(liq, on=merge_keys, how="left")
+            df["phev_liquid_pj"] = df["phev_liquid_pj"].fillna(0.0)
+        else:
+            df["phev_liquid_pj"] = 0.0
+
+        phev_liquid_mask = (df["drive_type"] == "PHEV") & (df["fuel"] != "Electricity")
+        liquid_total = df.loc[phev_liquid_mask].groupby(["economy", "scenario", "fuel"])["phev_liquid_pj"].transform("sum")
+        liquid_share = (
+            df.loc[phev_liquid_mask, "phev_liquid_pj"] / liquid_total.replace(0.0, np.nan)
+        ).fillna(0.0)
+        df.loc[phev_liquid_mask, "branch_allocation_share"] = liquid_share
+        df.loc[phev_liquid_mask, "allocated_branch_fuel_pj"] = df.loc[phev_liquid_mask, "phev_liquid_pj"]
+        df.loc[phev_liquid_mask, "allocation_rule"] = "phev_utilisation_liquid"
+
+    # All remaining non-electric, non-PHEV-liquid fuel is allocated to the
+    # ordinary eligible branches using stock shares.
+    normal_mask = ~(electricity_mask | phev_liquid_mask)
+    if normal_mask.any():
+        group_keys = ["economy", "scenario", "fuel"]
+        total_stock = df.loc[normal_mask].groupby(group_keys)["stock"].transform("sum")
+        normal_share = (df.loc[normal_mask, "stock"] / total_stock.replace(0.0, np.nan)).fillna(0.0)
+        df.loc[normal_mask, "branch_allocation_share"] = normal_share
+        df.loc[normal_mask, "allocated_branch_fuel_pj"] = (
+            normal_share * df.loc[normal_mask, "remaining_esto_fuel_pj"]
+        )
 
     t8_cols = [
         "economy", "scenario", "transport_type", "vehicle_type", "drive_type", "fuel",
@@ -732,7 +944,7 @@ def calculate_device_shares(reconciliation_scalars: pd.DataFrame) -> pd.DataFram
     if "size" in df.columns:
         group_keys.append("size")
 
-    total_implied = df.groupby(group_keys)["implied_vehicles_using_fuel"].transform("sum")
+    total_implied = df.groupby(group_keys, dropna=False)["implied_vehicles_using_fuel"].transform("sum")
 
     df["device_share"] = np.where(
         df["drive_type"].isin(_SINGLE_FUEL_DRIVES),
@@ -811,6 +1023,122 @@ def build_reconciliation_diagnostics(
         })
 
     return pd.DataFrame(rows)
+
+
+def build_phev_utilisation_diagnostics(
+    reconciliation_scalars: pd.DataFrame,
+    phev_utilisation_rate: float | dict[str, float],
+    tolerance: float = 0.10,
+) -> pd.DataFrame:
+    """
+    Back-calculate PHEV electric-mode utilisation from reconciled fuel energy.
+
+    The diagnostic converts final PHEV fuel energy back to a km proxy using the
+    adjusted efficiency for each fuel branch:
+        electric_km_proxy = electricity_pj * electricity_efficiency_km_per_gj
+        liquid_km_proxy   = sum(liquid_pj * liquid_efficiency_km_per_gj)
+
+    The common PJ-to-GJ multiplier cancels in the share calculation.
+    """
+    cols = [
+        "economy", "scenario", "transport_type", "vehicle_type", "drive_type", "size",
+        "provided_phev_utilisation_rate", "diagnostic_lower_rate", "diagnostic_upper_rate",
+        "backcalculated_phev_utilisation_rate", "electric_energy_pj", "liquid_energy_pj",
+        "electric_energy_share", "electric_km_proxy", "liquid_km_proxy",
+        "absolute_difference", "utilisation_status",
+    ]
+    if reconciliation_scalars.empty:
+        return pd.DataFrame(columns=cols)
+
+    df = reconciliation_scalars[reconciliation_scalars["drive_type"] == "PHEV"].copy()
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    df["final_branch_fuel_pj"] = pd.to_numeric(df["final_branch_fuel_pj"], errors="coerce").fillna(0.0)
+    df["adjusted_efficiency_km_per_gj"] = pd.to_numeric(
+        df["adjusted_efficiency_km_per_gj"], errors="coerce"
+    ).fillna(0.0)
+    df["km_proxy"] = df["final_branch_fuel_pj"] * df["adjusted_efficiency_km_per_gj"]
+
+    group_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type"]
+    if "size" in df.columns:
+        group_keys.append("size")
+    else:
+        df["size"] = pd.NA
+        group_keys.append("size")
+
+    rows: list[dict[str, Any]] = []
+    for key, group in df.groupby(group_keys, dropna=False):
+        key_data = dict(zip(group_keys, key if isinstance(key, tuple) else (key,)))
+        electric = group[group["fuel"] == "Electricity"]
+        liquid = group[group["fuel"] != "Electricity"]
+
+        electric_energy = float(electric["final_branch_fuel_pj"].sum())
+        liquid_energy = float(liquid["final_branch_fuel_pj"].sum())
+        total_energy = electric_energy + liquid_energy
+        electric_km_proxy = float(electric["km_proxy"].sum())
+        liquid_km_proxy = float(liquid["km_proxy"].sum())
+        total_km_proxy = electric_km_proxy + liquid_km_proxy
+
+        provided_rate = _lookup_phev_utilisation_rate(
+            phev_utilisation_rate,
+            key_data.get("vehicle_type"),
+        )
+        lower_rate = max(0.0, provided_rate - float(tolerance))
+        upper_rate = min(1.0, provided_rate + float(tolerance))
+        backcalculated_rate = (
+            electric_km_proxy / total_km_proxy
+            if total_km_proxy > 0
+            else np.nan
+        )
+        absolute_difference = (
+            abs(backcalculated_rate - provided_rate)
+            if np.isfinite(backcalculated_rate)
+            else np.nan
+        )
+        if not np.isfinite(backcalculated_rate):
+            status = "no_phev_energy"
+        elif lower_rate <= backcalculated_rate <= upper_rate:
+            status = "ok"
+        elif backcalculated_rate < lower_rate:
+            status = "below_range"
+        else:
+            status = "above_range"
+
+        rows.append({
+            **key_data,
+            "provided_phev_utilisation_rate": provided_rate,
+            "diagnostic_lower_rate": lower_rate,
+            "diagnostic_upper_rate": upper_rate,
+            "backcalculated_phev_utilisation_rate": backcalculated_rate,
+            "electric_energy_pj": electric_energy,
+            "liquid_energy_pj": liquid_energy,
+            "electric_energy_share": electric_energy / total_energy if total_energy > 0 else np.nan,
+            "electric_km_proxy": electric_km_proxy,
+            "liquid_km_proxy": liquid_km_proxy,
+            "absolute_difference": absolute_difference,
+            "utilisation_status": status,
+        })
+
+    return pd.DataFrame(rows)[cols].reset_index(drop=True)
+
+
+def _lookup_phev_utilisation_rate(
+    phev_utilisation_rate: float | dict[str, float],
+    vehicle_type: Any,
+) -> float:
+    """Return scalar or vehicle-type-specific PHEV utilisation rate."""
+    if isinstance(phev_utilisation_rate, dict):
+        if vehicle_type in phev_utilisation_rate:
+            return float(phev_utilisation_rate[vehicle_type])
+        if "default" in phev_utilisation_rate:
+            return float(phev_utilisation_rate["default"])
+        if "all" in phev_utilisation_rate:
+            return float(phev_utilisation_rate["all"])
+        if phev_utilisation_rate:
+            return float(next(iter(phev_utilisation_rate.values())))
+        return 0.50
+    return float(phev_utilisation_rate)
 
 
 # ===========================================================================

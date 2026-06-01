@@ -52,6 +52,10 @@ results/20_USA/*
 results/20_USA/diagnostics/*
 !results/20_USA/diagnostics/dashboard/
 !results/20_USA/diagnostics/dashboard/**
+!results/shared/
+results/shared/*
+!results/shared/dashboard_assets/
+!results/shared/dashboard_assets/**
 
 # ===========================
 # Runtime-written Module 1 inputs
@@ -78,4 +82,4 @@ input_data/unprocessed data/
 *.jpg
 *.jpeg
 !docs/**/*.png
-!results/20_USA/diagnostics/dashboard/*.png
+!results/shared/dashboard_assets/*.png

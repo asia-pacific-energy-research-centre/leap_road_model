@@ -1,7 +1,7 @@
-import pytest
 import pandas as pd
+import pytest
 
-from diagnostics.plotly_dashboard import module3_figures, module5_figures, _can_plot
+from diagnostics.plotly_dashboard import _can_plot, module3_figures, module5_figures, write_module_pages
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
@@ -60,3 +60,19 @@ def test_module5_base_sales_share_chart_is_horizontal_and_largest_first():
 
     assert fig.data[0].orientation == "h"
     assert list(fig.data[0].y) == ["Large", "Small"]
+
+
+@pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
+def test_dashboard_diagrams_are_written_to_shared_assets(tmp_path):
+    dashboard_dir = tmp_path / "results" / "05_PRC" / "diagnostics" / "dashboard"
+
+    write_module_pages({}, dashboard_dir=dashboard_dir, economy="05_PRC")
+
+    shared_assets = tmp_path / "results" / "shared" / "dashboard_assets"
+    assert (shared_assets / "road_transport_model_quick_view.png").exists()
+    assert (shared_assets / "road_transport_model_researcher_detail.png").exists()
+    assert not (dashboard_dir / "road_transport_model_quick_view.png").exists()
+
+    index_html = (dashboard_dir / "index.html").read_text(encoding="utf-8")
+    assert "../../../shared/dashboard_assets/road_transport_model_quick_view.png" in index_html
+    assert "../../../shared/dashboard_assets/road_transport_model_researcher_detail.png" in index_html

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -1082,14 +1083,14 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
             fig = go.Figure()
             for j, col in enumerate(drive_order):
                 fig.add_trace(go.Bar(
-                    name=str(col), y=pvt.index.tolist(), x=pvt[col].tolist(),
+                    name=str(col), y=pvt.index.tolist(), x=(pvt[col] * 100).tolist(),
                     orientation="h",
                     marker_color=_drive_colour(str(col), j),
                 ))
             fig.update_layout(
                 **_layout(f"Module 5 — Sales shares (base-year){base_year_label}"),
-                barmode="stack", xaxis_title="Sales share", yaxis_title="Vehicle type",
-                xaxis=dict(range=[0, 1.05]),
+                barmode="stack", xaxis_title="Sales share (%)", yaxis_title="Vehicle type",
+                xaxis=dict(range=[0, 105]),
             )
             figs.append((
                 f"Sales shares (base-year){base_year_label}",
@@ -1116,7 +1117,7 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
                 for j, col in enumerate(drive_order):
                     _c = _drive_colour(str(col), j)
                     fig.add_trace(go.Scatter(
-                        x=traj.index.tolist(), y=traj[col].tolist(),
+                        x=traj.index.tolist(), y=(traj[col] * 100).tolist(),
                         name=str(col), stackgroup="share", mode="lines",
                         line=dict(color=_c, width=0.7),
                         fillcolor=_c,
@@ -1124,8 +1125,8 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
                 year_range = f" ({unique_years[0]}-{unique_years[-1]})"
                 fig.update_layout(
                     **_layout(f"Module 5 — Sales shares (projected){year_range}"),
-                    xaxis_title="Year", yaxis_title="Sales share",
-                    yaxis=dict(range=[0, 1.05]),
+                    xaxis_title="Year", yaxis_title="Sales share (%)",
+                    yaxis=dict(range=[0, 105]),
                 )
                 figs.append((
                     f"Sales shares (projected){year_range}",
@@ -1151,6 +1152,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
     _t9 = module6_outputs.get("T9"); t9 = _t9 if isinstance(_t9, pd.DataFrame) else pd.DataFrame()
     _t10 = module6_outputs.get("T10"); t10 = _t10 if isinstance(_t10, pd.DataFrame) else pd.DataFrame()
     _t12 = module6_outputs.get("T12"); t12 = _t12 if isinstance(_t12, pd.DataFrame) else pd.DataFrame()
+    _t12_phev = module6_outputs.get("T12_phev"); t12_phev = _t12_phev if isinstance(_t12_phev, pd.DataFrame) else pd.DataFrame()
 
     if not t12.empty and {
         "fuel", "remaining_esto_pj", "post_reconciliation_model_pj",
@@ -1279,13 +1281,13 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         )
         if not agg.empty:
             ranking = (agg.sub(1.0).abs().sum(axis=1)).sort_values(ascending=False)
-            agg = agg.loc[ranking.head(14).index.tolist()]
+            agg = agg.loc[ranking.head(8).index.tolist()]
             subplot_specs = [(col, label) for col, label in scalar_specs if col in scalar_cols_for_chart]
             fig = make_subplots(
                 rows=2, cols=2,
                 subplot_titles=tuple(label for _col, label in subplot_specs),
-                horizontal_spacing=0.12,
-                vertical_spacing=0.34,
+                horizontal_spacing=0.28,
+                vertical_spacing=0.55,
             )
             for i, (metric_col, _label) in enumerate(subplot_specs, start=1):
                 r = 1 if i <= 2 else 2
@@ -1301,13 +1303,13 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                     row=r,
                     col=c,
                 )
-                fig.update_xaxes(title_text="Branch (vehicle|drive|fuel)", tickangle=-35, row=r, col=c)
+                fig.update_xaxes(title_text="Branch (vehicle|drive|fuel)", tickangle=-55, row=r, col=c)
                 fig.update_yaxes(title_text="Scalar (1 = unchanged)", row=r, col=c)
 
             fig.update_layout(
                 **_layout("Module 6 - Adjustment scalars by branch (top changing branches)"),
-                height=920,
-                margin=dict(l=78, r=36, t=72, b=132),
+                height=1430,
+                margin=dict(l=78, r=36, t=72, b=260),
             )
             for r in (1, 2):
                 for c in (1, 2):
@@ -1347,6 +1349,87 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 fig,
                 "Average energy correction factor by fuel. Values near 1 imply low correction pressure; values far from 1 imply a larger pre-reconciliation mismatch.",
             ))
+
+    if not t12_phev.empty and {
+        "vehicle_type", "provided_phev_utilisation_rate",
+        "backcalculated_phev_utilisation_rate", "utilisation_status",
+    }.issubset(t12_phev.columns):
+        chart = t12_phev.copy()
+        chart["branch"] = chart["vehicle_type"].fillna("unknown")
+        if "size" in chart.columns:
+            chart["branch"] = chart["branch"] + chart["size"].fillna("").map(lambda x: f" | {x}" if x else "")
+        for col in [
+            "provided_phev_utilisation_rate", "diagnostic_lower_rate",
+            "diagnostic_upper_rate", "backcalculated_phev_utilisation_rate",
+            "electric_energy_share",
+        ]:
+            if col in chart.columns:
+                chart[col] = pd.to_numeric(chart[col], errors="coerce")
+
+        status_colours = {
+            "ok": "#43A047",
+            "below_range": "#E53935",
+            "above_range": "#E53935",
+            "no_phev_energy": "#757575",
+        }
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name="Back-calculated electric-km share",
+            x=chart["branch"].tolist(),
+            y=(chart["backcalculated_phev_utilisation_rate"] * 100.0).tolist(),
+            marker_color=[
+                status_colours.get(str(status), "#757575")
+                for status in chart["utilisation_status"].tolist()
+            ],
+            customdata=chart[[
+                "provided_phev_utilisation_rate",
+                "electric_energy_share",
+                "utilisation_status",
+            ]].to_numpy(),
+            hovertemplate=(
+                "%{x}<br>Back-calculated=%{y:.1f}%"
+                "<br>Provided=%{customdata[0]:.1%}"
+                "<br>Energy share=%{customdata[1]:.1%}"
+                "<br>Status=%{customdata[2]}<extra></extra>"
+            ),
+        ))
+        fig.add_trace(go.Scatter(
+            name="Provided utilisation rate",
+            x=chart["branch"].tolist(),
+            y=(chart["provided_phev_utilisation_rate"] * 100.0).tolist(),
+            mode="markers",
+            marker=dict(color="#1565C0", size=10, symbol="diamond"),
+            hovertemplate="%{x}<br>Provided=%{y:.1f}%<extra></extra>",
+        ))
+        if {"diagnostic_lower_rate", "diagnostic_upper_rate"}.issubset(chart.columns):
+            fig.add_trace(go.Scatter(
+                name="Diagnostic lower bound",
+                x=chart["branch"].tolist(),
+                y=(chart["diagnostic_lower_rate"] * 100.0).tolist(),
+                mode="lines",
+                line=dict(color="#9E9E9E", dash="dot"),
+                hovertemplate="%{x}<br>Lower=%{y:.1f}%<extra></extra>",
+            ))
+            fig.add_trace(go.Scatter(
+                name="Diagnostic upper bound",
+                x=chart["branch"].tolist(),
+                y=(chart["diagnostic_upper_rate"] * 100.0).tolist(),
+                mode="lines",
+                line=dict(color="#9E9E9E", dash="dot"),
+                hovertemplate="%{x}<br>Upper=%{y:.1f}%<extra></extra>",
+            ))
+        fig.update_layout(
+            **_layout("Module 6 - PHEV utilisation back-check"),
+            yaxis_title="Electric-mode utilisation (%)",
+            xaxis_title="PHEV branch",
+            yaxis_range=[0, 100],
+        )
+        figs.append((
+            "PHEV utilisation back-check",
+            fig,
+            True,
+            "Back-calculates PHEV electric-km share from final electricity and liquid energy using adjusted efficiencies, then compares it with the supplied utilisation rate.",
+        ))
 
     if not t10.empty and {"drive_type", "fuel", "device_share"}.issubset(t10.columns):
         sub = t10[t10["drive_type"].isin(["ICE", "PHEV"])].copy()
@@ -1691,6 +1774,46 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         )
         figs.append(("Post-reconciliation vs ESTO", fig, True))
 
+    # Base-year sales shares snapshot
+    _t7 = workflow_outputs.get("T7")
+    t7 = _t7 if isinstance(_t7, pd.DataFrame) else pd.DataFrame()
+    if not t7.empty and {"vehicle_type", "drive_type", "sales_share"}.issubset(t7.columns):
+        base_df = t7.copy()
+        base_year_label = ""
+        if "year" in base_df.columns:
+            years = pd.to_numeric(base_df["year"], errors="coerce").dropna().astype(int)
+            if not years.empty:
+                base_year = int(years.min())
+                base_df = base_df[pd.to_numeric(base_df["year"], errors="coerce") == base_year]
+                base_year_label = f" ({base_year})"
+        pvt = base_df.pivot_table(
+            index="vehicle_type", columns="drive_type",
+            values="sales_share", aggfunc="mean", fill_value=0,
+        )
+        if not pvt.empty:
+            non_ice_cols = [c for c in pvt.columns if str(c).upper() != "ICE"]
+            order_key = pvt[non_ice_cols].sum(axis=1) if non_ice_cols else pvt.sum(axis=1)
+            pvt = pvt.loc[order_key.sort_values(ascending=False).index]
+            drive_order = pvt.sum(axis=0).sort_values(ascending=False).index.tolist()
+            fig = go.Figure()
+            for j, col in enumerate(drive_order):
+                fig.add_trace(go.Bar(
+                    name=str(col), y=pvt.index.tolist(), x=(pvt[col] * 100).tolist(),
+                    orientation="h",
+                    marker_color=_drive_colour(str(col), j),
+                ))
+            fig.update_layout(
+                **_layout(f"Sales shares (base-year){base_year_label}"),
+                barmode="stack", xaxis_title="Sales share (%)", yaxis_title="Vehicle type",
+                xaxis=dict(range=[0, 105]),
+            )
+            figs.append((
+                f"Sales shares (base-year){base_year_label}",
+                fig,
+                True,
+                "Vehicle types are sorted by non-ICE share, with the largest values at the bottom so smaller rows stay easier to compare.",
+            ))
+
     if isinstance(timings, dict) and timings:
         modules = [k.replace("_seconds", "").replace("_", " ") for k in timings if k.endswith("_seconds")]
         secs = [timings[k] for k in timings if k.endswith("_seconds")]
@@ -1896,12 +2019,26 @@ def _dashboard_diagram_source(filename: str) -> Path | None:
     return diagram if diagram.exists() else None
 
 
-def _index_extra_html(out_dir: Path | None = None) -> str:
+def _default_shared_dashboard_assets_dir(dashboard_dir: Path) -> Path:
+    """Return the common asset directory for economy dashboard pages."""
+    if dashboard_dir.name == "dashboard" and dashboard_dir.parent.name == "diagnostics":
+        return dashboard_dir.parents[2] / "shared" / "dashboard_assets"
+    return dashboard_dir / "shared_assets"
+
+
+def _html_relative_path(from_dir: Path, to_path: Path) -> str:
+    """Return a browser-friendly relative path between two local paths."""
+    return Path(os.path.relpath(to_path, start=from_dir)).as_posix()
+
+
+def _index_extra_html(
+    out_dir: Path | None = None,
+    shared_assets_dir: Path | None = None,
+) -> str:
     """Build rich overview content for index page (module guide + system diagrams).
 
-    If *out_dir* is provided, diagram PNGs are copied there and referenced with
-    relative paths so the dashboard works when served from any host (not just the
-    local machine via file:// URIs).
+    If *shared_assets_dir* is provided, diagram PNGs are copied there once and
+    referenced from each economy page with relative paths.
     """
     import shutil
 
@@ -1936,10 +2073,13 @@ def _index_extra_html(out_dir: Path | None = None) -> str:
         src = _dashboard_diagram_source(src_name)
         if src is None:
             continue
-        if out_dir is not None:
-            dest = out_dir / dest_name
+        if shared_assets_dir is not None:
+            shared_assets_dir.mkdir(parents=True, exist_ok=True)
+            dest = shared_assets_dir / dest_name
             shutil.copy2(src, dest)
-            img_src = dest_name
+            img_src = _html_relative_path(out_dir, dest) if out_dir is not None else dest.resolve().as_uri()
+        elif out_dir is not None:
+            img_src = _html_relative_path(out_dir, src)
         else:
             img_src = src.resolve().as_uri()
         diagrams.append(
@@ -2050,6 +2190,7 @@ def write_module_pages(
     workflow_outputs: dict[str, Any],
     dashboard_dir: str | Path,
     economy: str = "",
+    shared_assets_dir: str | Path | None = None,
 ) -> list[Path]:
     """Write workflow-stage interactive HTML dashboard pages plus an index page.
 
@@ -2059,6 +2200,9 @@ def write_module_pages(
             ``timings``.
         dashboard_dir: Directory to write HTML files into (created if absent).
         economy: Economy code shown in the page header (e.g. ``"12_NZ"``).
+        shared_assets_dir: Optional common directory for non-economy-specific
+            dashboard assets. Defaults to ``results/shared/dashboard_assets``
+            when dashboard_dir follows ``results/<economy>/diagnostics/dashboard``.
 
     Returns:
         List of :class:`~pathlib.Path` objects for the written HTML files.
@@ -2068,6 +2212,7 @@ def write_module_pages(
 
     out = Path(dashboard_dir)
     out.mkdir(parents=True, exist_ok=True)
+    shared_assets = Path(shared_assets_dir) if shared_assets_dir is not None else _default_shared_dashboard_assets_dir(out)
     for old_page in ("module2.html", "module4.html", "module5.html"):
         (out / old_page).unlink(missing_ok=True)
     written: list[Path] = []
@@ -2101,7 +2246,7 @@ def write_module_pages(
     t12 = workflow_outputs.get("T12")
     recon_alert = _reconciliation_alert_html(t12)
 
-    m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12")}
+    m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12", "T12_phev")}
     _write("module6.html", module6_figures(m6_sub), extra=recon_alert)
 
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
@@ -2112,7 +2257,7 @@ def write_module_pages(
            extra=recon_alert)
 
     # Index page — module guide + system diagrams
-    index_extra = _index_extra_html(out_dir=out)
+    index_extra = _index_extra_html(out_dir=out, shared_assets_dir=shared_assets)
     _write("index.html", [], extra=index_extra)
 
     return written
