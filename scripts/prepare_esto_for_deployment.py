@@ -30,11 +30,13 @@ def prepare(src: Path, dst: Path) -> None:
     year_cols = [c for c in df.columns if c.isdigit() and int(c) >= _MIN_YEAR]
     keep_cols = ["economy", "flows", "products", "is_subtotal"] + year_cols
 
-    filtered = (
-        df[df["flows"].str.startswith("15") & ~df["is_subtotal"]][keep_cols]
-        .reset_index(drop=True)
-    )
-    print(f"  Filtered (transport, non-subtotal, {_MIN_YEAR}+): {filtered.shape[0]:,} rows")
+    # Keep detail transport flows (15.01, 15.02, …) but drop the top-level
+    # '15 Transport sector' aggregate flow — it is a sum of the others.
+    # Product-level subtotals (e.g. '19 Total', '07 Petroleum products') are
+    # kept because the adapter explicitly needs them for reconciliation.
+    detail_flows = df["flows"].str.match(r"^15\.\d+")
+    filtered = df[detail_flows][keep_cols].reset_index(drop=True)
+    print(f"  Filtered (transport detail flows, {_MIN_YEAR}+): {filtered.shape[0]:,} rows")
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     filtered.to_csv(dst, index=False)
