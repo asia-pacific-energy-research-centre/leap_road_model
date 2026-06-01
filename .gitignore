@@ -1,0 +1,66 @@
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# ===========================
+# Virtual environments
+# ===========================
+.venv/
+venv/
+env/
+
+# ===========================
+# IDE / OS
+# ===========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.env
+
+# ===========================
+# Logs and serialised data
+# ===========================
+*.log
+*.pkl
+*.parquet
+
+# ===========================
+# All generated outputs
+# These are produced by running the model and are not committed.
+# results/ and plotting_output/ are recreated on each run.
+# ===========================
+results/
+plotting_output/
+intermediate_data/
+
+# ===========================
+# Runtime-written Module 1 inputs
+# Written at runtime by road_model_inputs_interface; not committed.
+# The directory is created automatically on first run.
+# ===========================
+input_data/module1_defaults/
+
+# ===========================
+# Raw unprocessed external data
+# Not needed by the model code; keep locally only.
+# ===========================
+input_data/unprocessed data/
+
+# ===========================
+# Images
+# Docs diagrams are large and not needed for the model to run.
+# ===========================
+*.png
+*.jpg
+*.jpeg

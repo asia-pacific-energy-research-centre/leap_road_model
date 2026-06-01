@@ -1,0 +1,71 @@
+# Fuel mappings
+# Maps APEC/ESTO fuel codes to LEAP fuel names used in branch paths.
+
+apec_to_leap_fuel:
+  07_01_motor_gasoline: Motor gasoline
+  07_07_gas_diesel_oil: Gas and diesel oil
+  07_09_lpg:            LPG
+  08_01_natural_gas:    Natural gas
+  08_02_lng:            LNG
+  17_electricity:       Electricity
+  16_x_hydrogen:        Hydrogen
+  16_06_biodiesel:      Biodiesel
+  16_05_biogasoline:    Biogasoline
+  16_01_biogas:         Biogas
+  16_x_efuel:           Efuel
+  16_07_bio_jet_kerosene: Bio jet kerosene  # non-road; included for completeness
+  07_06_kerosene:       Kerosene
+  07_x_jet_fuel:        Jet fuel
+  07_08_fuel_oil:       Fuel oil
+  16_x_ammonia:         Ammonia
+
+# Valid road transport fuels (subset of above)
+road_fuels:
+  - Motor gasoline
+  - Gas and diesel oil
+  - LPG
+  - Natural gas
+  - LNG
+  - Electricity
+  - Hydrogen
+  - Biodiesel
+  - Biogasoline
+  - Biogas
+  - Efuel
+
+# Fuel eligibility by drive type.
+# Defines which fuels are valid for each model-level drive type.
+# Used in Module 6 fuel allocation.
+drive_fuel_eligibility:
+  ICE:
+    primary:   [Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG]
+    biofuels:  [Biogasoline, Biodiesel, Biogas]
+    efuels:    [Efuel]
+  BEV:
+    primary:   [Electricity]
+    biofuels:  []
+    efuels:    []
+  PHEV:
+    electric:  [Electricity]
+    liquid:    [Motor gasoline, Gas and diesel oil]
+    biofuels:  [Biogasoline, Biodiesel]
+    efuels:    [Efuel]
+  FCEV:
+    primary:   [Hydrogen]
+    biofuels:  []
+    efuels:    []
+
+# Preferred allocation targets by fuel (for Module 6 Step 4)
+# Lists the drive types that a fuel is primarily allocated to.
+fuel_preferred_drives:
+  Motor gasoline:    [ICE, PHEV]
+  Gas and diesel oil: [ICE, PHEV]
+  LPG:               [ICE]
+  Natural gas:       [ICE]
+  LNG:               [ICE]
+  Electricity:       [BEV, PHEV]
+  Hydrogen:          [FCEV]
+  Biodiesel:         [ICE, PHEV]
+  Biogasoline:       [ICE, PHEV]
+  Biogas:            [ICE]
+  Efuel:             [ICE, PHEV]

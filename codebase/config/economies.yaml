@@ -1,0 +1,106 @@
+# APEC economy codes and metadata
+# Format: code: {name, region, base_year}
+# base_year: year used as the model starting point
+
+economies:
+  01_AUS:
+    name: Australia
+    region: OCE
+    base_year: 2022
+  02_BD:
+    name: Brunei Darussalam
+    region: SEA
+    base_year: 2022
+  03_CDA:
+    name: Canada
+    region: NA
+    base_year: 2022
+  04_CHL:
+    name: Chile
+    region: OAM
+    base_year: 2022
+  05_PRC:
+    name: "China, People's Republic of"
+    region: NEA
+    base_year: 2022
+  06_HKC:
+    name: "Hong Kong, China"
+    region: NEA
+    base_year: 2022
+  07_INA:
+    name: Indonesia
+    region: SEA
+    base_year: 2022
+  08_JPN:
+    name: Japan
+    region: NEA
+    base_year: 2022
+  09_ROK:
+    name: Korea
+    region: NEA
+    base_year: 2022
+  10_MAS:
+    name: Malaysia
+    region: SEA
+    base_year: 2022
+  11_MEX:
+    name: Mexico
+    region: NA
+    base_year: 2022
+  12_NZ:
+    name: New Zealand
+    region: OCE
+    base_year: 2022
+  13_PNG:
+    name: Papua New Guinea
+    region: OCE
+    base_year: 2022
+  14_PE:
+    name: Peru
+    region: OAM
+    base_year: 2022
+  15_PHL:
+    name: Philippines
+    region: SEA
+    base_year: 2022
+  16_RUS:
+    name: Russia
+    region: NEA
+    base_year: 2021  # Russia uses 2021 base year
+  17_SGP:
+    name: Singapore
+    region: SEA
+    base_year: 2022
+  18_CT:
+    name: Chinese Taipei
+    region: NEA
+    base_year: 2022
+  19_THA:
+    name: Thailand
+    region: SEA
+    base_year: 2022
+  20_USA:
+    name: United States of America
+    region: NA
+    base_year: 2022
+  21_VN:
+    name: Viet Nam
+    region: SEA
+    base_year: 2022
+
+# Aggregate codes (not individual economies)
+aggregates:
+  00_APEC: All APEC
+  22_SEA: Southeast Asia
+  23_NEA: Northeast Asia
+  24_OAM: Other Americas
+  25_OCE: Oceania
+  26_NA: North America
+
+# Region groupings (for regional defaults in Module 1)
+regions:
+  SEA: [02_BD, 07_INA, 10_MAS, 15_PHL, 17_SGP, 19_THA, 21_VN]
+  NEA: [05_PRC, 06_HKC, 08_JPN, 09_ROK, 16_RUS, 18_CT]
+  NA:  [03_CDA, 11_MEX, 20_USA]
+  OAM: [04_CHL, 14_PE]
+  OCE: [01_AUS, 12_NZ, 13_PNG]

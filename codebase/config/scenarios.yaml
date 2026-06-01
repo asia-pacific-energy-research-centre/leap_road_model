@@ -1,0 +1,18 @@
+# Scenario definitions
+# leap_id: LEAP internal ScenarioID integer
+
+scenarios:
+  Current Accounts:
+    leap_id: 1
+    description: Historical baseline / current policy
+  Reference:
+    leap_id: 2
+    description: Reference projection (current policy extended)
+  Target:
+    leap_id: 3
+    description: Decarbonisation / policy target pathway
+
+# Default projection range
+projection:
+  start_year: 2022
+  end_year: 2060

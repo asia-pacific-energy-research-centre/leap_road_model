@@ -1,0 +1,22 @@
+project_code,economy,data_year,phev_utilisation_rate,phev_utilisation_rate_pct,lower_rate,lower_pct,upper_rate,upper_pct,evidence_grade,estimation_status
+01_AUS,Australia,2024,0.52,52,0.42,42,0.62,62,B,synthetic_estimate
+02_BD,Brunei Darussalam,2025,0.34,34,0.18,18,0.52,52,D,synthetic_estimate
+03_CDA,Canada,2025,0.45,45,0.35,35,0.55,55,B,synthetic_estimate
+04_CHL,Chile,2024,0.4,40,0.28,28,0.52,52,C,synthetic_estimate
+05_PRC,China,2024,0.64,64,0.56,56,0.72,72,A,synthetic_estimate
+06_HKC,"Hong Kong, China",2025,0.54,54,0.42,42,0.64,64,C,synthetic_estimate
+07_INA,Indonesia,2025,0.38,38,0.22,22,0.52,52,C,synthetic_estimate
+08_JPN,Japan,2024,0.45,45,0.35,35,0.54,54,B,synthetic_estimate
+09_ROK,Korea,2024,0.53,53,0.44,44,0.61,61,B,synthetic_estimate
+10_MAS,Malaysia,2024,0.42,42,0.28,28,0.54,54,C,synthetic_estimate
+11_MEX,Mexico,2025,0.41,41,0.3,30,0.52,52,C,synthetic_estimate
+12_NZ,New Zealand,2024,0.5,50,0.4,40,0.6,60,B,synthetic_estimate
+13_PNG,Papua New Guinea,2025,0.08,8,0.02,2,0.18,18,D,synthetic_estimate
+14_PE,Peru,2024,0.33,33,0.2,20,0.46,46,C,synthetic_estimate
+15_PHL,Philippines,2025,0.35,35,0.22,22,0.48,48,C,synthetic_estimate
+16_RUS,Russia,2024,0.18,18,0.08,8,0.32,32,D,synthetic_estimate
+17_SGP,Singapore,2025,0.58,58,0.48,48,0.66,66,B,synthetic_estimate
+18_CT,Chinese Taipei,2024,0.5,50,0.38,38,0.6,60,C,synthetic_estimate
+19_THA,Thailand,2024,0.47,47,0.36,36,0.58,58,C,synthetic_estimate
+20_USA,United States,2024,0.42,42,0.34,34,0.5,50,A,synthetic_estimate
+21_VN,Viet Nam,2025,0.37,37,0.26,26,0.5,50,C,synthetic_estimate

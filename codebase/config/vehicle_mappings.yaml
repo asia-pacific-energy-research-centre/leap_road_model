@@ -1,0 +1,102 @@
+# Vehicle type mappings
+# Maps source-level vehicle type codes to model-level LEAP bucket labels.
+# Model bucket labels match LEAP branch names.
+
+# ── TRANSITIONAL (9th edition source codes) ───────────────────────────────────
+# The keys below are APEC 9th edition vehicle type codes.
+# They are also used by the current transport_data_system, which was built
+# around the same coding scheme. Once a new primary data source is adopted
+# these blocks should be replaced with source-specific adapters.
+# Do not treat these as permanent canonical mappings.
+
+ninth_ed_vehicle_to_bucket:
+  # Passenger road
+  car:  LPVs
+  suv:  LPVs
+  lt:   LPVs
+  2w:   Motorcycles
+  bus:  Buses
+  # Freight road
+  ht:   Trucks      # heavy truck
+  mt:   Trucks      # medium truck
+  lcv:  LCVs        # light commercial vehicle
+
+# Size class assigned to each 9th edition vehicle code.
+# LPVs: no "small" category — car → medium, suv/lt → large.
+# Trucks: mt → medium, ht → heavy.
+# Other vehicle types have no size split.
+ninth_ed_vehicle_to_size:
+  car:  medium
+  suv:  large
+  lt:   large
+  2w:   null
+  bus:  null
+  mt:   medium
+  ht:   heavy
+  lcv:  null
+
+# LEAP technology label construction: "{drive_type} {size}" where size is present.
+# For vehicle types with no size (Motorcycles, Buses, LCVs), label is just drive_type.
+# Examples: "ICE medium", "BEV large", "PHEV medium", "ICE" (Buses)
+# Size values used in labels:
+leap_size_labels:
+  medium: medium
+  large:  large
+  heavy:  heavy
+
+# Model bucket transport type assignments
+bucket_transport_type:
+  LPVs:       passenger
+  Motorcycles: passenger
+  Buses:       passenger
+  Trucks:      freight
+  LCVs:        freight
+
+# Vehicle-equivalent weights for ownership/saturation calculations.
+# These convert a physical vehicle count into car-equivalent units.
+# LPV = 1.0 is the reference unit.
+# Used in Module 3 motorisation envelope calculation.
+vehicle_equivalent_weights:
+  LPVs:        1.0
+  Motorcycles: 0.8
+  Buses:       20.0
+  Trucks:      5.0
+  LCVs:        1.5
+
+# Size classes available per vehicle type bucket.
+# Determines which branches appear in the LEAP skeleton for Module 2.
+# Use null (Python None) for vehicle types with no size split.
+vehicle_type_sizes:
+  LPVs:        [medium, large]
+  Motorcycles: [null]
+  Buses:       [null]
+  Trucks:      [medium, heavy]
+  LCVs:        [null]
+
+# LEAP branch label (used in branch paths)
+# These are the exact strings that appear in LEAP branch paths.
+leap_branch_labels:
+  LPVs:        LPVs
+  Motorcycles: Motorcycles
+  Buses:       Buses
+  Trucks:      Trucks
+  LCVs:        LCVs
+
+# Drive type mapping: 9th edition source codes → simplified model drive types.
+# TRANSITIONAL — same codes used by transport_data_system; update if source changes.
+# Model drive types: ICE, BEV, PHEV, FCEV.
+ninth_ed_drive_to_model:
+  ice_g:   ICE
+  ice_d:   ICE
+  cng:     ICE     # CNG treated as ICE variant for stock-flow; fuel tracked separately
+  lpg:     ICE     # Same
+  lng:     ICE     # Same
+  hev:     ICE     # HEV treated as ICE variant (no plug-in)
+  hev_g:   ICE
+  hev_d:   ICE
+  bev:     BEV
+  phev_g:  PHEV
+  phev_d:  PHEV
+  erev_g:  PHEV    # EREV treated as PHEV variant
+  erev_d:  PHEV
+  fcev:    FCEV
