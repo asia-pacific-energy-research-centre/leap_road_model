@@ -167,16 +167,16 @@ def write_module3_charts(t5: pd.DataFrame, diagnostics_dir: str | Path) -> list[
     if {"year", "motorisation_level"}.issubset(t5.columns):
         sub = t5[t5["transport_type"] == "passenger"].copy()
         if not sub.empty:
-            line = sub.groupby("year")["motorisation_level"].mean().dropna().sort_index()
-            sat = sub.groupby("year")["saturation_level"].mean().dropna().sort_index() if "saturation_level" in sub.columns else pd.Series(dtype=float)
+            line = (sub.groupby("year")["motorisation_level"].mean() * 1000.0).dropna().sort_index()
+            sat = (sub.groupby("year")["saturation_level"].mean() * 1000.0).dropna().sort_index() if "saturation_level" in sub.columns else pd.Series(dtype=float)
             fig, ax = plt.subplots(figsize=(9, 4))
             if not line.empty:
-                ax.plot(line.index, line.values, label="motorisation_level", color="#6A1B9A")
+                ax.plot(line.index, line.values, label="Projected X-LPV-equivalent vehicles", color="#6A1B9A")
             if not sat.empty:
-                ax.plot(sat.index, sat.values, label="saturation_level", color="#EF6C00", linestyle="--")
-            ax.set_title("Module 3: Passenger motorisation envelope")
+                ax.plot(sat.index, sat.values, label="Saturation level", color="#EF6C00", linestyle="--")
+            ax.set_title("Module 3: Passenger X-LPV-equivalent vehicles")
             ax.set_xlabel("Year")
-            ax.set_ylabel("Car-equivalent per capita")
+            ax.set_ylabel("X-LPV-equivalent vehicles per 1,000 people")
             ax.legend(fontsize=8)
             ax.grid(alpha=0.3)
             saved.append(_save(fig, out / "module3_motorisation_envelope.png"))

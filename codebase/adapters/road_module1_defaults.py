@@ -52,7 +52,10 @@ _VARIABLE_MAP = {
     "Stock":                        "stock",
     "Sales Share":                  "sales_share",
     "Vehicle Equivalent Weight":    "vehicle_equivalent_weight",
+    "Vehicle Equivalent Weight Lower Bound": "vehicle_equivalent_weight_lower_bound",
+    "Vehicle Equivalent Weight Upper Bound": "vehicle_equivalent_weight_upper_bound",
     "Passenger Vehicle Saturation": "saturation_level",
+    "Passenger Saturation Reached": "passenger_saturation_reached",
     "PHEV Electric Driving Share":  "phev_electric_utilisation_rate",
     "Survival Rate":                "survival_rate",
     "Vintage Profile Share":        "vintage_share",
@@ -299,7 +302,7 @@ def _load_single_economy(
         if parsed["vehicle_type"] is None and variable not in (
             "survival_rate", "vintage_share",
             "reconciliation_bound_lower", "reconciliation_bound_upper",
-            "reconciliation_weight", "saturation_level",
+            "reconciliation_weight", "saturation_level", "passenger_saturation_reached",
             "phev_electric_utilisation_rate",
         ):
             continue
@@ -537,6 +540,64 @@ def get_passenger_saturation_level(defaults_df: pd.DataFrame, economy: str) -> f
     value = float(sub.iloc[0])
     log.info("Module 1 passenger saturation for %s: %.4f", economy, value)
     return value
+
+
+def _parse_bool_value(value: object) -> bool:
+    """Parse common Module 1 boolean encodings."""
+    if isinstance(value, bool):
+        return value
+    if pd.isna(value):
+        return False
+    if isinstance(value, (int, float)):
+        return float(value) != 0.0
+    text = str(value).strip().lower()
+    return text in {"true", "yes", "y", "1", "reached", "saturated"}
+
+
+def get_passenger_saturation_reached(defaults_df: pd.DataFrame, economy: str) -> bool:
+    """
+    Extract explicit passenger saturation reached flag for Module 3.
+
+    Returns False when the flag is absent so existing economies retain current behavior.
+    """
+    mask = (
+        (defaults_df["economy"] == economy)
+        & (defaults_df["variable"] == "passenger_saturation_reached")
+    )
+    sub = defaults_df[mask]["value"].dropna()
+    if sub.empty:
+        return False
+    value = _parse_bool_value(sub.iloc[0])
+    log.info("Module 1 passenger saturation reached flag for %s: %s", economy, value)
+    return value
+
+
+def get_vehicle_equivalent_weight_bounds(defaults_df: pd.DataFrame, economy: str) -> dict[str, tuple[float, float]]:
+    """
+    Extract calibration bounds for passenger vehicle-equivalent weights.
+
+    Defaults apply when Module 1 does not provide explicit bounds.
+    """
+    bounds = {
+        "Motorcycles": (0.05, 0.80),
+        "Buses": (8.0, 30.0),
+    }
+    for vehicle_type in tuple(bounds):
+        lower = defaults_df[
+            (defaults_df["economy"] == economy)
+            & (defaults_df["vehicle_type"] == vehicle_type)
+            & (defaults_df["variable"] == "vehicle_equivalent_weight_lower_bound")
+        ]["value"].dropna()
+        upper = defaults_df[
+            (defaults_df["economy"] == economy)
+            & (defaults_df["vehicle_type"] == vehicle_type)
+            & (defaults_df["variable"] == "vehicle_equivalent_weight_upper_bound")
+        ]["value"].dropna()
+        if not lower.empty and not upper.empty:
+            bounds[vehicle_type] = (float(lower.iloc[0]), float(upper.iloc[0]))
+
+    log.info("Module 1 vehicle equivalent calibration bounds for %s: %s", economy, bounds)
+    return bounds
 
 
 def get_reconciliation_weights(defaults_df: pd.DataFrame, economy: str) -> dict[str, float] | None:
