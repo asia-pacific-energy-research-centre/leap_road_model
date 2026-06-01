@@ -251,17 +251,18 @@ def project_passenger_stocks(
         population=population,
     )
 
-    # Constant base-year shares if not supplied
+    # Constant base-year X-LPV-equivalent shares if not supplied.  The
+    # motorisation envelope is in weighted vehicle-equivalents, so convert each
+    # vehicle type back to physical vehicles after allocation.
     if vehicle_type_shares is None:
-        total_base = sum(base_stocks.values()) or 1.0
         vehicle_type_shares = {
-            vt: pd.Series(s / total_base, index=years)
-            for vt, s in base_stocks.items()
+            vt: pd.Series(capacity_shares.get(vt, 0.0), index=years)
+            for vt in base_stocks
         }
 
     total_target_stock = M_envelope * population
     target_stocks = {
-        vt: total_target_stock * shares
+        vt: (total_target_stock * shares) / weights.get(vt, 1.0)
         for vt, shares in vehicle_type_shares.items()
         if vt in base_stocks
     }
@@ -595,7 +596,11 @@ def estimate_freight_elasticity(
 # ===========================================================================
 
 def _read_base_stocks(base_year_branches: pd.DataFrame, base_year: int) -> dict[str, float]:
-    """Sum base-year stock by vehicle_type from T4 table."""
+    """Sum base-year stock by vehicle_type from T4 table.
+
+    T4 is fuel-level, so multi-fuel drive stocks appear once per fuel.  Count
+    each vehicle branch once before aggregating to avoid inflating stocks.
+    """
     if "base_year" in base_year_branches.columns:
         df = base_year_branches[base_year_branches["base_year"] == base_year]
     else:
@@ -604,6 +609,13 @@ def _read_base_stocks(base_year_branches: pd.DataFrame, base_year: int) -> dict[
     if "stock" not in df.columns:
         log.warning("No 'stock' column in base_year_branches — returning zero stocks")
         return {}
+
+    branch_keys = [
+        c for c in ["transport_type", "vehicle_type", "size", "drive_type"]
+        if c in df.columns
+    ]
+    if branch_keys:
+        df = df.drop_duplicates(subset=branch_keys)
 
     return df.groupby("vehicle_type")["stock"].sum().to_dict()
 

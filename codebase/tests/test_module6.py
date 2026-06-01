@@ -371,6 +371,29 @@ class TestStockAccountingIdentity:
         assert lpg_row["energy_correction_factor"] == 0.0
         assert lpg_row["final_branch_fuel_pj"] == 0.0
 
+    def test_iterative_reconciliation_keeps_cumulative_mileage_efficiency_bounds(self):
+        """Iterative residual steps should not compound bounded scalars past their limits."""
+        t4 = _make_t4(
+            _branch("LPVs", "ICE", "Motor gasoline", stock=1000, mileage=15000, efficiency=100),
+        )
+        branch_energy = calculate_initial_branch_energy(t4)
+        remaining = calculate_remaining_esto(_make_esto({"Motor gasoline": 15.0}), pd.DataFrame())
+        t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
+        t9 = reconcile_stock_mileage_efficiency(
+            t8,
+            t4,
+            weights={"stock": 0.5, "mileage": 0.25, "efficiency": 0.25},
+            scalar_bounds={
+                "stock": (0.0, np.inf),
+                "mileage": (0.85, 1.15),
+                "efficiency": (0.90, 1.10),
+            },
+        )
+
+        row = t9.iloc[0]
+        assert 0.85 <= row["mileage_scalar"] <= 1.15
+        assert 0.90 <= row["efficiency_scalar"] <= 1.10
+
 
 # ---------------------------------------------------------------------------
 # calculate_remaining_esto

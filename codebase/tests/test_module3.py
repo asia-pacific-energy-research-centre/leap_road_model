@@ -18,6 +18,7 @@ from modules.module3_stock_targets import (
     estimate_freight_elasticity,
     project_passenger_stocks,
     project_freight_stocks,
+    _read_base_stocks,
 )
 
 
@@ -228,6 +229,9 @@ class TestProjectPassengerStocks:
         M_base = weighted_total / population_series[2022]
         assert abs(result["M_envelope"][2022] - M_base) < 1e-4
 
+        for vt, stock in base_stocks.items():
+            assert abs(result["target_stocks"][vt][2022] - stock) < 1e-4
+
     def test_stocks_non_negative(self, population_series, passenger_energy_series):
         years = list(range(2022, 2061))
         base_stocks = {"LPVs": 3_000_000, "Motorcycles": 150_000, "Buses": 8_000}
@@ -243,3 +247,16 @@ class TestProjectPassengerStocks:
 
         for vt, series in result["target_stocks"].items():
             assert (series >= 0).all(), f"Negative stock for {vt}"
+
+
+class TestReadBaseStocks:
+    def test_fuel_rows_do_not_duplicate_vehicle_stock(self):
+        t4 = pd.DataFrame([
+            {"base_year": 2022, "transport_type": "passenger", "vehicle_type": "LPVs", "size": "medium", "drive_type": "ICE", "fuel": "Motor gasoline", "stock": 100.0},
+            {"base_year": 2022, "transport_type": "passenger", "vehicle_type": "LPVs", "size": "medium", "drive_type": "ICE", "fuel": "Diesel", "stock": 100.0},
+            {"base_year": 2022, "transport_type": "passenger", "vehicle_type": "LPVs", "size": "medium", "drive_type": "BEV", "fuel": "Electricity", "stock": 25.0},
+        ])
+
+        stocks = _read_base_stocks(t4, 2022)
+
+        assert stocks["LPVs"] == 125.0

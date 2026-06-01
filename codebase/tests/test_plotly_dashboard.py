@@ -30,7 +30,7 @@ def test_module3_motorisation_chart_uses_per_year_level_not_row_sum():
     )
 
     figs = module3_figures(t5)
-    motorisation_fig = next(item[1] for item in figs if item[0] == "Passenger motorisation level vs saturation level")
+    motorisation_fig = next(item[1] for item in figs if item[0] == "Passenger X-LPV-equivalent vehicles vs saturation")
 
-    line_trace = next(trace for trace in motorisation_fig.data if trace.name == "motorisation_level")
-    assert list(line_trace.y) == pytest.approx([0.9])
+    line_trace = next(trace for trace in motorisation_fig.data if trace.name == "Projected X-LPV-equivalent vehicles")
+    assert list(line_trace.y) == pytest.approx([900.0])

@@ -409,8 +409,8 @@ def reconcile_stock_mileage_efficiency(
     mileage_scalar   = ecf ^ mileage_weight
     efficiency_scalar = ecf ^ (-efficiency_weight)  ← inverse because higher efficiency = less energy
 
-    Bounded scalars are reapplied iteratively against the residual energy gap so
-    branches can continue moving after a clamp on mileage or efficiency.
+    Bounded scalars are reapplied iteratively against the residual energy gap,
+    but bounds apply to the cumulative change from the original branch values.
 
     Returns T9_reconciliation_scalars DataFrame.
     """
@@ -479,13 +479,17 @@ def reconcile_stock_mileage_efficiency(
                     break
 
                 ecf_iter = allocated_branch_fuel_pj / current_branch_fuel_pj
-                ss_step, ms_step, es_step, adj_s_new, adj_m_new, adj_e_new, within_step = apply_scalars(
-                    adj_s, adj_m, adj_e, ecf_iter, weights, scalar_bounds
+                ss, ms, es, adj_s_new, adj_m_new, adj_e_new, within_step = apply_scalars_with_cumulative_bounds(
+                    original_stock=s,
+                    original_mileage=m,
+                    original_efficiency=e,
+                    ecf=ecf_iter,
+                    weights=weights,
+                    scalar_bounds=scalar_bounds,
+                    current_stock_scalar=ss,
+                    current_mileage_scalar=ms,
+                    current_efficiency_scalar=es,
                 )
-
-                ss *= ss_step
-                ms *= ms_step
-                es *= es_step
                 adj_s, adj_m, adj_e = adj_s_new, adj_m_new, adj_e_new
                 final_branch_fuel_pj = adj_s * adj_m / adj_e / 1_000_000 if adj_e > 0 else 0.0
                 iterations_used = iteration
@@ -586,6 +590,70 @@ def apply_scalars(
         stock * stock_scalar,
         mileage * mileage_scalar,
         efficiency * efficiency_scalar,
+        within_bounds,
+    )
+
+
+def apply_scalars_with_cumulative_bounds(
+    original_stock: float,
+    original_mileage: float,
+    original_efficiency: float,
+    ecf: float,
+    weights: dict[str, float],
+    scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]],
+    current_stock_scalar: float,
+    current_mileage_scalar: float,
+    current_efficiency_scalar: float,
+) -> tuple[float, float, float, float, float, float, bool]:
+    """
+    Apply one residual reconciliation step while bounding total branch change.
+
+    Returns cumulative scalars and adjusted values, where each adjusted value is
+    based on the original branch value rather than the prior iteration value.
+    """
+    w_s, w_m, w_e = weights["stock"], weights["mileage"], weights["efficiency"]
+    bounds = _normalise_scalar_bounds(scalar_bounds)
+    lo_s, hi_s = bounds["stock"]
+    lo_m, hi_m = bounds["mileage"]
+    lo_e, hi_e = bounds["efficiency"]
+
+    if ecf <= 0:
+        stock_scalar = lo_s
+        mileage_scalar = lo_m
+        efficiency_scalar = hi_e
+        return (
+            stock_scalar,
+            mileage_scalar,
+            efficiency_scalar,
+            original_stock * stock_scalar,
+            original_mileage * mileage_scalar,
+            original_efficiency * efficiency_scalar,
+            False,
+        )
+
+    raw_stock_scalar = current_stock_scalar * (ecf ** w_s)
+    raw_mileage_scalar = current_mileage_scalar * (ecf ** w_m)
+    raw_efficiency_scalar = current_efficiency_scalar * (ecf ** (-w_e))
+
+    stock_scalar = float(np.clip(raw_stock_scalar, lo_s, hi_s))
+    mileage_scalar = float(np.clip(raw_mileage_scalar, lo_m, hi_m))
+    efficiency_scalar = float(np.clip(raw_efficiency_scalar, lo_e, hi_e))
+
+    within_bounds = all(
+        [
+            lo_s <= raw_stock_scalar <= hi_s,
+            lo_m <= raw_mileage_scalar <= hi_m,
+            lo_e <= raw_efficiency_scalar <= hi_e,
+        ]
+    )
+
+    return (
+        stock_scalar,
+        mileage_scalar,
+        efficiency_scalar,
+        original_stock * stock_scalar,
+        original_mileage * mileage_scalar,
+        original_efficiency * efficiency_scalar,
         within_bounds,
     )
 

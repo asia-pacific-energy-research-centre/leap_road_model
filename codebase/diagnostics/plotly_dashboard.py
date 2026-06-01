@@ -17,6 +17,7 @@ Or call per-module functions directly::
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,49 @@ _COLOURS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 _TEMPLATE = "plotly_white"
+
+# Fuel colours aligned with the leap_dashboard product_color_legend (v3 JSON).
+_FUEL_COLOURS: dict[str, str] = {
+    "Motor gasoline": "#842482",
+    "Gas and diesel oil": "#DB4F29",
+    "Petroleum products": "#842482",
+    "Hydrogen": "#F67AA3",
+    "Hydrogen-based fuels": "#D46FA0",
+    "Electricity": "#FFD757",
+    "Biogasoline": "#f09417",
+    "Biodiesel": "#304A1E",
+    "Biojet kerosene": "#9ACD32",
+    "Natural gas": "#0070C0",
+    "Gas": "#0070C0",
+    "LNG": "#A20042",
+    "LPG": "#4AA8A1",
+    "Biogas": "#00FE73",
+    "Efuel": "#8A8A8A",
+    "Coal": "#0D0D0D",
+    "Nuclear": "#C6188C",
+    "Hydro": "#B0D6F0",
+    "Solar": "#FFD700",
+    "Wind": "#000099",
+    "Biomass": "#2E8B57",
+    "Others": "#8A8A8A",
+}
+
+# Drive-type colours: fossil-grey for ICE, technology colours for ZEVs.
+_DRIVE_COLOURS: dict[str, str] = {
+    "ICE": "#A6A6A6",
+    "BEV": "#FFD757",
+    "FCEV": "#F67AA3",
+    "PHEV": "#f09417",
+    "HEV": "#2E8B57",
+}
+
+
+def _fuel_colour(fuel: str, idx: int) -> str:
+    return _FUEL_COLOURS.get(str(fuel), _COLOURS[idx % len(_COLOURS)])
+
+
+def _drive_colour(drive: str, idx: int) -> str:
+    return _DRIVE_COLOURS.get(str(drive), _COLOURS[idx % len(_COLOURS)])
 
 
 def _can_plot() -> bool:
@@ -512,31 +556,31 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
         # rather than summing across rows.
         sub = t5[(t5.get("transport_type") == "passenger") & t5["motorisation_level"].notna()].copy()
         if not sub.empty:
-            line = sub.groupby("year")["motorisation_level"].mean().dropna().sort_index()
+            line = (sub.groupby("year")["motorisation_level"].mean() * 1000.0).dropna().sort_index()
             sat = (
-                sub.groupby("year")["saturation_level"].mean().dropna().sort_index()
+                (sub.groupby("year")["saturation_level"].mean() * 1000.0).dropna().sort_index()
                 if "saturation_level" in sub.columns else pd.Series(dtype=float)
             )
             fig = go.Figure()
             if not line.empty:
                 fig.add_trace(go.Scatter(
                     x=line.index.tolist(), y=line.values.tolist(),
-                    name="motorisation_level", mode="lines+markers",
+                    name="Projected X-LPV-equivalent vehicles", mode="lines+markers",
                 ))
             if not sat.empty:
                 fig.add_trace(go.Scatter(
                     x=sat.index.tolist(), y=sat.values.tolist(),
-                    name="saturation_level", mode="lines+markers",
+                    name="Saturation level", mode="lines+markers",
                     line=dict(dash="dash"),
                 ))
             fig.update_layout(
-                **_layout("Module 3 — Passenger motorisation level vs saturation level"),
-                xaxis_title="Year", yaxis_title="Car-equivalent per capita",
+                **_layout("Module 3 - Passenger X-LPV-equivalent vehicles per 1,000 people"),
+                xaxis_title="Year", yaxis_title="X-LPV-equivalent vehicles per 1,000 people",
             )
             figs.append((
-                "Passenger motorisation level vs saturation level",
+                "Passenger X-LPV-equivalent vehicles vs saturation",
                 fig,
-                "Passenger motorisation level versus saturation level, as documented in Module 3 diagnostics.",
+                "Projected passenger stock converted to X-LPV-equivalent vehicles per 1,000 people, compared with the saturation level.",
             ))
 
     if {"vehicle_type", "gdp_elasticity_used"}.issubset(t5.columns):
@@ -917,7 +961,16 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             yaxis: dict[str, Any] = {"title": "Average correction factor"}
             positive = stats[stats > 0]
             if not positive.empty and positive.max() / positive.min() > 20:
-                yaxis["type"] = "log"
+                min_power = int(math.floor(math.log10(positive.min())))
+                max_power = int(math.ceil(math.log10(positive.max())))
+                tickvals = [10 ** p for p in range(min_power, max_power + 1)]
+                yaxis.update({
+                    "type": "log",
+                    "title": "Average correction factor (log scale)",
+                    "tickmode": "array",
+                    "tickvals": tickvals,
+                    "ticktext": [f"{v:g}" for v in tickvals],
+                })
             fig.update_layout(
                 **_layout("Module 6 - Average correction factor by fuel"),
                 yaxis=yaxis,
@@ -961,28 +1014,40 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             .unstack(fill_value=0.0)
         )
         if not heat.empty:
-            heat = heat.loc[heat.sum(axis=1).sort_values(ascending=False).index]
-            fig = go.Figure(go.Heatmap(
-                x=heat.columns.tolist(),
-                y=heat.index.tolist(),
-                z=heat.to_numpy(),
-                colorscale="Blues",
-                colorbar=dict(title="PJ"),
-                hovertemplate=(
-                    "Vehicle/drive=%{y}<br>Fuel=%{x}"
-                    "<br>Final allocation=%{z:.2f} PJ<extra></extra>"
-                ),
-            ))
+            row_totals = heat.sum(axis=1)
+            heat = heat.loc[row_totals[row_totals > 0].sort_values(ascending=False).index]
+            row_totals = heat.sum(axis=1)
+        if not heat.empty:
+            share = heat.div(row_totals, axis=0) * 100.0
+            fuel_order = heat.sum(axis=0).sort_values(ascending=False).index.tolist()
+            fig = go.Figure()
+            for i, fuel in enumerate(fuel_order):
+                fig.add_trace(go.Bar(
+                    x=share.index.tolist(),
+                    y=share[fuel].tolist(),
+                    name=str(fuel),
+                    marker_color=_COLOURS[i % len(_COLOURS)],
+                    customdata=heat[fuel].tolist(),
+                    hovertemplate=(
+                        "Vehicle/drive=%{x}<br>Fuel=" + str(fuel)
+                        + "<br>Share=%{y:.1f}%"
+                        + "<br>Energy=%{customdata:.2f} PJ<extra></extra>"
+                    ),
+                ))
             fig.update_layout(
-                **_layout("Module 6 - Final fuel allocation by vehicle type and drive"),
-                xaxis_title="Fuel",
-                yaxis_title="Vehicle type | drive",
+                **_layout("Module 6 - Final fuel allocation share by vehicle type and drive"),
+                barmode="stack",
+                height=620,
+                xaxis_title="Vehicle type | drive",
+                yaxis_title="Share of final allocated fuel energy (%)",
+                yaxis_range=[0, 100],
+                legend_title_text="Fuel",
             )
             figs.append((
-                "Final fuel allocation by vehicle type and drive",
+                "Final fuel allocation share by vehicle type and drive",
                 fig,
                 True,
-                "Final allocated fuel energy after reconciliation, grouped by vehicle type and drive. Darker cells carry more PJ.",
+                "Final allocated fuel energy mix after reconciliation. Each bar sums to 100%; fuels with the largest total allocation are stacked from the bottom.",
             ))
 
     return figs
@@ -992,8 +1057,26 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
 # Module 7 — mirror model
 # ---------------------------------------------------------------------------
 
-def module7_figures(module7_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
-    """Interactive QA figures for Module 7 mirror outputs (T13, T13_fuel)."""
+_MODULE7_NOTE_HTML = (
+    '<div class="intro-card">'
+    '<h3>About these outputs</h3>'
+    '<p>This page shows a <strong>Python simulation</strong> of what LEAP might produce given the road model assumptions. '
+    'These are not LEAP outputs — they are a mirror calculation run in Python to validate that the model logic produces '
+    'sensible results before the data is handed off to LEAP. Use them for QA and sanity-checking, not as final results.</p>'
+    '</div>'
+)
+
+
+def module7_figures(
+    module7_outputs: dict[str, Any],
+    t7f: pd.DataFrame | None = None,
+) -> list[tuple[str, Any]]:
+    """Interactive QA figures for Module 7 mirror outputs (T13, T13_fuel).
+
+    Args:
+        module7_outputs: dict with T13 and T13_fuel DataFrames.
+        t7f: Optional T7f future sales shares DataFrame (for sales share by drive type).
+    """
     if not _can_plot() or not module7_outputs:
         return []
 
@@ -1010,10 +1093,10 @@ def module7_figures(module7_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 line=dict(color=_COLOURS[i % len(_COLOURS)]),
             ))
         fig.update_layout(
-            **_layout("Module 7 — Mirror stock by vehicle type"),
+            **_layout("Stock by vehicle type"),
             xaxis_title="Year", yaxis_title="Vehicles",
         )
-        figs.append(("Mirror stock by vehicle type", fig))
+        figs.append(("Stock by vehicle type", fig))
 
     if not t13.empty and {"year", "vehicle_type", "mirror_vehicle_km"}.issubset(t13.columns):
         fig = go.Figure()
@@ -1024,10 +1107,10 @@ def module7_figures(module7_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 line=dict(color=_COLOURS[i % len(_COLOURS)]),
             ))
         fig.update_layout(
-            **_layout("Module 7 — Mirror vehicle-km by vehicle type"),
+            **_layout("Vehicle-km by vehicle type"),
             xaxis_title="Year", yaxis_title="Vehicle-km",
         )
-        figs.append(("Mirror vehicle-km by vehicle type", fig))
+        figs.append(("Vehicle-km by vehicle type", fig))
 
     if not t13.empty and {"year", "transport_type", "mirror_energy_pj"}.issubset(t13.columns):
         energy = (
@@ -1042,10 +1125,10 @@ def module7_figures(module7_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                     name=str(col), stackgroup="en", mode="lines",
                 ))
             fig.update_layout(
-                **_layout("Module 7 — Mirror energy by transport type"),
+                **_layout("Energy by transport type"),
                 xaxis_title="Year", yaxis_title="Energy (PJ)",
             )
-            figs.append(("Mirror energy by transport type", fig))
+            figs.append(("Energy by transport type", fig))
 
     if not t13_fuel.empty and {"year", "fuel", "mirror_fuel_energy_pj"}.issubset(t13_fuel.columns):
         fe = (
@@ -1053,17 +1136,101 @@ def module7_figures(module7_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             .sum().unstack(fill_value=0.0).sort_index()
         )
         if not fe.empty:
+            # Order fuels by total energy descending so the largest fuel is at the bottom.
+            fuel_order = fe.sum(axis=0).sort_values(ascending=False).index.tolist()
+            # Drop fuels with zero total so the legend stays clean.
+            fuel_order = [f for f in fuel_order if fe[f].sum() > 0]
             fig = go.Figure()
-            for i, col in enumerate(fe.columns):
+            for i, fuel in enumerate(fuel_order):
                 fig.add_trace(go.Scatter(
-                    x=fe.index.tolist(), y=fe[col].tolist(),
-                    name=str(col), stackgroup="fuel_en", mode="lines",
+                    x=fe.index.tolist(), y=fe[fuel].tolist(),
+                    name=str(fuel), stackgroup="fuel_en", mode="lines",
+                    line=dict(color=_fuel_colour(fuel, i)),
                 ))
             fig.update_layout(
-                **_layout("Module 7 — Mirror fuel energy mix"),
+                **_layout("Fuel energy mix"),
                 xaxis_title="Year", yaxis_title="Fuel energy (PJ)",
             )
-            figs.append(("Mirror fuel energy mix", fig))
+            figs.append(("Fuel energy mix", fig))
+
+    # --- Drive-type charts ---
+
+    if not t13.empty and {"year", "drive_type", "mirror_stock"}.issubset(t13.columns):
+        stock_by_dt = (
+            t13.groupby(["year", "drive_type"])["mirror_stock"]
+            .sum().unstack(fill_value=0.0).sort_index()
+        )
+        if not stock_by_dt.empty:
+            total = stock_by_dt.sum(axis=1)
+            share_dt = stock_by_dt.div(total.replace(0, float("nan")), axis=0).fillna(0.0)
+            # Order: ICE first (largest), then ZEVs ascending by final-year share.
+            dt_order = share_dt.iloc[-1].sort_values(ascending=False).index.tolist()
+            fig = go.Figure()
+            for i, dt in enumerate(dt_order):
+                fig.add_trace(go.Scatter(
+                    x=share_dt.index.tolist(),
+                    y=(share_dt[dt] * 100).tolist(),
+                    name=str(dt), stackgroup="stock_share", mode="lines",
+                    line=dict(color=_drive_colour(dt, i)),
+                ))
+            fig.update_layout(
+                **_layout("Stock share by drive type"),
+                xaxis_title="Year", yaxis_title="Share of fleet (%)",
+            )
+            figs.append((
+                "Stock share by drive type",
+                fig,
+                "Share of total vehicle stock by drive type over the projection. ICE dominates in the base year; shares shift as ZEVs enter the fleet.",
+            ))
+
+    if t7f is not None and not t7f.empty and {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
+        ss = (
+            t7f.groupby(["year", "drive_type"])["sales_share"]
+            .mean().unstack(fill_value=0.0).sort_index()
+        )
+        if not ss.empty:
+            dt_order = ss.iloc[-1].sort_values(ascending=False).index.tolist()
+            fig = go.Figure()
+            for i, dt in enumerate(dt_order):
+                fig.add_trace(go.Scatter(
+                    x=ss.index.tolist(),
+                    y=(ss[dt] * 100).tolist(),
+                    name=str(dt), stackgroup="sales_share", mode="lines",
+                    line=dict(color=_drive_colour(dt, i)),
+                ))
+            fig.update_layout(
+                **_layout("Sales share by drive type"),
+                xaxis_title="Year", yaxis_title="Share of new sales (%)",
+            )
+            figs.append((
+                "Sales share by drive type",
+                fig,
+                "New vehicle sales mix by drive type. This is the technology transition pathway input — stock shares follow with a lag as older vehicles retire.",
+            ))
+
+    if not t13.empty and {"year", "drive_type", "mirror_energy_pj"}.issubset(t13.columns):
+        en_by_dt = (
+            t13.groupby(["year", "drive_type"])["mirror_energy_pj"]
+            .sum().unstack(fill_value=0.0).sort_index()
+        )
+        if not en_by_dt.empty:
+            dt_order = en_by_dt.sum(axis=0).sort_values(ascending=False).index.tolist()
+            fig = go.Figure()
+            for i, dt in enumerate(dt_order):
+                fig.add_trace(go.Scatter(
+                    x=en_by_dt.index.tolist(), y=en_by_dt[dt].tolist(),
+                    name=str(dt), stackgroup="en_dt", mode="lines",
+                    line=dict(color=_drive_colour(dt, i)),
+                ))
+            fig.update_layout(
+                **_layout("Energy use by drive type"),
+                xaxis_title="Year", yaxis_title="Energy (PJ)",
+            )
+            figs.append((
+                "Energy use by drive type",
+                fig,
+                "Total energy demand split by drive type. ICE energy may decline as ZEVs grow; BEV/FCEV energy reflects electricity and hydrogen demand.",
+            ))
 
     if not t13.empty and {"mirror_energy_pj", "leap_energy_pj", "year"}.issubset(t13.columns):
         comp = t13.dropna(subset=["leap_energy_pj"]).copy()
@@ -1077,10 +1244,10 @@ def module7_figures(module7_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             fig.add_hline(y=0.0, line_dash="dash", line_color="#333333")
             fig.add_trace(go.Bar(x=diff.index.tolist(), y=diff.tolist(), marker_color="#D81B60"))
             fig.update_layout(
-                **_layout("Module 7 — Mirror minus LEAP energy"),
+                **_layout("Simulation minus LEAP energy"),
                 xaxis_title="Year", yaxis_title="Energy difference (PJ)",
             )
-            figs.append(("Mirror minus LEAP energy", fig))
+            figs.append(("Simulation minus LEAP energy", fig))
 
     return figs
 
@@ -1160,7 +1327,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     # Append Module 7 figures if available
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
     if any(v is not None for v in m7_sub.values()):
-        figs.extend(module7_figures(m7_sub))
+        figs.extend(module7_figures(m7_sub, t7f=workflow_outputs.get("T7f")))
 
     return figs
 
@@ -1202,7 +1369,7 @@ _NAV_LINKS: list[tuple[str, str]] = [
     ("module1.html", "Inputs & branches"),
     ("module3.html", "Stocks, sales & turnover"),
     ("module6.html", "Reconciliation"),
-    ("module7.html", "Mirror model"),
+    ("module7.html", "Simulated outputs"),
     ("workflow_summary.html", "Summary"),
 ]
 
@@ -1339,7 +1506,7 @@ _MODULE_META: dict[str, tuple[str, str]] = {
     "module4": ("Module 4 — Sales & turnover", "New sales, stock trajectories, vehicle retirements and base-year vintage profiles from the fleet turnover module."),
     "module5": ("Module 5 — Sales shares", "Drive-type sales shares over the projection horizon by vehicle type, showing technology transition trajectories."),
     "module6": ("Module 6 — LEAP handoff & reconciliation", "Fuel reconciliation diagnostics (ESTO vs model), reconciliation scalars, ECF by fuel, device shares and allocation concentration."),
-    "module7": ("Module 7 — Mirror model", "Full mirror model outputs: stock, vehicle-km, energy by transport type, fuel energy mix and mirror vs LEAP energy comparison."),
+    "module7": ("Module 7 — Simulated outputs", "Python simulation of what LEAP might produce: stock, vehicle-km, energy by transport type, fuel energy mix, drive-type breakdowns, and comparison with LEAP energy."),
     "workflow_summary": ("Workflow summary", "End-of-process summary: post-reconciliation vs ESTO targets, workflow timing by module and Module 7 aggregate outputs."),
 }
 
@@ -1538,7 +1705,8 @@ def write_module_pages(
     _write("module6.html", module6_figures(m6_sub), extra=recon_alert)
 
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
-    _write("module7.html", module7_figures(m7_sub))
+    _write("module7.html", module7_figures(m7_sub, t7f=workflow_outputs.get("T7f")),
+           extra=_MODULE7_NOTE_HTML)
 
     _write("workflow_summary.html", workflow_summary_figures(workflow_outputs),
            extra=recon_alert)
