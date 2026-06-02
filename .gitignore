@@ -44,14 +44,16 @@ results/*
 plotting_output/
 intermediate_data/
 
-# Commit the dashboard HTML + diagram PNGs for deployment (served on HuggingFace Space).
+# Commit lightweight dashboard HTML for deployment (served on HuggingFace Space).
+# Keep bulky module outputs and static diagnostic PNG suites ignored.
 # Git requires each directory level to be explicitly un-ignored when the parent is ignored.
-!results/20_USA/
-results/20_USA/*
-!results/20_USA/diagnostics/
-results/20_USA/diagnostics/*
-!results/20_USA/diagnostics/dashboard/
-!results/20_USA/diagnostics/dashboard/**
+!results/*/
+results/*/*
+!results/*/diagnostics/
+results/*/diagnostics/*
+!results/*/diagnostics/dashboard/
+results/*/diagnostics/dashboard/*
+!results/*/diagnostics/dashboard/*.html
 !results/shared/
 results/shared/*
 !results/shared/dashboard_assets/

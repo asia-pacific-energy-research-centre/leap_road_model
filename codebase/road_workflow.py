@@ -47,6 +47,31 @@ from modules.module7_mirror import run_module7_mirror
 from logging_utils import StructuredLogger, log_dataframe_info
 from adapters.road_module1_defaults import load_module1_for_economy
 from adapters.leap_workbook import write_leap_import_workbook
+
+# Full economy name for each canonical economy code (used as LEAP Region label)
+_ECONOMY_LONG_NAMES: dict[str, str] = {
+    "01_AUS": "Australia",
+    "02_BD": "Brunei Darussalam",
+    "03_CDA": "Canada",
+    "04_CHL": "Chile",
+    "05_PRC": "China",
+    "06_HKC": "Hong Kong, China",
+    "07_INA": "Indonesia",
+    "08_JPN": "Japan",
+    "09_ROK": "Korea",
+    "10_MAS": "Malaysia",
+    "11_MEX": "Mexico",
+    "12_NZ": "New Zealand",
+    "13_PNG": "Papua New Guinea",
+    "14_PE": "Peru",
+    "15_PHL": "Philippines",
+    "16_RUS": "Russia",
+    "17_SGP": "Singapore",
+    "18_CT": "Chinese Taipei",
+    "19_THA": "Thailand",
+    "20_USA": "United States",
+    "21_VN": "Viet Nam",
+}
 from diagnostics.module_charts import write_module1_charts, write_workflow_summary_charts
 from diagnostics.plotly_dashboard import write_module_pages
 
@@ -581,6 +606,10 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             future_sales_shares=_future_sales,
             economy=config.economy,
             scenarios=config.scenarios,
+            economy_aliases=[
+                config.economy,
+                _ECONOMY_LONG_NAMES.get(config.economy, ""),
+            ],
             ev_sales_data=inputs.ev_sales_data,
             diagnostics_dir=diagnostics_dir,
         )
@@ -639,7 +668,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             write_leap_import_workbook(
                 m6["T11"],
                 output_root / "module6" / f"{config.economy}_leap_import.xlsx",
-                economy_long_name=config.economy,
+                economy_long_name=_ECONOMY_LONG_NAMES.get(config.economy, config.economy),
             )
 
     # ------------------------ Module 7 ------------------------
@@ -680,19 +709,32 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 
     if diagnostics_dir is not None:
         try:
+            t0 = time.perf_counter()
             summary_written = write_workflow_summary_charts({**outputs, "timings": timings}, diagnostics_dir)
-            logger.info("workflow_visual_summary", charts_written=len(summary_written))
+            timings["workflow_summary_visuals_seconds"] = time.perf_counter() - t0
+            logger.info(
+                "workflow_visual_summary",
+                charts_written=len(summary_written),
+                duration_sec=timings["workflow_summary_visuals_seconds"],
+            )
         except Exception as exc:
             logger.warning("Workflow summary chart generation failed: %s", exc)
 
         try:
+            t0 = time.perf_counter()
             dashboard_dir = diagnostics_dir / "dashboard"
             html_written = write_module_pages(
                 {**outputs, "timings": timings},
                 dashboard_dir=dashboard_dir,
                 economy=config.economy,
             )
-            logger.info("workflow_dashboard", pages_written=len(html_written), dashboard_dir=str(dashboard_dir))
+            timings["dashboard_html_seconds"] = time.perf_counter() - t0
+            logger.info(
+                "workflow_dashboard",
+                pages_written=len(html_written),
+                dashboard_dir=str(dashboard_dir),
+                duration_sec=timings["dashboard_html_seconds"],
+            )
         except Exception as exc:
             logger.warning("workflow_dashboard_failed", error=str(exc))
 
@@ -746,7 +788,7 @@ def run_for_economy(
     scenario: str = "Reference",
     base_year: int = 2022,
     final_year: int = 2060,
-    enable_visualisations: bool = False,
+    enable_visualisations: bool = True,
     output_root: str | Path | None = None,
     **config_overrides: Any,
 ) -> dict[str, Any]:
@@ -762,7 +804,7 @@ def run_for_economy(
         scenario:              Macro scenario label (default 'Reference').
         base_year:             Base year (default 2022).
         final_year:            Final projection year (default 2060).
-        enable_visualisations: Write PNG/HTML diagnostics (default False).
+        enable_visualisations: Write PNG/HTML diagnostics (default True).
         output_root:           Override CSV output directory.
         **config_overrides:    Any RoadWorkflowConfig field overrides.
 
@@ -822,7 +864,8 @@ if __name__ == "__main__" and not _is_jupyter():
         epilog="""
 Examples:
   python road_workflow.py 20_USA
-  python road_workflow.py 12_NZ --scenario Reference --vis
+  python road_workflow.py 12_NZ --scenario Reference
+  python road_workflow.py 12_NZ --no-vis
   python road_workflow.py 01_AUS --final-year 2050 --output results/test
         """,
     )
@@ -830,8 +873,11 @@ Examples:
     parser.add_argument("--scenario", default="Reference", help="Macro scenario (default: Reference)")
     parser.add_argument("--base-year", type=int, default=2022)
     parser.add_argument("--final-year", type=int, default=2060)
+    parser.set_defaults(enable_visualisations=True)
     parser.add_argument("--vis", action="store_true", dest="enable_visualisations",
-                        help="Write PNG/HTML diagnostic outputs")
+                        help="Write PNG/HTML diagnostic outputs (default)")
+    parser.add_argument("--no-vis", action="store_false", dest="enable_visualisations",
+                        help="Skip PNG/HTML diagnostic outputs")
     parser.add_argument("--output", default=None, dest="output_root",
                         help="Output directory (default: results/<economy>)")
     args = parser.parse_args()

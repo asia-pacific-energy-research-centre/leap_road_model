@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from diagnostics.plotly_dashboard import _can_plot, module3_figures, module5_figures, write_module_pages
+from road_workflow import run_for_economy
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
@@ -76,3 +77,7 @@ def test_dashboard_diagrams_are_written_to_shared_assets(tmp_path):
     index_html = (dashboard_dir / "index.html").read_text(encoding="utf-8")
     assert "../../../shared/dashboard_assets/road_transport_model_quick_view.png" in index_html
     assert "../../../shared/dashboard_assets/road_transport_model_researcher_detail.png" in index_html
+
+
+def test_run_for_economy_defaults_to_visualisations():
+    assert run_for_economy.__defaults__[3] is True

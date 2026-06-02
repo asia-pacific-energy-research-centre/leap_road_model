@@ -73,6 +73,7 @@ def run_module5(
     future_sales_shares: pd.DataFrame | None = None,
     economy: str = "",
     scenarios: list[str] | None = None,
+    economy_aliases: list[str] | None = None,
     ev_sales_data: pd.DataFrame | None = None,
     researcher_sales_shares: pd.DataFrame | None = None,
     charts_dir: str | Path | None = None,
@@ -91,6 +92,8 @@ def run_module5(
             future scaling is applied and T7f mirrors the base-year shares.
         economy: Economy code e.g. '12_NZ'. Used for filtering and chart titles.
         scenarios: Scenarios to process. Defaults to ['Reference', 'Target'].
+        economy_aliases: Optional economy aliases accepted in future sales data
+            for filtering (e.g. long region names like "United States").
         ev_sales_data: Optional observed EV sales share DataFrame.
             Columns: [economy, scenario, vehicle_type, ev_sales_share, source].
         researcher_sales_shares: Optional researcher-provided shares
@@ -106,7 +109,12 @@ def run_module5(
     scenarios = scenarios or ["Reference", "Target"]
 
     # 1. Prepare future shares — filter/fill from provided tidy DataFrame
-    provided_shares = _prepare_future_shares(future_sales_shares, economy, scenarios)
+    provided_shares = _prepare_future_shares(
+        future_sales_shares,
+        economy,
+        scenarios,
+        economy_aliases=economy_aliases,
+    )
 
     # 2. Compute base-year shares from stock proportions + EV data
     base_shares = _compute_base_year_shares(
@@ -153,6 +161,7 @@ def _prepare_future_shares(
     future_sales_shares: pd.DataFrame | None,
     economy: str,
     scenarios: list[str],
+    economy_aliases: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Filter and fill the provided future sales shares DataFrame.
@@ -170,11 +179,28 @@ def _prepare_future_shares(
 
     df = future_sales_shares.copy()
 
+    scenario_lookup = _build_requested_scenario_lookup(scenarios)
+    requested_scenarios = set(scenario_lookup.keys())
+
     # Filter to the requested economy and scenarios
     if economy and "economy" in df.columns:
-        df = df[df["economy"] == economy]
+        accepted_economies = {
+            _normalise_key(economy),
+            *{
+                _normalise_key(alias)
+                for alias in (economy_aliases or [])
+                if isinstance(alias, str) and alias.strip()
+            },
+        }
+        econ_norm = df["economy"].map(_normalise_key)
+        df = df[econ_norm.isin(accepted_economies)].copy()
+        # Keep output economy label consistent with workflow economy code.
+        df["economy"] = economy
     if "scenario" in df.columns:
-        df = df[df["scenario"].isin(scenarios)]
+        mapped = df["scenario"].map(_normalise_scenario_label)
+        df = df[mapped.isin(requested_scenarios)].copy()
+        # Relabel to the requested scenario token so downstream joins remain exact.
+        df["scenario"] = mapped[mapped.isin(requested_scenarios)].map(scenario_lookup)
 
     if df.empty:
         log.warning("No future sales share data found for economy=%s scenarios=%s", economy, scenarios)
@@ -247,9 +273,17 @@ def _compute_base_year_shares(
       - ICE is always the residual after EVs are set.
     """
     rows = []
+
+    base_df = base_year_branches.copy()
+    if "scenario" in base_df.columns:
+        base_df["_scenario_norm"] = base_df["scenario"].map(_normalise_scenario_label)
+
     for scenario in scenarios:
-        sub = base_year_branches[base_year_branches.get("scenario", scenario) == scenario] \
-            if "scenario" in base_year_branches.columns else base_year_branches
+        if "scenario" in base_df.columns:
+            scenario_norm = _normalise_scenario_label(scenario)
+            sub = base_df[base_df["_scenario_norm"] == scenario_norm]
+        else:
+            sub = base_df
 
         stock_by_drive = (
             sub.groupby(["vehicle_type", "drive_type"])["stock"]
@@ -866,3 +900,34 @@ def _renormalise(
     df = df.copy()
     df.loc[mask, share_col] = df.loc[mask, share_col] / totals[mask]
     return df
+
+
+def _normalise_key(value: object) -> str:
+    """Normalise free-text keys (economy/scenario aliases) for comparisons."""
+    return str(value or "").strip().lower()
+
+
+def _normalise_scenario_label(value: object) -> str:
+    """Map common scenario aliases to canonical internal labels."""
+    raw = _normalise_key(value)
+    if raw in {"target", "tgt", "t"}:
+        return "target"
+    if raw in {"reference", "ref", "r", "baseline", "base"}:
+        return "reference"
+    return raw
+
+
+def _build_requested_scenario_lookup(scenarios: list[str]) -> dict[str, str]:
+    """
+    Build canonical-scenario -> requested-label mapping.
+
+    Example:
+      scenarios=["TGT"] gives {"target": "TGT"}
+      scenarios=["Reference", "Target"] gives
+          {"reference": "Reference", "target": "Target"}
+    """
+    lookup: dict[str, str] = {}
+    for scenario in scenarios:
+        canonical = _normalise_scenario_label(scenario)
+        lookup.setdefault(canonical, scenario)
+    return lookup

@@ -489,6 +489,33 @@ def _missing_rows_table(
     return fig
 
 
+def _count_model_variables(raw_df: pd.DataFrame) -> tuple[int, int]:
+    """Return (total_vars, provided_vars) counting distinct (branch, variable) slots.
+
+    Profile age-series (Survival Rate, Vintage Profile Share) are collapsed to one
+    slot per series so 31 age rows count as 1 variable, not 31.
+    """
+    import re as _re
+
+    var_col  = "Variable"  if "Variable"  in raw_df.columns else None
+    path_col = "Branch Path" if "Branch Path" in raw_df.columns else None
+    year_cols = [c for c in raw_df.columns if isinstance(c, str) and c.strip().isdigit() and len(c.strip()) == 4]
+    if not var_col or not path_col or not year_cols:
+        return 0, 0
+
+    is_profile = raw_df[var_col].isin(_PROFILE_VARIABLES)
+    keys = raw_df.apply(
+        lambda r: (
+            _re.sub(r"\\?Age\s+\d+", "", str(r[path_col])).strip("\\").strip(),
+            r[var_col],
+        ) if is_profile.loc[r.name] else (r[path_col], r[var_col]),
+        axis=1,
+    )
+    total    = keys.nunique()
+    provided = keys[raw_df[year_cols].notna().any(axis=1)].nunique()
+    return total, provided
+
+
 def _count_raw_missing(raw_df: pd.DataFrame) -> tuple[int, int]:
     """Return (raw_count, collapsed_count) for rows where all year columns are blank.
 
@@ -527,10 +554,14 @@ def _module1_summary_html(
     default = int((df["_src"] == "Default value").sum())
     other = int((df["_src"] == "Other model input").sum())
 
-    # Missing values: check the raw CSV for blank year cells — these rows are dropped
-    # by parse_leap_format_inputs before they reach merged_inputs, so checking
-    # merged_inputs alone would never find them.
-    missing_raw, missing_collapsed = _count_raw_missing(raw_df) if raw_df is not None else (0, 0)
+    # Variable counts from raw_df so profiles and scalars are included, with
+    # age-series collapsed to 1 slot per series.
+    if raw_df is not None:
+        total_vars, provided_vars = _count_model_variables(raw_df)
+        missing_raw, missing_collapsed = _count_raw_missing(raw_df)
+    else:
+        total_vars = provided_vars = total  # fall back to merged_inputs row count
+        missing_raw = missing_collapsed = 0
 
     n_comments = 0
     if "review_reason" in df.columns:
@@ -538,26 +569,30 @@ def _module1_summary_html(
             df["review_reason"].fillna("").astype(str).str.strip().ne("").sum()
         )
 
-    def _pct(n: int) -> str:
-        return f"{n / total * 100:.0f}%" if total else "0%"
+    def _pct(n: int, base: int) -> str:
+        return f"{n / base * 100:.0f}%" if base else "0%"
+
+    researcher_pct = _pct(researcher, total)
+    default_pct    = _pct(default, total)
+    other_pct      = _pct(other, total)
 
     researcher_style = "color:#1565c0;font-weight:600" if researcher > 0 else "color:#757575"
     if missing_raw == 0:
         missing_html = '<span style="color:#2e7d32">&#10003; None</span>'
     elif missing_raw == missing_collapsed:
-        missing_html = f'<span style="color:#e65100">&#9888; {missing_raw} rows — see table below</span>'
+        missing_html = f'<span style="color:#e65100">&#9888; {missing_collapsed} — see table below</span>'
     else:
         missing_html = (
-            f'<span style="color:#e65100">&#9888; {missing_collapsed} issues'
-            f' ({missing_raw} raw rows incl. profile age steps) — see table below</span>'
+            f'<span style="color:#e65100">&#9888; {missing_collapsed}'
+            f' (covering {missing_raw} raw rows incl. profile age steps) — see table below</span>'
         )
 
     items = [
-        f"<li><strong>Total input rows (with values):</strong> {total}</li>",
-        f"<li><strong>Default values:</strong> {default} ({_pct(default)})</li>",
-        f'<li><strong>Researcher-provided:</strong> <span style="{researcher_style}">{researcher} ({_pct(researcher)})</span></li>',
-        f"<li><strong>Other inputs:</strong> {other} ({_pct(other)})</li>",
-        f"<li><strong>Rows with missing year value (dropped):</strong> {missing_html}</li>",
+        f"<li><strong>Variables to fill in:</strong> {total_vars} total &mdash; {provided_vars} provided, {total_vars - provided_vars} missing</li>",
+        f"<li><strong>Default values:</strong> {default} ({default_pct})</li>",
+        f'<li><strong>Researcher-provided:</strong> <span style="{researcher_style}">{researcher} ({researcher_pct})</span></li>',
+        f"<li><strong>Other inputs:</strong> {other} ({other_pct})</li>",
+        f"<li><strong>Missing values (dropped from processing):</strong> {missing_html}</li>",
     ]
     if n_comments > 0:
         items.append(

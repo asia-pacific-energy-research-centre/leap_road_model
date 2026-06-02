@@ -680,16 +680,36 @@ def get_scalar_bounds(
     """
     Extract reconciliation scalar bounds for the economy.
 
-    When Module 1 provides only aggregate lower/upper bounds at the transport scope,
-    interpret them as tight bounds for mileage and efficiency while leaving stock
-    flexible so iterative bounded reconciliation can absorb the remaining residual.
+    Prefers per-component bounds (reconciliation_bound_lower/upper_mileage/efficiency).
+    Falls back to aggregate bounds applied uniformly to mileage and efficiency.
+    Stock is always left unbounded (0, inf) so it can absorb any residual.
 
-    Returns either:
-      - dict with per-scalar bounds for {stock, mileage, efficiency}, or
-      - None if no reconciliation bounds are present.
-
-    Module 6 treats None as "use built-in defaults".
+    Returns a dict with per-scalar bounds for {stock, mileage, efficiency},
+    or None if no bounds are present (Module 6 will use built-in defaults).
     """
+    per_component: dict[str, tuple[float, float]] = {}
+    for component in ("mileage", "efficiency"):
+        lower_sub = defaults_df[
+            (defaults_df["economy"] == economy)
+            & (defaults_df["variable"] == f"reconciliation_bound_lower_{component}")
+        ]["value"].dropna()
+        upper_sub = defaults_df[
+            (defaults_df["economy"] == economy)
+            & (defaults_df["variable"] == f"reconciliation_bound_upper_{component}")
+        ]["value"].dropna()
+        if not lower_sub.empty and not upper_sub.empty:
+            per_component[component] = (float(lower_sub.iloc[0]), float(upper_sub.iloc[0]))
+
+    if len(per_component) == 2:
+        bounds = {
+            "stock": (0.0, float("inf")),
+            "mileage": per_component["mileage"],
+            "efficiency": per_component["efficiency"],
+        }
+        log.info("Module 1 per-component scalar bounds for %s: %s", economy, bounds)
+        return bounds
+
+    # Fall back to aggregate bounds
     lower_sub = defaults_df[
         (defaults_df["economy"] == economy)
         & (defaults_df["variable"] == "reconciliation_bound_lower")
@@ -714,11 +734,7 @@ def get_scalar_bounds(
         "mileage": (lower, upper),
         "efficiency": (lower, upper),
     }
-    log.info(
-        "Module 1 scalar bounds for %s mapped to per-scalar bounds: %s",
-        economy,
-        bounds,
-    )
+    log.info("Module 1 aggregate scalar bounds for %s mapped to per-scalar: %s", economy, bounds)
     return bounds
 
 
