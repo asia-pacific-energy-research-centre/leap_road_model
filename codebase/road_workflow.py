@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import time
+import json
 from typing import Any
 
 import pandas as pd
@@ -342,6 +343,7 @@ class RoadWorkflowConfig:
 
     # Output behavior
     save_csv_outputs: bool = True
+    show_progress: bool = True
 
     # Optional module settings
     leap_workbook_path: str | Path | None = None
@@ -421,17 +423,19 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
     output_root = Path(config.output_root)
 
     log_file = output_root / "workflow.log" if config.save_csv_outputs else None
-    logger = StructuredLogger("road_workflow", log_file=log_file)
+    logger = StructuredLogger("road_workflow", log_file=log_file, print_to_console=False)
 
     if config.save_csv_outputs:
         output_root.mkdir(parents=True, exist_ok=True)
 
+    _print_progress(config, f"Road workflow started for {config.economy}.")
     logger.info("workflow_start", economy=config.economy, scenarios=config.scenarios)
 
     # --- Load Module 1 defaults (mandatory) ---
     # All base-year assumptions (stock, mileage, efficiency, survival curves,
     # PHEV utilisation rate, reconciliation bounds, vehicle equivalent weights)
     # are sourced from Module 1. Refresh them with scripts/generate_module1_defaults.py.
+    _print_progress(config, "Module 1: loading base-year road assumptions.")
     logger.info("module1_load", defaults_dir=str(config.module1_defaults_dir), version=config.module1_defaults_version)
     m1 = load_module1_for_economy(
         config.module1_defaults_dir,
@@ -462,6 +466,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         survival_curve_types=list(m1["survival_curves"].keys()),
         vintage_profile_types=list(m1["vintage_profiles"].keys()),
     )
+    _print_progress(config, f"Module 1 complete: loaded {len(_merged):,} base input rows.")
     # Expose parsed Module 1 inputs for downstream dashboard writing.
     # Also keep the raw LEAP DataFrame so the dashboard can find rows that were
     # dropped for missing year values — those disappear from merged_inputs.
@@ -473,7 +478,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             written = write_module1_charts(_merged, diagnostics_dir)
             logger.info("module1_output", charts_written=len(written), **log_dataframe_info(_merged, "module1_base_inputs"))
         except Exception as exc:
-            logger.warning("Module 1 diagnostics chart generation failed: %s", exc)
+            logger.warning("module1_diagnostics_failed", error=str(exc))
 
     # ------------------------ Module 2 ------------------------
     if config.run_m2:
@@ -482,6 +487,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 "Module 2 requires Module 1 LEAP-format defaults loaded from module1_defaults_dir"
             )
         logger.info("module2_input", **log_dataframe_info(_merged, "input"))
+        _print_progress(config, "Module 2: building base-year branch table.")
         t0 = time.perf_counter()
         t4 = run_module2(
             merged_inputs=_merged,
@@ -494,6 +500,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         )
         timings["module2_seconds"] = time.perf_counter() - t0
         logger.info("module2_output", duration_sec=timings["module2_seconds"], **log_dataframe_info(t4, "output"))
+        _print_progress(config, f"Module 2 complete: {len(t4):,} branch rows.")
         outputs["T4"] = t4
         if config.save_csv_outputs:
             _write_df(t4, output_root / "module2" / "T4_base_year_branches.csv")
@@ -510,6 +517,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             raise ValueError("Module 3 requires inputs.population, inputs.gdp, inputs.esto_road_energy_pj")
 
         t0 = time.perf_counter()
+        _print_progress(config, "Module 3: projecting stock targets.")
         _sat = m1.get("passenger_saturation_level")
         _saturation_overrides = {"researcher": float(_sat)} if _sat is not None else None
         t5 = run_module3(
@@ -534,6 +542,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         # beyond final_year.  Clamp to the intended projection window.
         _proj_years = set(config.projection_years())
         t5 = t5[t5["year"].isin(_proj_years)].copy()
+        _print_progress(config, f"Module 3 complete: {len(t5):,} stock target rows.")
         outputs["T5"] = t5
         if config.save_csv_outputs:
             _write_df(t5, output_root / "module3" / "T5_stock_targets.csv")
@@ -553,6 +562,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             )
 
         logger.info("module4_input", **log_dataframe_info(t5, "stock_targets"))
+        _print_progress(config, "Module 4: calculating sales, retirements, and vintages.")
         t0 = time.perf_counter()
         t6, t6v = run_module4(
             stock_targets=t5,
@@ -568,6 +578,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         )
         timings["module4_seconds"] = time.perf_counter() - t0
         logger.info("module4_output", duration_sec=timings["module4_seconds"], **log_dataframe_info(t6, "sales_turnover"))
+        _print_progress(config, f"Module 4 complete: {len(t6):,} sales/turnover rows.")
         outputs["T6"] = t6
         outputs["T6v"] = t6v
         if config.save_csv_outputs:
@@ -601,6 +612,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 )
 
         t0 = time.perf_counter()
+        _print_progress(config, "Module 5: preparing vehicle sales shares.")
         t7, t7f = run_module5(
             base_year_branches=t4,
             future_sales_shares=_future_sales,
@@ -614,6 +626,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             diagnostics_dir=diagnostics_dir,
         )
         timings["module5_seconds"] = time.perf_counter() - t0
+        _print_progress(config, f"Module 5 complete: {len(t7f):,} future sales-share rows.")
         outputs["T7"] = t7
         outputs["T7f"] = t7f
         if config.save_csv_outputs:
@@ -637,6 +650,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             raise ValueError("Module 6 requires inputs.esto_fuel_totals")
 
         logger.info("module6_input", t4_rows=len(t4), t6_rows=len(t6), t7f_rows=len(t7f))
+        _print_progress(config, "Module 6: reconciling fuel energy and preparing LEAP inputs.")
         t0 = time.perf_counter()
         m6 = run_module6(
             base_year_branches=t4,
@@ -656,6 +670,9 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             duration_sec=timings["module6_seconds"],
             **{k: log_dataframe_info(v, k) for k, v in m6.items() if isinstance(v, pd.DataFrame)},
         )
+        _print_progress(config, f"Module 6 complete: {len(m6['T11']):,} LEAP-ready rows.")
+        for line in _module6_reconciliation_summary(m6):
+            _print_progress(config, line)
         outputs.update(m6)
 
         if config.save_csv_outputs:
@@ -681,6 +698,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             raise ValueError("Module 7 requires T6, T9, and T10 (from Modules 4 and 6)")
 
         logger.info("module7_input", t6_rows=len(t6), t9_rows=len(t9), t10_rows=len(t10))
+        _print_progress(config, "Module 7: running Python mirror checks.")
         t0 = time.perf_counter()
         m7 = run_module7_mirror(
             sales_turnover=t6,
@@ -699,6 +717,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             duration_sec=timings["module7_seconds"],
             **{k: log_dataframe_info(v, k) for k, v in m7.items() if isinstance(v, pd.DataFrame)},
         )
+        _print_progress(config, "Module 7 complete.")
         outputs.update(m7)
 
         if config.save_csv_outputs:
@@ -718,7 +737,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 duration_sec=timings["workflow_summary_visuals_seconds"],
             )
         except Exception as exc:
-            logger.warning("Workflow summary chart generation failed: %s", exc)
+            logger.warning("workflow_summary_charts_failed", error=str(exc))
 
         try:
             t0 = time.perf_counter()
@@ -749,6 +768,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         "output_root": str(output_root),
     }
     logger.info("workflow_complete", total_timings_sec=sum(timings.values()))
+    _print_progress(config, f"Road workflow complete. Total timed work: {sum(timings.values()):.1f} seconds.")
     return outputs
 
 
@@ -760,6 +780,194 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 def _write_df(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
+
+
+def _print_progress(config: RoadWorkflowConfig, message: str) -> None:
+    if config.show_progress:
+        print(message)
+
+
+def _module6_reconciliation_summary(module6_outputs: dict[str, Any]) -> list[str]:
+    t9 = module6_outputs.get("T9")
+    t12 = module6_outputs.get("T12")
+    if not isinstance(t9, pd.DataFrame) or t9.empty:
+        return []
+
+    lines: list[str] = []
+    out_of_bounds = int((~t9.get("scalars_within_bounds", pd.Series(dtype=bool)).astype(bool)).sum())
+    hit_max_iterations = int(t9.get("reconciliation_hit_max_iterations", pd.Series(dtype=bool)).astype(bool).sum())
+    if out_of_bounds or hit_max_iterations:
+        lines.append(
+            "Module 6 reconciliation note: "
+            f"{out_of_bounds:,} branch(es) reached scalar bounds; "
+            f"{hit_max_iterations:,} branch(es) hit the iteration limit."
+        )
+
+    if isinstance(t12, pd.DataFrame) and not t12.empty and "gap_pct" in t12.columns:
+        if "reconciliation_status" in t12.columns:
+            status = t12["reconciliation_status"].astype(str)
+        else:
+            status = pd.Series("ok", index=t12.index)
+        problem_fuels = t12[status != "ok"].copy()
+        if not problem_fuels.empty:
+            problem_fuels = problem_fuels.sort_values("gap_pct", ascending=False).head(3)
+            fuel_notes = [
+                f"{row['fuel']} ({row['gap_pct']:.2f}% gap)"
+                for _, row in problem_fuels.iterrows()
+            ]
+            lines.append("Module 6 fuel check: largest remaining gaps are " + "; ".join(fuel_notes) + ".")
+        else:
+            lines.append("Module 6 fuel check: reconciled fuel totals are within tolerance.")
+
+    return lines
+
+
+def _read_leap_input_table(path: Path) -> pd.DataFrame | None:
+    """Load a potential LEAP-format table from CSV/XLSX/JSON.
+
+    Returns:
+        DataFrame when file can be parsed, otherwise None.
+    """
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".csv":
+            return pd.read_csv(path)
+        if suffix in {".xlsx", ".xls"}:
+            return pd.read_excel(path)
+        if suffix == ".json":
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
+                return pd.DataFrame(payload["rows"])
+            if isinstance(payload, list):
+                return pd.DataFrame(payload)
+            return pd.DataFrame(payload)
+    except Exception:
+        return None
+    return None
+
+
+def _looks_like_future_sales_share_input(df: pd.DataFrame, base_year: int) -> bool:
+    """True when DataFrame appears to contain future LEAP-format Sales Share rows."""
+    required = {"Branch Path", "Variable", "Scenario", "Region"}
+    if not required.issubset(df.columns):
+        return False
+
+    year_cols: list[int] = []
+    for col in df.columns:
+        try:
+            year_cols.append(int(col))
+        except (TypeError, ValueError):
+            continue
+    if not year_cols or max(year_cols) <= base_year:
+        return False
+
+    sales_mask = df["Variable"].astype(str).str.strip().str.lower().eq("sales share")
+    if not sales_mask.any():
+        return False
+
+    future_cols = [str(y) for y in year_cols if y > base_year and str(y) in df.columns]
+    if not future_cols:
+        return False
+
+    future_values = df.loc[sales_mask, future_cols].apply(pd.to_numeric, errors="coerce")
+    return bool(future_values.notna().any().any())
+
+
+def _candidate_future_sales_paths(repo_root: Path, economy: str, scenario: str) -> list[Path]:
+    """Build candidate file paths for convenience auto-loading."""
+    compact = economy.replace("_", "")
+    candidates: list[Path] = []
+    scenario_labels = [
+        scenario,
+        "Target" if str(scenario).strip().lower() == "tgt" else scenario,
+        "Reference" if str(scenario).strip().lower() == "ref" else scenario,
+    ]
+    # Stable de-dup while preserving order.
+    _seen_labels: set[str] = set()
+    scenario_labels = [s for s in scenario_labels if not (s in _seen_labels or _seen_labels.add(s))]
+
+    # Primary deterministic source: leap_transport domestic exports.
+    # This is the same upstream source used for other road assumptions.
+    leap_transport_root = repo_root.parent / "leap_transport" / "results" / "domestic_exports"
+    for scen in scenario_labels:
+        candidates.append(leap_transport_root / f"{economy}_transport_leap_export_{scen}.xlsx")
+
+    # Local convention inside leap_road_model
+    local_dir = repo_root / "input_data" / "future_sales_shares"
+    for stem in (economy, compact):
+        candidates.extend([
+            local_dir / f"{stem}.csv",
+            local_dir / f"{stem}.xlsx",
+            local_dir / f"{stem}.json",
+            local_dir / f"future_sales_shares_{stem}.csv",
+            local_dir / f"future_sales_shares_{stem}.xlsx",
+            local_dir / f"future_sales_shares_{stem}.json",
+        ])
+
+    # Sibling road_model_inputs_interface static bundle convention
+    static_root = repo_root.parent / "road_model_inputs_interface" / "front-end" / "road-module1-static"
+    if static_root.exists():
+        candidates.extend(static_root.glob(f"*/{compact}.json"))
+        candidates.extend(static_root.glob(f"*/{economy}.json"))
+
+    # Optional explicit path(s) from environment.
+    # Supports placeholders {economy} and {economy_compact}.
+    env_paths = os.getenv("ROAD_MODEL_FUTURE_SALES_SHARES_PATH", "").strip()
+    if env_paths:
+        for token in env_paths.split(os.pathsep):
+            token = token.strip()
+            if not token:
+                continue
+            resolved = token.format(economy=economy, economy_compact=compact)
+            p = Path(resolved)
+            if p.is_dir():
+                for stem in (economy, compact):
+                    candidates.extend([
+                        p / f"{stem}.csv",
+                        p / f"{stem}.xlsx",
+                        p / f"{stem}.json",
+                        p / f"future_sales_shares_{stem}.csv",
+                        p / f"future_sales_shares_{stem}.xlsx",
+                        p / f"future_sales_shares_{stem}.json",
+                    ])
+            else:
+                candidates.append(p)
+
+    # Stable de-dup, preserve order
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for p in candidates:
+        if p in seen:
+            continue
+        seen.add(p)
+        ordered.append(p)
+    return ordered
+
+
+def _autodiscover_future_sales_shares(
+    repo_root: Path,
+    economy: str,
+    base_year: int,
+    scenario: str = "Reference",
+) -> tuple[pd.DataFrame | None, Path | None]:
+    """Try to find and load a future-sales-share LEAP table for one economy."""
+    if os.getenv("ROAD_MODEL_DISABLE_AUTO_FUTURE_SALES_SHARES", "").strip() in {"1", "true", "True"}:
+        return None, None
+
+    for path in _candidate_future_sales_paths(
+        repo_root=repo_root,
+        economy=economy,
+        scenario=scenario,
+    ):
+        if not path.exists() or not path.is_file():
+            continue
+        df = _read_leap_input_table(path)
+        if df is None or df.empty:
+            continue
+        if _looks_like_future_sales_share_input(df, base_year=base_year):
+            return df, path
+
+    return None, None
 
 
 def _print_dashboard_link(outputs: dict[str, Any]) -> None:
@@ -790,6 +998,8 @@ def run_for_economy(
     final_year: int = 2060,
     enable_visualisations: bool = True,
     output_root: str | Path | None = None,
+    future_sales_shares: pd.DataFrame | None = None,
+    auto_load_future_sales_shares: bool = True,
     **config_overrides: Any,
 ) -> dict[str, Any]:
     """
@@ -806,6 +1016,11 @@ def run_for_economy(
         final_year:            Final projection year (default 2060).
         enable_visualisations: Write PNG/HTML diagnostics (default True).
         output_root:           Override CSV output directory.
+        future_sales_shares:   Optional LEAP-format future sales-share table
+                               (Branch Path / Variable / Scenario / Region + year cols).
+        auto_load_future_sales_shares:
+                               If True and future_sales_shares is None, attempt to
+                               auto-discover a future sales-share input file.
         **config_overrides:    Any RoadWorkflowConfig field overrides.
 
     Returns:
@@ -839,10 +1054,30 @@ def run_for_economy(
         diagnostics_root=_output_root / "diagnostics" if enable_visualisations else None,
         **config_overrides,
     )
+
+    auto_source: Path | None = None
+    if future_sales_shares is None and auto_load_future_sales_shares:
+        future_sales_shares, auto_source = _autodiscover_future_sales_shares(
+            repo_root=_repo_root,
+            economy=economy,
+            base_year=base_year,
+            scenario=scenario,
+        )
+
+    if auto_source is not None:
+        print(f"[road_workflow] Auto-loaded future sales shares from: {auto_source}")
+    elif future_sales_shares is None and auto_load_future_sales_shares:
+        print(
+            "[road_workflow] No future sales-share input auto-discovered; "
+            "Module 5 will use base-year fallback trajectories. "
+            "Set ROAD_MODEL_FUTURE_SALES_SHARES_PATH to provide a file explicitly."
+        )
+
     inputs = RoadWorkflowInputs(
         population=population,
         gdp=gdp,
         esto_road_energy_pj=esto_road_energy,
+        future_sales_shares=future_sales_shares,
         esto_fuel_totals=esto_fuel_totals,
     )
     return run_with_config(config, inputs)

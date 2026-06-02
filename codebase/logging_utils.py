@@ -14,9 +14,10 @@ import pandas as pd
 class StructuredLogger:
     """JSON-structured logger for machine-parseable output."""
 
-    def __init__(self, name: str, log_file: str | Path | None = None):
+    def __init__(self, name: str, log_file: str | Path | None = None, print_to_console: bool = True):
         self.name = name
         self.log_file = Path(log_file) if log_file else None
+        self.print_to_console = print_to_console
         if self.log_file:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -24,7 +25,8 @@ class StructuredLogger:
         """Write event as JSON line."""
         event["time"] = datetime.now().isoformat()
         line = json.dumps(event)
-        print(line)
+        if self.print_to_console:
+            print(line)
         if self.log_file:
             with open(self.log_file, "a") as f:
                 f.write(line + "\n")

@@ -657,6 +657,8 @@ def reconcile_stock_mileage_efficiency(
     energy_tolerance = 1e-9
 
     scalar_rows: list[dict] = []
+    max_iteration_count = 0
+    out_of_bounds_count = 0
     for i, (_, row) in enumerate(merged.iterrows()):
         s = row["stock"]
         m = row["mileage_km_per_year"]
@@ -671,6 +673,7 @@ def reconcile_stock_mileage_efficiency(
         adj_e = e
         within = True
         iterations_used = 0
+        hit_max_iterations = False
 
         if allocated_branch_fuel_pj <= 0 or ecf <= 0:
             ss, ms, es, adj_s, adj_m, adj_e, within = apply_scalars(s, m, e, ecf, weights, scalar_bounds)
@@ -722,19 +725,11 @@ def reconcile_stock_mileage_efficiency(
                 prev_final_branch_fuel_pj = final_branch_fuel_pj
 
             else:
-                log.warning(
-                    "Iterative reconciliation reached max iterations: %s / %s / %s / %s (target=%.6f, final=%.6f)",
-                    row.get("economy", "?"), row.get("vehicle_type", "?"),
-                    row.get("drive_type", "?"), row.get("fuel", "?"),
-                    allocated_branch_fuel_pj, final_branch_fuel_pj,
-                )
+                hit_max_iterations = True
+                max_iteration_count += 1
 
             if not within:
-                log.warning(
-                    "Reconciliation scalar out of bounds: %s / %s / %s / %s (ECF=%.3f, iterations=%d)",
-                    row.get("economy", "?"), row.get("vehicle_type", "?"),
-                    row.get("drive_type", "?"), row.get("fuel", "?"), ecf, iterations_used,
-                )
+                out_of_bounds_count += 1
 
         scalar_rows.append({
             "stock_scalar": ss,
@@ -748,10 +743,18 @@ def reconcile_stock_mileage_efficiency(
             "adjusted_efficiency_km_per_gj": adj_e,
             "final_branch_fuel_pj": final_branch_fuel_pj,
             "scalars_within_bounds": within,
+            "reconciliation_iterations": iterations_used,
+            "reconciliation_hit_max_iterations": hit_max_iterations,
         })
 
     scalar_df = pd.DataFrame(scalar_rows)
     t9 = pd.concat([merged.reset_index(drop=True), scalar_df], axis=1)
+    if max_iteration_count or out_of_bounds_count:
+        log.info(
+            "Module 6 reconciliation summary: %d branch(es) hit max iterations; %d branch(es) used scalars outside configured bounds. See T9/T12 diagnostics for details.",
+            max_iteration_count,
+            out_of_bounds_count,
+        )
     return t9
 
 

@@ -332,6 +332,8 @@ SCHEMAS: dict[str, dict] = {
             "adjusted_efficiency_km_per_gj": _col("float", True),
             "final_branch_fuel_pj":       _col("float", True),
             "scalars_within_bounds":      _col("bool",  True),
+            "reconciliation_iterations":  _col("int",   True),
+            "reconciliation_hit_max_iterations": _col("bool", True),
         },
     },
 
