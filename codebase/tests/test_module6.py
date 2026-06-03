@@ -27,6 +27,7 @@ from modules.module6_leap_handoff import (
     calculate_remaining_esto,
     reconcile_stock_mileage_efficiency,
     allocate_esto_fuel_to_branches,
+    distribute_phev_liquid_by_esto_mix,
 )
 
 
@@ -477,6 +478,38 @@ class TestCalculateRemainingEsto:
         ])
         result = calculate_remaining_esto(esto, phev)
         assert result["remaining_esto_fuel_pj"].iloc[0] == 0.0
+
+
+class TestPHEVLiquidDistribution:
+    def test_ignores_lpg_and_cng_when_splitting_phev_liquid(self):
+        phev = pd.DataFrame([
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Motor gasoline", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Gas and diesel oil", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Biodiesel", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Biogasoline", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "LPG", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Natural gas", "phev_liquid_pj": 1.0},
+        ])
+        esto = _make_esto({
+            "Motor gasoline": 40.0,
+            "Gas and diesel oil": 60.0,
+            "Biodiesel": 4.0,
+            "Biogasoline": 6.0,
+            "LPG": 1000.0,
+            "Natural gas": 1000.0,
+        })
+
+        result = distribute_phev_liquid_by_esto_mix(phev, esto)
+        by_fuel = result.set_index("fuel")["phev_liquid_pj"]
+
+        total_preferred = by_fuel[["Motor gasoline", "Gas and diesel oil", "Biodiesel", "Biogasoline"]].sum()
+        assert pytest.approx(total_preferred, rel=1e-6) == 1.0
+        assert by_fuel["LPG"] == 0.0
+        assert by_fuel["Natural gas"] == 0.0
+        assert pytest.approx(by_fuel["Motor gasoline"], rel=1e-4) == 40.0 / 110.0
+        assert pytest.approx(by_fuel["Gas and diesel oil"], rel=1e-4) == 60.0 / 110.0
+        assert pytest.approx(by_fuel["Biodiesel"], rel=1e-4) == 4.0 / 110.0
+        assert pytest.approx(by_fuel["Biogasoline"], rel=1e-4) == 6.0 / 110.0
 
 
 # ---------------------------------------------------------------------------

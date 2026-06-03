@@ -46,7 +46,8 @@ _DEFAULT_SCALAR_BOUNDS: dict[str, tuple[float, float]] = {
 # Single-fuel drive types: device_share is always 1.0
 _SINGLE_FUEL_DRIVES = {"BEV", "FCEV"}
 
-# PHEV liquid fuels (separate from PHEV electric)
+# PHEV liquid fuels used for the transport-sector liquid blend.
+# LPG and CNG are intentionally excluded from the PHEV liquid split policy.
 _PHEV_LIQUID_FUELS = {"Motor gasoline", "Gas and diesel oil", "Biodiesel", "Biogasoline", "Efuel"}
 
 _FUEL_ELIGIBILITY: dict[str, list[str]] | None = None
@@ -393,8 +394,11 @@ def distribute_phev_liquid_by_esto_mix(
 
     The branch table has one row per eligible liquid fuel. Those rows are fuel
     alternatives, so summing their raw liquid-mode energy would count the same
-    PHEV fleet multiple times. Use the ESTO liquid fuel mix as the best
-    available split across eligible fuels.
+    PHEV fleet multiple times. Use the transport-sector liquid-fuel mix as the
+    best available split across eligible fuels, but only for the preferred
+    PHEV liquid fuels (motor gasoline, gas/diesel oil, biodiesel, biogasoline,
+    and efuel). LPG and CNG are intentionally ignored for PHEVs in this first
+    version.
     """
     if phev_liquid_table.empty:
         return phev_liquid_table.copy()
@@ -413,13 +417,29 @@ def distribute_phev_liquid_by_esto_mix(
     for _key, group in df.groupby(group_keys, dropna=False):
         group = group.copy()
         group["phev_liquid_pj"] = pd.to_numeric(group["phev_liquid_pj"], errors="coerce").fillna(0.0)
-        fuels = group["fuel"].tolist()
-        weights = pd.Series([max(0.0, float(esto_mix.get(fuel, 0.0))) for fuel in fuels], index=group.index)
+
+        preferred_mask = group["fuel"].isin(_PHEV_LIQUID_FUELS)
+        if not preferred_mask.any():
+            log.warning(
+                "Module 6 PHEV liquid allocation skipped group with no preferred liquid fuels: %s",
+                {k: group.iloc[0][k] for k in group_keys if k in group.columns},
+            )
+            group["phev_liquid_pj"] = 0.0
+            rows.append(group)
+            continue
+
+        preferred = group.loc[preferred_mask].copy()
+        weights = pd.Series(
+            [max(0.0, float(esto_mix.get(fuel, 0.0))) for fuel in preferred["fuel"]],
+            index=preferred.index,
+        )
         if weights.sum() <= 0:
-            weights = pd.Series(1.0, index=group.index)
+            weights = pd.Series(1.0, index=preferred.index)
+
         shares = weights / weights.sum()
-        total_liquid = float((group["phev_liquid_pj"] * shares).sum())
-        group["phev_liquid_pj"] = total_liquid * shares
+        total_liquid = float((preferred["phev_liquid_pj"] * shares).sum())
+        group["phev_liquid_pj"] = 0.0
+        group.loc[preferred.index, "phev_liquid_pj"] = total_liquid * shares
         rows.append(group)
 
     if not rows:
