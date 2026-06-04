@@ -22,7 +22,7 @@ ninth_ed_vehicle_to_bucket:
   lcv:  LCVs        # light commercial vehicle
 
 # Size class assigned to each 9th edition vehicle code.
-# LPVs: no "small" category — car → medium, suv/lt → large.
+# LPVs: no "small" category, it will be assigned stocks for specific economies where they actually have small cars like Japan Kei cars — car → medium, suv/lt → large.
 # Trucks: mt → medium, ht → heavy.
 # Other vehicle types have no size split.
 ninth_ed_vehicle_to_size:
@@ -35,14 +35,26 @@ ninth_ed_vehicle_to_size:
   ht:   heavy
   lcv:  null
 
-# LEAP technology label construction: "{drive_type} {size}" where size is present.
+# LEAP technology label construction: "{base_drive_type} {size}" where size is present.
 # For vehicle types with no size (Motorcycles, Buses, LCVs), label is just drive_type.
-# Examples: "ICE medium", "BEV large", "PHEV medium", "ICE" (Buses)
+# Examples: LPVs/ICE/large -> "ICE large"; Trucks/BEV/heavy -> "BEV heavy";
+# Buses/ICE/null -> "ICE".
 # Size values used in labels:
 leap_size_labels:
+  small:  small
   medium: medium
   large:  large
   heavy:  heavy
+
+# Size classes available per vehicle type bucket.
+# Determines which branches appear in the LEAP skeleton for Module 2.
+# Use null (Python None) for vehicle types with no size split.
+vehicle_type_sizes:
+  LPVs:        [small, medium, large]
+  Motorcycles: [null]
+  Buses:       [null]
+  Trucks:      [medium, heavy]
+  LCVs:        [null]
 
 # Model bucket transport type assignments
 bucket_transport_type:
@@ -63,15 +75,20 @@ vehicle_equivalent_weights:
   Trucks:      5.0
   LCVs:        1.5
 
-# Size classes available per vehicle type bucket.
-# Determines which branches appear in the LEAP skeleton for Module 2.
-# Use null (Python None) for vehicle types with no size split.
-vehicle_type_sizes:
-  LPVs:        [medium, large]
-  Motorcycles: [null]
-  Buses:       [null]
-  Trucks:      [medium, heavy]
-  LCVs:        [null]
+
+# Base drive types available for each LEAP vehicle bucket.
+# These are intentionally unsized model dimensions. For vehicle buckets listed
+# in vehicle_type_sizes, Module 2 appends the size to form the LEAP technology
+# label, e.g. LPVs + ICE + large -> "ICE large" and Trucks + BEV + heavy ->
+# "BEV heavy".
+# HEV and EREV are LPV-only in the current road branch scope.
+# PHEV is currently valid only for LPVs and LCVs.
+valid_drive_types_by_vehicle_type:
+  LPVs:        [ICE, HEV, EREV, PHEV, BEV, FCEV]
+  Motorcycles: [ICE, BEV, FCEV]
+  Buses:       [ICE, BEV, FCEV]
+  Trucks:      [ICE, BEV, FCEV]
+  LCVs:        [ICE, PHEV, BEV, FCEV]
 
 # LEAP branch label (used in branch paths)
 # These are the exact strings that appear in LEAP branch paths.
@@ -84,19 +101,19 @@ leap_branch_labels:
 
 # Drive type mapping: 9th edition source codes → simplified model drive types.
 # TRANSITIONAL — same codes used by transport_data_system; update if source changes.
-# Model drive types: ICE, BEV, PHEV, FCEV.
+# Model drive types: ICE, HEV, PHEV, EREV, BEV, FCEV.
 ninth_ed_drive_to_model:
   ice_g:   ICE
   ice_d:   ICE
   cng:     ICE     # CNG treated as ICE variant for stock-flow; fuel tracked separately
   lpg:     ICE     # Same
   lng:     ICE     # Same
-  hev:     ICE     # HEV treated as ICE variant (no plug-in)
-  hev_g:   ICE
-  hev_d:   ICE
+  hev:     HEV
+  hev_g:   HEV
+  hev_d:   HEV
   bev:     BEV
   phev_g:  PHEV
   phev_d:  PHEV
-  erev_g:  PHEV    # EREV treated as PHEV variant
-  erev_d:  PHEV
+  erev_g:  EREV
+  erev_d:  EREV
   fcev:    FCEV

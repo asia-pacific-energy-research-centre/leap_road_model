@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 _CONFIG_DIR = pathlib.Path(__file__).parent.parent / "config"
 
-# Default reconciliation weights (see model_defaults.yaml)
+# Local fallback reconciliation weights.
 _DEFAULT_WEIGHTS = {"stock": 0.50, "mileage": 0.25, "efficiency": 0.25}
 
 _DEFAULT_SCALAR_BOUNDS: dict[str, tuple[float, float]] = {
@@ -45,6 +45,9 @@ _DEFAULT_SCALAR_BOUNDS: dict[str, tuple[float, float]] = {
 
 # Single-fuel drive types: device_share is always 1.0
 _SINGLE_FUEL_DRIVES = {"BEV", "FCEV"}
+
+# Plug-in hybrid drive types share the PHEV electric-utilisation workflow.
+_PLUGIN_HYBRID_DRIVES = {"PHEV", "EREV"}
 
 # PHEV liquid fuels used for the transport-sector liquid blend.
 # LPG and CNG are intentionally excluded from the PHEV liquid split policy.
@@ -221,7 +224,7 @@ def apply_phev_mileage_split(
     if "size" in df.columns:
         group_keys.append("size")
 
-    phev_mask = df["drive_type"] == "PHEV"
+    phev_mask = df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES)
     for key, group in df[phev_mask].groupby(group_keys, dropna=False):
         idx = group.index
         electric_idx = group[group["fuel"] == "Electricity"].index
@@ -289,8 +292,8 @@ def reconcile_electricity(
     """
     df = branch_energy.copy()
     elec_mask = df["fuel"] == "Electricity"
-    phev_elec_mask = elec_mask & (df["drive_type"] == "PHEV")
-    non_phev_elec_mask = elec_mask & (df["drive_type"] != "PHEV")
+    phev_elec_mask = elec_mask & df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES)
+    non_phev_elec_mask = elec_mask & (~df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES))
 
     # Build phev_liquid_table from unadjusted data if reconciliation cannot run
     def _build_phev_liquid(source_df: pd.DataFrame) -> pd.DataFrame:
@@ -333,18 +336,18 @@ def reconcile_electricity(
     # Propagate adjusted stock to PHEV liquid branches (same fleet, shared stock).
     # Index must include size to avoid duplicate entries when vehicle types have
     # multiple size variants (e.g. LPVs medium + LPVs large).
-    _idx_cols = ["economy", "scenario", "transport_type", "vehicle_type"]
+    _idx_cols = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type"]
     _has_size = "size" in df.columns and df["size"].notna().any()
     if _has_size:
         _idx_cols.append("size")
     phev_elec_stock = (
-        df[(df["drive_type"] == "PHEV") & elec_mask]
+        df[df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES) & elec_mask]
         .set_index(_idx_cols)["stock"]
         if all(c in df.columns for c in _idx_cols)
         else pd.Series(dtype=float)
     )
     if not phev_elec_stock.empty:
-        phev_liq_mask = (df["drive_type"] == "PHEV") & (~elec_mask)
+        phev_liq_mask = df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES) & (~elec_mask)
         for idx in df[phev_liq_mask].index:
             key = tuple(df.at[idx, c] for c in _idx_cols)
             if key in phev_elec_stock.index:
@@ -366,7 +369,7 @@ def _compute_phev_liquid(
     (= total_mileage × (1 - utilisation_rate)).
     """
     phev_liq = branch_energy[
-        (branch_energy["drive_type"] == "PHEV")
+        branch_energy["drive_type"].isin(_PLUGIN_HYBRID_DRIVES)
         & (~branch_energy["fuel"].isin(["Electricity"]))
     ].copy()
 
@@ -535,8 +538,8 @@ def allocate_esto_fuel_to_branches(
     # BEV/PHEV split implied by reconciled electric branch energy.
     electricity_mask = df["fuel"] == "Electricity"
     if electricity_mask.any():
-        phev_electric_mask = electricity_mask & (df["drive_type"] == "PHEV")
-        non_phev_electric_mask = electricity_mask & (df["drive_type"] != "PHEV")
+        phev_electric_mask = electricity_mask & df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES)
+        non_phev_electric_mask = electricity_mask & (~df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES))
         df.loc[phev_electric_mask, "branch_allocation_share"] = np.where(
             df.loc[phev_electric_mask, "remaining_esto_fuel_pj"] > 0,
             df.loc[phev_electric_mask, "initial_energy_pj"] / df.loc[phev_electric_mask, "remaining_esto_fuel_pj"],
@@ -570,7 +573,7 @@ def allocate_esto_fuel_to_branches(
         df.loc[non_phev_electric_mask, "allocation_rule"] = "residual_electric_energy_share"
 
     # PHEV liquid demand is separately derived from the utilisation factor.
-    phev_liquid_mask = (df["drive_type"] == "PHEV") & (df["fuel"] != "Electricity")
+    phev_liquid_mask = df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES) & (df["fuel"] != "Electricity")
     if phev_liquid_mask.any():
         if phev_liquid_table is not None and not phev_liquid_table.empty:
             liq = phev_liquid_table.copy()
@@ -588,7 +591,7 @@ def allocate_esto_fuel_to_branches(
         else:
             df["phev_liquid_pj"] = 0.0
 
-        phev_liquid_mask = (df["drive_type"] == "PHEV") & (df["fuel"] != "Electricity")
+        phev_liquid_mask = df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES) & (df["fuel"] != "Electricity")
         liquid_total = df.loc[phev_liquid_mask].groupby(["economy", "scenario", "fuel"])["phev_liquid_pj"].transform("sum")
         liquid_share = (
             df.loc[phev_liquid_mask, "phev_liquid_pj"] / liquid_total.replace(0.0, np.nan)
@@ -1073,7 +1076,7 @@ def build_phev_utilisation_diagnostics(
     if reconciliation_scalars.empty:
         return pd.DataFrame(columns=cols)
 
-    df = reconciliation_scalars[reconciliation_scalars["drive_type"] == "PHEV"].copy()
+    df = reconciliation_scalars[reconciliation_scalars["drive_type"].isin(_PLUGIN_HYBRID_DRIVES)].copy()
     if df.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1200,7 +1203,7 @@ def build_leap_ready_table(
     # ── Deduplicate to one row per technology branch ──────────────────────
     # All fuel rows of the same drive type share the same stock/mileage.
     # Priority for deduplication: prefer the primary fuel row for each drive type.
-    _primary_fuel_map = {"BEV": "Electricity", "FCEV": "Hydrogen", "PHEV": "Electricity"}
+    _primary_fuel_map = {"BEV": "Electricity", "FCEV": "Hydrogen", "PHEV": "Electricity", "EREV": "Electricity"}
     tech_dedup_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type"]
     if "size" in t9.columns:
         tech_dedup_keys.append("size")

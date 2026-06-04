@@ -48,13 +48,15 @@ from schemas.validation import validate_table
 log = logging.getLogger(__name__)
 
 # Non-ICE drives (scaling targets)
-_NON_ICE = {"BEV", "PHEV", "FCEV"}
+_NON_ICE = {"HEV", "BEV", "PHEV", "EREV", "FCEV"}
 
 # Drive type colours for charts
 _DRIVE_COLOURS = {
     "ICE":  "#888888",
+    "HEV":  "#607D8B",
     "BEV":  "#2196F3",
     "PHEV": "#9C27B0",
+    "EREV": "#673AB7",
     "FCEV": "#4CAF50",
 }
 
@@ -451,7 +453,7 @@ def _scale_future_shares(
 
         return pd.DataFrame(flat_rows), pd.DataFrame()
 
-    model_drives = ["ICE", "BEV", "PHEV", "FCEV"]
+    model_drives = ["ICE", "HEV", "BEV", "PHEV", "EREV", "FCEV"]
     anchor_year = int(future_shares["year"].min())
     all_years = list(range(anchor_year, _END_YEAR + 1))
 
@@ -554,17 +556,23 @@ def _scale_future_shares(
             "min_ice_share":    min_ice,
             # New base-year shares (2022)
             "new_base_ICE":     new_base.get("ICE",  0.0),
+            "new_base_HEV":     new_base.get("HEV",  0.0),
             "new_base_BEV":     new_base.get("BEV",  0.0),
             "new_base_PHEV":    new_base.get("PHEV", 0.0),
+            "new_base_EREV":    new_base.get("EREV", 0.0),
             "new_base_FCEV":    new_base.get("FCEV", 0.0),
             # 9th edition terminal shares (2060)
             "terminal_ICE":     terminal_shares.get("ICE",  0.0),
+            "terminal_HEV":     terminal_shares.get("HEV",  0.0),
             "terminal_BEV":     terminal_shares.get("BEV",  0.0),
             "terminal_PHEV":    terminal_shares.get("PHEV", 0.0),
+            "terminal_EREV":    terminal_shares.get("EREV", 0.0),
             "terminal_FCEV":    terminal_shares.get("FCEV", 0.0),
             # Per-drive method applied
+            "method_HEV":       drive_method.get("HEV",  "n/a"),
             "method_BEV":       drive_method.get("BEV",  "n/a"),
             "method_PHEV":      drive_method.get("PHEV", "n/a"),
+            "method_EREV":      drive_method.get("EREV", "n/a"),
             "method_FCEV":      drive_method.get("FCEV", "n/a"),
         })
 
@@ -599,7 +607,7 @@ def _linear_interpolate_fallback(
     for yr in all_years:
         t = (yr - _BASE_YEAR) / span if span > 0 else 1.0
         shares: dict[str, float] = {}
-        for drive in ["ICE", "BEV", "PHEV", "FCEV"]:
+        for drive in ["ICE", "HEV", "BEV", "PHEV", "EREV", "FCEV"]:
             b = new_base.get(drive, 0.0)
             e = terminal_shares.get(drive, 0.0)
             shares[drive] = max(0.0, b + t * (e - b))
@@ -657,7 +665,7 @@ def _plot_vehicle_type(
       Right  — Scaled trajectory stacked area (what goes into LEAP)
     Plus a plain-English text block below all panels.
     """
-    drives = ["ICE", "BEV", "PHEV", "FCEV"]
+    drives = ["ICE", "HEV", "BEV", "PHEV", "EREV", "FCEV"]
     future_years = list(range(_ANCHOR_YEAR, _END_YEAR + 1))
     all_years    = list(range(_BASE_YEAR,   _END_YEAR + 1))
 

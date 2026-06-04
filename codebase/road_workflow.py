@@ -20,12 +20,12 @@ Module 7 mirror is implemented in module7_mirror.py but must be called
 separately after run_module6(); pass its T6 and T9/T10 outputs directly.
 
 Input format:
-- Modules accept data in the LEAP workbook format produced by road_model_inputs_interface.
-- Required columns: Branch Path, Variable, Scenario, Region, plus integer year column(s)
-  (e.g. 2022 or "2022"; additional year columns in any order are also accepted).
-- Optional columns: Scale, Units, Per...
-- All other metadata columns (input_source, notes, etc.) are ignored.
-- See parse_leap_format_inputs() for full details.
+- Module 1 packages may use the canonical long CSV contract
+  (Economy, Scenario, Branch Path, Variable, Year, Value, Units, metadata) or
+  the legacy LEAP workbook format.
+- The adapter normalises either package shape before Modules 2-7 run.
+- parse_leap_format_inputs() still consumes the internal LEAP-style shape after
+  adapter normalisation.
 """
 
 from __future__ import annotations

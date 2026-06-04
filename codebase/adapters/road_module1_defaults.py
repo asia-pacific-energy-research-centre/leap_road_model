@@ -1,10 +1,13 @@
 """
 Adapter — road_model_inputs_interface default inputs loader.
 
-Loads road_module1_default_filled_inputs.csv files produced by
-road_model_inputs_interface and returns a long-format DataFrame.
+Loads Module 1 CSV packages produced by road_model_inputs_interface and returns
+a long-format DataFrame.
 
-File format (LEAP workbook style):
+Supported package formats:
+1. Canonical long CSV:
+    Economy, Scenario, Branch Path, Variable, Year, Value, Units, ...
+2. Legacy LEAP workbook style:
     Branch Path, Variable, Scenario, Region, Scale, Units, Per...,
     2022, [2030, 2040, 2050, ...], input_source, ..., default_version,
     researcher_review_recommended, review_reason
@@ -29,6 +32,7 @@ log = logging.getLogger(__name__)
 # while older/legacy paths may still use the unsuffixed name.
 _DEFAULT_FILE = "road_module1_default_filled_inputs.csv"
 _DEFAULT_FILE_PREFIX = "road_module1_default_filled_inputs_"
+_VALUES_FILE_PREFIX = "road_module1_values_"
 
 _PASSENGER_VEHICLE_TYPES = ("LPVs", "Motorcycles", "Buses")
 _FREIGHT_VEHICLE_TYPES = ("Trucks", "LCVs")
@@ -44,6 +48,28 @@ _DEFAULT_RECONCILIATION_WEIGHTS = {
 # Year columns present in the wide format
 _YEAR_COLS = ["2022", "2030", "2040", "2050"]
 
+_WIDE_ID_COLS = ["Branch Path", "Variable", "Scenario", "Region", "Scale", "Units", "Per..."]
+_LONG_REQUIRED_COLS = {"Branch Path", "Variable", "Year", "Value"}
+_LONG_COLUMN_ALIASES = {
+    "Economy": ["Economy", "economy", "Region", "region"],
+    "Scenario": ["Scenario", "scenario"],
+    "Branch Path": ["Branch Path", "branch_path", "leap_branch_path"],
+    "Variable": ["Variable", "variable"],
+    "Year": ["Year", "year"],
+    "Value": ["Value", "value"],
+    "Units": ["Units", "Unit", "unit"],
+    "Source": ["Source", "source", "source_name"],
+    "Comment": ["Comment", "comment", "notes", "review_reason"],
+    "Input Status": ["Input Status", "input_status", "input_source"],
+    "Source Method": ["Source Method", "source_method", "source_type"],
+    "Original Value": ["Original Value", "original_value"],
+    "Validation Message": ["Validation Message", "validation_message"],
+    "Last Updated": ["Last Updated", "last_updated", "source_date"],
+    "Version": ["Version", "version", "default_version"],
+    "Scale": ["Scale", "scale"],
+    "Per...": ["Per...", "Per", "per", "per_unit"],
+}
+
 # Map multinode Variable names → T2 variable names where they differ
 _VARIABLE_MAP = {
     "Fuel Economy":                "efficiency",
@@ -54,9 +80,12 @@ _VARIABLE_MAP = {
     "Vehicle Equivalent Weight":    "vehicle_equivalent_weight",
     "Vehicle Equivalent Weight Lower Bound": "vehicle_equivalent_weight_lower_bound",
     "Vehicle Equivalent Weight Upper Bound": "vehicle_equivalent_weight_upper_bound",
+    "Passenger Saturation":         "saturation_level",
     "Passenger Vehicle Saturation": "saturation_level",
     "Passenger Saturation Reached": "passenger_saturation_reached",
     "PHEV Electric Driving Share":  "phev_electric_utilisation_rate",
+    "PHEV Electric Utilisation Rate": "phev_electric_utilisation_rate",
+    "PHEV Electric Utilization Rate": "phev_electric_utilisation_rate",
     "Survival Rate":                "survival_rate",
     "Vintage Profile Share":        "vintage_share",
     "Reconciliation Bound Lower":   "reconciliation_bound_lower",
@@ -67,6 +96,47 @@ _VARIABLE_MAP = {
 # Unit conversions: multinode uses MJ/100km; model uses km/GJ
 # km/GJ = 10_000 / (MJ/100km)
 _EFFICIENCY_UNIT = "MJ/100 km"
+
+_PROFILE_PREFIXES = ("Age Profile", "Vintage Profile")
+
+# Base drive-type scope used by the road model. LEAP branch labels append size
+# later for sized buckets, e.g. Trucks/BEV/heavy -> "BEV heavy".
+_VALID_BASE_DRIVES_BY_VEHICLE_TYPE = {
+    "LPVs": {"ICE", "HEV", "EREV", "PHEV", "BEV", "FCEV"},
+    "Motorcycles": {"ICE", "BEV", "FCEV"},
+    "Buses": {"ICE", "BEV", "FCEV"},
+    "Trucks": {"ICE", "BEV", "FCEV"},
+    "LCVs": {"ICE", "PHEV", "BEV", "FCEV"},
+}
+
+
+def _split_profile_branch_path(branch_path: str) -> tuple[str, int | None, str]:
+    """
+    Return (profile_kind, profile_index, rest_of_path) for profile-prefixed paths.
+
+    Canonical long Module 1 profile rows use:
+        Age Profile\\<index>
+
+    Legacy wide packages use paths such as Demand\\Passenger road\\Age 5.
+    """
+    path_text = str(branch_path or "")
+    match = re.match(r"^(Age Profile|Vintage Profile)[\\/](\d+)(?:[\\/](.*))?$", path_text)
+    if match:
+        try:
+            index = int(match.group(2))
+        except ValueError:
+            index = None
+        return match.group(1), index, match.group(3) or ""
+    return "", None, path_text
+
+
+def _extract_profile_age(branch_path: str) -> int | None:
+    """Extract profile age from canonical prefix or legacy Age N branch paths."""
+    _, profile_index, _ = _split_profile_branch_path(branch_path)
+    if profile_index is not None:
+        return profile_index
+    match = re.search(r"Age\s+(\d+)", str(branch_path or ""))
+    return int(match.group(1)) if match else None
 
 
 def _folder_to_economy_code(folder_name: str) -> str:
@@ -84,6 +154,111 @@ def _folder_to_economy_code(folder_name: str) -> str:
     return folder_name
 
 
+def _infer_economy_from_filename(path: Path) -> str | None:
+    """Infer an economy code from Module 1 package filenames."""
+    stem = path.stem
+    for prefix in (_VALUES_FILE_PREFIX, _DEFAULT_FILE_PREFIX):
+        if not stem.startswith(prefix):
+            continue
+        remainder = stem[len(prefix):]
+        match = re.match(r"^(\d{2}_?[A-Z]+)", remainder)
+        if match:
+            return _folder_to_economy_code(match.group(1))
+    return None
+
+
+def _has_module1_csvs(folder: Path) -> bool:
+    """True when a folder directly contains Module 1 package CSV files."""
+    return any(folder.glob(f"{_VALUES_FILE_PREFIX}*.csv")) or any(folder.glob(f"{_DEFAULT_FILE_PREFIX}*.csv"))
+
+
+def _resolve_package_root(defaults_dir: Path, version: str | None) -> Path:
+    """
+    Resolve the Module 1 package root.
+
+    Supports both current versioned packages and the planned stable package
+    layout where CSVs may live directly under module1_defaults.
+    """
+    if version is not None:
+        version_dir = defaults_dir / version
+        if version_dir.exists():
+            return version_dir
+        if _has_module1_csvs(defaults_dir):
+            log.info("Version %s not found; using flat Module 1 package root %s", version, defaults_dir)
+            return defaults_dir
+        raise FileNotFoundError(f"Version folder not found: {version_dir}")
+
+    if _has_module1_csvs(defaults_dir):
+        return defaults_dir
+
+    candidates = [p for p in defaults_dir.iterdir() if p.is_dir()]
+    if not candidates:
+        raise FileNotFoundError(f"No Module 1 package folders or CSVs in {defaults_dir}")
+    version_dir = max(candidates, key=lambda p: p.stat().st_mtime)
+    log.info("Using most recent Module 1 package folder: %s", version_dir.name)
+    return version_dir
+
+
+def _iter_package_csvs(package_root: Path, economy_filter: list[str] | None = None) -> list[tuple[str, Path]]:
+    """
+    Return (economy_code, csv_path) pairs for versioned, economy-folder, or flat packages.
+    """
+    pairs: list[tuple[str, Path]] = []
+    seen_paths: set[Path] = set()
+
+    for econ_dir in sorted([p for p in package_root.iterdir() if p.is_dir()]):
+        economy_code = _folder_to_economy_code(econ_dir.name)
+        if economy_filter is not None and economy_code not in economy_filter:
+            continue
+        csv_path = _find_default_inputs_csv(econ_dir, economy_code)
+        if csv_path is not None:
+            pairs.append((economy_code, csv_path))
+            seen_paths.add(csv_path.resolve())
+
+    direct_files = sorted(
+        [
+            *package_root.glob(f"{_VALUES_FILE_PREFIX}*.csv"),
+            *package_root.glob(f"{_DEFAULT_FILE_PREFIX}*.csv"),
+        ],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for csv_path in direct_files:
+        if csv_path.resolve() in seen_paths:
+            continue
+        economy_code = _infer_economy_from_filename(csv_path)
+        if economy_code is None and economy_filter and len(economy_filter) == 1:
+            economy_code = economy_filter[0]
+        if economy_code is None:
+            log.warning("Could not infer economy code from Module 1 file name: %s", csv_path.name)
+            continue
+        if economy_filter is not None and economy_code not in economy_filter:
+            continue
+        pairs.append((economy_code, csv_path))
+        seen_paths.add(csv_path.resolve())
+
+    return pairs
+
+
+def _normalise_variable_name(variable_raw: str, branch_path: str) -> str:
+    """Normalise Module 1 variable names and infer component pseudo-branch variables."""
+    variable = _VARIABLE_MAP.get(variable_raw, variable_raw.lower().replace("-", " ").replace("/", " ").replace(" ", "_"))
+    path_lower = str(branch_path or "").replace("\\", "/").lower()
+
+    if variable in {"reconciliation_weight", "reconciliation_bound_lower", "reconciliation_bound_upper"}:
+        component_map = {
+            "stock": "stock",
+            "mileage": "mileage",
+            "fuel economy": "efficiency",
+            "efficiency": "efficiency",
+        }
+        for token, component in component_map.items():
+            if token in path_lower:
+                return f"{variable}_{component}"
+
+    return variable
+
+
 def _parse_branch_path(branch_path: str) -> dict[str, str | None]:
     """
     Extract vehicle_type, drive_type, size, and fuel from a LEAP branch path.
@@ -92,7 +267,8 @@ def _parse_branch_path(branch_path: str) -> dict[str, str | None]:
 
     Returns dict with keys: transport_type, vehicle_type, technology, size, fuel
     """
-    parts = branch_path.split("\\")
+    _, _, path_for_parse = _split_profile_branch_path(branch_path)
+    parts = path_for_parse.split("\\")
     result: dict[str, str | None] = {
         "transport_type": None,
         "vehicle_type":   None,
@@ -141,15 +317,51 @@ def _parse_branch_path(branch_path: str) -> dict[str, str | None]:
     return result
 
 
+def _is_out_of_scope_model_branch(branch_path: str) -> bool:
+    """True when a Module 1 branch uses a drive outside this model's scope."""
+    parsed = _parse_branch_path(branch_path)
+    vehicle_type = parsed["vehicle_type"]
+    drive_type = parsed["drive_type"]
+    if vehicle_type is None or drive_type is None:
+        return False
+
+    allowed_drives = _VALID_BASE_DRIVES_BY_VEHICLE_TYPE.get(vehicle_type)
+    if allowed_drives is None:
+        return False
+    return drive_type not in allowed_drives
+
+
+def _filter_out_of_scope_model_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop Module 1 rows whose branch drive is outside the current model scope."""
+    if "Branch Path" not in df.columns or df.empty:
+        return df
+
+    out_of_scope = df["Branch Path"].astype(str).apply(_is_out_of_scope_model_branch)
+    if out_of_scope.any():
+        log.info("Dropped %d out-of-scope Module 1 branch row(s)", int(out_of_scope.sum()))
+    return df.loc[~out_of_scope].copy()
+
+
 def _find_default_inputs_csv(econ_dir: Path, economy_code: str) -> Path | None:
     """
     Resolve the default-filled inputs CSV inside one economy folder.
 
     Supports both naming conventions:
-      - road_module1_default_filled_inputs.csv               (legacy)
-      - road_module1_default_filled_inputs_<ECONOMY>.csv     (current)
+      - road_module1_values_<ECONOMY>_<VERSION>_<YYYYMMDD>.csv  (canonical)
+      - road_module1_default_filled_inputs.csv                  (legacy)
+      - road_module1_default_filled_inputs_<ECONOMY>.csv        (legacy)
     """
     economy_no_underscore = economy_code.replace("_", "")
+    long_globs = [
+        f"{_VALUES_FILE_PREFIX}{economy_no_underscore}_*.csv",
+        f"{_VALUES_FILE_PREFIX}{economy_code}_*.csv",
+        f"{_VALUES_FILE_PREFIX}*.csv",
+    ]
+    for pattern in long_globs:
+        matches = sorted(econ_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        if matches:
+            return matches[0]
+
     candidates = [
         econ_dir / _DEFAULT_FILE,
         econ_dir / f"{_DEFAULT_FILE_PREFIX}{econ_dir.name}.csv",
@@ -164,6 +376,121 @@ def _find_default_inputs_csv(econ_dir: Path, economy_code: str) -> Path | None:
     if globbed:
         return globbed[0]
     return None
+
+
+def _find_col(df: pd.DataFrame, canonical_name: str) -> str | None:
+    """Return the actual column name matching a canonical Module 1 column."""
+    aliases = _LONG_COLUMN_ALIASES.get(canonical_name, [canonical_name])
+    lookup = {str(col).strip().lower(): col for col in df.columns}
+    for alias in aliases:
+        found = lookup.get(alias.strip().lower())
+        if found is not None:
+            return str(found)
+    return None
+
+
+def _looks_like_long_module1_csv(df: pd.DataFrame) -> bool:
+    """True when a DataFrame uses the canonical long Module 1 shape."""
+    return all(_find_col(df, col) is not None for col in _LONG_REQUIRED_COLS)
+
+
+def _normalise_long_module1_df(
+    df: pd.DataFrame,
+    economy_code: str,
+    version_name: str,
+) -> pd.DataFrame:
+    """Normalise canonical long Module 1 rows into local column names."""
+    out = pd.DataFrame(index=df.index)
+    for canonical in _LONG_COLUMN_ALIASES:
+        source_col = _find_col(df, canonical)
+        if source_col is not None:
+            out[canonical] = df[source_col]
+
+    out["Region"] = out.get("Economy", economy_code)
+    out["Scenario"] = out.get("Scenario", "Reference")
+    out["Scale"] = out.get("Scale", "")
+    out["Units"] = out.get("Units", "")
+    out["Per..."] = out.get("Per...", "")
+
+    if "Source" in out.columns:
+        out["source_name"] = out["Source"]
+    else:
+        out["source_name"] = "road_module1_values"
+
+    if "Source Method" in out.columns:
+        out["source_type"] = out["Source Method"]
+    else:
+        out["source_type"] = "module1_long_csv"
+
+    if "Input Status" in out.columns:
+        out["input_source"] = out["Input Status"]
+    else:
+        out["input_source"] = "provided"
+
+    if "Comment" in out.columns:
+        out["review_reason"] = out["Comment"]
+        out["notes"] = out["Comment"]
+    else:
+        out["review_reason"] = ""
+        out["notes"] = ""
+
+    if "Version" in out.columns:
+        out["default_version"] = out["Version"]
+    else:
+        out["default_version"] = version_name
+
+    out["researcher_review_recommended"] = False
+
+    keep = [
+        "Branch Path", "Variable", "Scenario", "Region", "Scale", "Units", "Per...",
+        "Year", "Value", "input_source", "source_type", "source_name", "source_scope",
+        "source_date", "default_version", "researcher_review_recommended", "review_reason",
+        "notes",
+    ]
+    return out[[col for col in keep if col in out.columns]].copy()
+
+
+def _long_to_legacy_wide(long_df: pd.DataFrame) -> pd.DataFrame:
+    """Convert canonical long Module 1 rows to the legacy wide reader shape."""
+    long_df = long_df.copy()
+    long_df["Year"] = pd.to_numeric(long_df["Year"], errors="coerce")
+    long_df = long_df.dropna(subset=["Year"])
+    long_df["Year"] = long_df["Year"].astype(int).astype(str)
+
+    metadata_cols = [
+        col for col in [
+            *_WIDE_ID_COLS,
+            "input_source", "source_type", "source_name", "source_scope",
+            "source_date", "default_version", "researcher_review_recommended",
+            "review_reason", "notes",
+        ]
+        if col in long_df.columns
+    ]
+    wide = (
+        long_df.pivot_table(
+            index=metadata_cols,
+            columns="Year",
+            values="Value",
+            aggfunc="first",
+            dropna=False,
+        )
+        .reset_index()
+        .rename_axis(columns=None)
+    )
+    return wide
+
+
+def _read_module1_csv_as_wide(
+    csv_path: Path,
+    economy_code: str,
+    version_name: str,
+) -> pd.DataFrame:
+    """Read either canonical long or legacy wide Module 1 CSV as legacy wide."""
+    df = pd.read_csv(csv_path, low_memory=False)
+    if _looks_like_long_module1_csv(df):
+        long_df = _normalise_long_module1_df(df, economy_code=economy_code, version_name=version_name)
+        return _filter_out_of_scope_model_rows(_long_to_legacy_wide(long_df))
+    return _filter_out_of_scope_model_rows(df)
 
 
 def load_road_module1_defaults(
@@ -200,42 +527,20 @@ def load_road_module1_defaults(
     """
     defaults_dir = Path(defaults_dir)
 
-    # Resolve version
-    if version is None:
-        candidates = [p for p in defaults_dir.iterdir() if p.is_dir()]
-        if not candidates:
-            raise FileNotFoundError(f"No version folders in {defaults_dir}")
-        version_dir = max(candidates, key=lambda p: p.stat().st_mtime)
-        log.info("Using most recent version: %s", version_dir.name)
-    else:
-        version_dir = defaults_dir / version
-        if not version_dir.exists():
-            raise FileNotFoundError(f"Version folder not found: {version_dir}")
-
-    # Find economy folders
-    econ_dirs = sorted([p for p in version_dir.iterdir() if p.is_dir()])
-    log.info("Found %d economy folders in %s", len(econ_dirs), version_dir.name)
+    package_root = _resolve_package_root(defaults_dir, version)
+    economy_csvs = _iter_package_csvs(package_root, economy_filter=economy_filter)
+    log.info("Found %d Module 1 CSV file(s) in %s", len(economy_csvs), package_root)
 
     frames = []
-    for econ_dir in econ_dirs:
-        economy_code = _folder_to_economy_code(econ_dir.name)
-
-        if economy_filter is not None and economy_code not in economy_filter:
-            continue
-
-        csv_path = _find_default_inputs_csv(econ_dir, economy_code)
-        if csv_path is None:
-            log.warning("Missing defaults file for %s in %s", economy_code, econ_dir)
-            continue
-
+    for economy_code, csv_path in economy_csvs:
         try:
-            df = _load_single_economy(csv_path, economy_code, version_dir.name)
+            df = _load_single_economy(csv_path, economy_code, package_root.name)
             frames.append(df)
         except Exception as exc:
             log.warning("Failed to load %s: %s", economy_code, exc)
 
     if not frames:
-        raise RuntimeError(f"No economy defaults could be loaded from {version_dir}")
+        raise RuntimeError(f"No economy defaults could be loaded from {package_root}")
 
     result = pd.concat(frames, ignore_index=True)
 
@@ -243,8 +548,8 @@ def load_road_module1_defaults(
         result = result[~result["variable"].isin(["survival_rate", "vintage_share"])].copy()
 
     if not include_reconciliation_params:
-        excl = {"reconciliation_bound_lower", "reconciliation_bound_upper", "reconciliation_weight"}
-        result = result[~result["variable"].isin(excl)].copy()
+        excl_prefixes = ("reconciliation_bound_lower", "reconciliation_bound_upper", "reconciliation_weight")
+        result = result[~result["variable"].astype(str).str.startswith(excl_prefixes)].copy()
 
     log.info("Loaded %d default rows across %d economies", len(result), result["economy"].nunique())
     return result
@@ -256,7 +561,7 @@ def _load_single_economy(
     version_name: str,
 ) -> pd.DataFrame:
     """Load one economy's default CSV and parse into long format."""
-    df = pd.read_csv(csv_path, low_memory=False)
+    df = _read_module1_csv_as_wide(csv_path, economy_code=economy_code, version_name=version_name)
 
     # Filter to year 2022 (base year) — other years (2030, 2040, 2050) are projection
     # assumptions that go through Module 5's future-share logic, not the T2 defaults path.
@@ -269,7 +574,7 @@ def _load_single_economy(
     for _, row in df.iterrows():
         branch_path = str(row.get("Branch Path", ""))
         variable_raw = str(row.get("Variable", ""))
-        variable = _VARIABLE_MAP.get(variable_raw, variable_raw.lower().replace(" ", "_"))
+        variable = _normalise_variable_name(variable_raw, branch_path)
         unit = str(row.get("Units", ""))
         per_unit = str(row.get("Per...", ""))
         review = row.get("researcher_review_recommended", False)
@@ -302,7 +607,12 @@ def _load_single_economy(
         if parsed["vehicle_type"] is None and variable not in (
             "survival_rate", "vintage_share",
             "reconciliation_bound_lower", "reconciliation_bound_upper",
-            "reconciliation_weight", "saturation_level", "passenger_saturation_reached",
+            "reconciliation_weight", "reconciliation_bound_lower_stock",
+            "reconciliation_bound_lower_mileage", "reconciliation_bound_lower_efficiency",
+            "reconciliation_bound_upper_stock", "reconciliation_bound_upper_mileage",
+            "reconciliation_bound_upper_efficiency", "reconciliation_weight_stock",
+            "reconciliation_weight_mileage", "reconciliation_weight_efficiency",
+            "saturation_level", "passenger_saturation_reached",
             "phev_electric_utilisation_rate",
         ):
             continue
@@ -358,14 +668,18 @@ def get_survival_curves(
 
     sub = defaults_df[mask].copy()
     if sub.empty:
+        global_mask = (
+            (defaults_df["economy"] == economy)
+            & (defaults_df["variable"] == "survival_rate")
+            & (defaults_df["transport_type"].isna())
+            & (defaults_df["vehicle_type"].isna())
+        )
+        sub = defaults_df[global_mask].copy()
+    if sub.empty:
         log.warning("No survival curve found for %s / %s / %s", economy, transport_type, vehicle_type)
         return pd.DataFrame(columns=["age", "survival_rate"])
 
-    def _extract_age(path: str) -> int | None:
-        m = re.search(r"Age\s+(\d+)", path)
-        return int(m.group(1)) if m else None
-
-    sub["age"] = sub["leap_branch_path"].apply(_extract_age)
+    sub["age"] = sub["leap_branch_path"].apply(_extract_profile_age)
     sub = sub.dropna(subset=["age"])
     sub["age"] = sub["age"].astype(int)
     out = sub[["age", "value"]].rename(columns={"value": "survival_rate"})
@@ -401,14 +715,18 @@ def get_vintage_profiles(
 
     sub = defaults_df[mask].copy()
     if sub.empty:
+        global_mask = (
+            (defaults_df["economy"] == economy)
+            & (defaults_df["variable"] == "vintage_share")
+            & (defaults_df["transport_type"].isna())
+            & (defaults_df["vehicle_type"].isna())
+        )
+        sub = defaults_df[global_mask].copy()
+    if sub.empty:
         log.warning("No vintage profile found for %s / %s / %s", economy, transport_type, vehicle_type)
         return pd.DataFrame(columns=["age", "vintage_share"])
 
-    def _extract_age(path: str) -> int | None:
-        m = re.search(r"Age\s+(\d+)", path)
-        return int(m.group(1)) if m else None
-
-    sub["age"] = sub["leap_branch_path"].apply(_extract_age)
+    sub["age"] = sub["leap_branch_path"].apply(_extract_profile_age)
     sub = sub.dropna(subset=["age"])
     sub["age"] = sub["age"].astype(int)
     out = sub[["age", "value"]].rename(columns={"value": "vintage_share"})
@@ -651,24 +969,32 @@ def get_reconciliation_weights(defaults_df: pd.DataFrame, economy: str) -> dict[
     return None
 
 
-def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float:
+def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float | dict[str, float]:
     """
     Extract the PHEV electric driving share for the economy.
 
-    Falls back to 0.50 if not present and logs a warning.
+    Returns a dict {vehicle_type: rate} when vehicle-type-specific rows are
+    present (e.g. {"LPVs": 0.45, "LCVs": 0.35}). Returns a single float when
+    only an economy-level row without a vehicle type is available. Falls back
+    to 0.50 if no rows are found.
     """
     mask = (
         (defaults_df["economy"] == economy)
         & (defaults_df["variable"] == "phev_electric_utilisation_rate")
     )
-    sub = defaults_df[mask]
+    sub = defaults_df[mask].dropna(subset=["value"])
     if sub.empty:
         log.warning(
             "No phev_electric_utilisation_rate found for %s in Module 1 defaults; using 0.50",
             economy,
         )
         return 0.50
-    rate = float(sub["value"].dropna().iloc[0])
+    typed = sub[sub["vehicle_type"].notna()]
+    if not typed.empty:
+        rates = {str(row["vehicle_type"]): float(row["value"]) for _, row in typed.iterrows()}
+        log.info("Module 1 PHEV utilisation rates for %s: %s", economy, rates)
+        return rates
+    rate = float(sub["value"].iloc[0])
     log.info("Module 1 PHEV utilisation rate for %s: %.3f", economy, rate)
     return rate
 
@@ -779,39 +1105,38 @@ def load_module1_leap_df(
     """
     defaults_dir = Path(defaults_dir)
 
-    # Resolve version folder
-    if version is None:
-        candidates = [p for p in defaults_dir.iterdir() if p.is_dir()]
-        if not candidates:
-            raise FileNotFoundError(f"No version folders in {defaults_dir}")
-        version_dir = max(candidates, key=lambda p: p.stat().st_mtime)
-    else:
-        version_dir = defaults_dir / version
-        if not version_dir.exists():
-            raise FileNotFoundError(f"Version folder not found: {version_dir}")
+    package_root = _resolve_package_root(defaults_dir, version)
 
-    # Economy folder uses no-underscore convention (e.g. '12NZ') but may also exist as-is
+    # Economy folder uses no-underscore convention (e.g. '12NZ') but may also exist as-is.
+    # Planned long packages may also place road_module1_values_<ECONOMY>.csv
+    # directly under the package root.
     economy_no_underscore = economy.replace("_", "")
     folder = next(
-        (version_dir / candidate for candidate in (economy, economy_no_underscore)
-         if (version_dir / candidate).is_dir()),
+        (package_root / candidate for candidate in (economy, economy_no_underscore)
+         if (package_root / candidate).is_dir()),
         None,
     )
-    if folder is None:
-        raise FileNotFoundError(
-            f"Economy folder not found for '{economy}' in {version_dir}. "
-            f"Tried: {economy}, {economy_no_underscore}. "
-            "Run scripts/generate_module1_defaults.py to generate defaults."
-        )
 
-    csv_path = _find_default_inputs_csv(folder, economy)
+    csv_path: Path | None = None
+    if folder is not None:
+        csv_path = _find_default_inputs_csv(folder, economy)
+    else:
+        direct_matches = [
+            csv for found_economy, csv in _iter_package_csvs(package_root, economy_filter=[economy])
+            if found_economy == economy
+        ]
+        if direct_matches:
+            csv_path = direct_matches[0]
+
     if csv_path is None:
         raise FileNotFoundError(
-            f"Module 1 defaults CSV not found in {folder}. "
+            f"Module 1 defaults CSV not found for '{economy}' in {package_root}. "
+            f"Tried folders: {economy}, {economy_no_underscore}; "
+            f"and flat files matching road_module1_values_{economy}*.csv. "
             "Run scripts/generate_module1_defaults.py to generate defaults."
         )
 
-    df = pd.read_csv(csv_path, low_memory=False)
+    df = _read_module1_csv_as_wide(csv_path, economy_code=economy, version_name=package_root.name)
     # Normalise Region to economy code so parse_leap_format_inputs works without mapping
     if "Region" in df.columns:
         df = df.copy()
@@ -841,7 +1166,7 @@ def load_module1_for_economy(
             raw_leap_df            : LEAP-format DataFrame, pass to parse_leap_format_inputs()
             survival_curves        : dict[vehicle_type → pd.Series by age]
             vintage_profiles       : dict[vehicle_type → pd.Series by age]
-            phev_utilisation_rate  : float
+            phev_utilisation_rate  : float or dict[vehicle_type → float]
             scalar_bounds          : tuple(lower, upper) or None
             passenger_saturation_level : float or None
             reconciliation_weights : dict{stock,mileage,efficiency} or None

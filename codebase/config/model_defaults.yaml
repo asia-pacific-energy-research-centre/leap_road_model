@@ -1,6 +1,7 @@
 # Model default parameters
-# These are used when researcher-provided values are not available.
-# All defaults should be clearly documented and source-flagged.
+# Legacy fallback file. Runtime access is disabled by default.
+# To explicitly reactivate this file for legacy Module 1 scaffold code, set:
+# ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS=1
 
 # --- Module 3: Stock target projection ---
 
@@ -13,15 +14,12 @@ passenger_motorisation:
   # Years excluded from energy trend calibration (COVID disruption)
   covid_exclude_years: [2020, 2021, 2022]
   # Default saturation fallback: multiple of base-year motorisation level
-  # Used when no researcher-supplied saturation value is available.
   saturation_fallback_multiplier: 3.0
   # If base-year motorisation exceeds this fraction of saturation, treat as already-saturated.
   saturation_already_reached_threshold: 0.95
 
 freight_stock:
   # GDP elasticity bounds for freight stock projection
-  # Upper bound 0.3: wider than passenger k_max to reflect higher freight sensitivity to GDP.
-  # Needs calibration against historical data — see Section 10 D3.
   elasticity_min: 0.0
   elasticity_max: 0.3
   # Lookback window (shared with passenger)
@@ -47,8 +45,7 @@ reconciliation:
   stock_weight:      0.50
   mileage_weight:    0.25
   efficiency_weight: 0.25
-  # Per-scalar bounds (recommended)
-  # Stock has wider bounds so it can absorb residual reconciliation where needed.
+  # Per-scalar bounds
   stock_scalar_min: 0.0
   stock_scalar_max: 10.0
   mileage_scalar_min: 0.85
@@ -63,8 +60,6 @@ reconciliation:
 
 phev:
   # PHEV electric utilisation rate: fraction of km driven on electricity
-  # Used when no economy-specific value is available.
-  # Source: IEA (needs review — see Human Review Question D1)
   default_electric_utilisation_rate: 0.50
 
 # --- General ---
@@ -73,62 +68,77 @@ projection:
   base_year: 2022
   end_year: 2060
 
+# Vehicle-equivalent weights for ownership/saturation calculations.
+# These convert a physical vehicle count into car-equivalent units.
+# LPV = 1.0 is the reference unit.
+# Used in Module 3 motorisation envelope calculation.
+vehicle_equivalent_weights:
+  LPVs:        1.0
+  Motorcycles: 0.8
+  Buses:       20.0
+  Trucks:      5.0
+  LCVs:        1.5
+
+# Vehicle-equivalent weight calibration bounds.
+# Module 3 uses these for passenger saturation/motorisation calibration.
+vehicle_equivalent_weight_bounds:
+  Motorcycles:
+    lower: 0.05
+    upper: 0.80
+  Buses:
+    lower: 8.0
+    upper: 30.0
+
 # Default mileage (km/vehicle/year) by vehicle type and drive.
-# Source: multinode_energy_balance road_module1_defaults.py (v2026_05_25_best_guess)
-# These are starting-point defaults; researcher inputs take priority.
 default_mileage_km_per_year:
   LPVs:
     ICE:  15000
-    BEV:  15000
+    HEV:  15000
+    EREV: 15000
     PHEV: 15000
+    BEV:  15000
     FCEV: 15000
   Motorcycles:
     ICE:  8000
     BEV:  8000
-    PHEV: 8000
     FCEV: 8000
   Buses:
     ICE:  50000
     BEV:  50000
-    PHEV: 50000
     FCEV: 50000
+  LCVs:
+    ICE:  25000
+    PHEV: 25000
+    BEV:  25000
+    FCEV: 25000
   Trucks:
     ICE:  60000
     BEV:  60000
-    PHEV: 60000
     FCEV: 60000
-  LCVs:
-    ICE:  25000
-    BEV:  25000
-    PHEV: 25000
-    FCEV: 25000
 
 # Default efficiency (km/GJ) by vehicle type and drive.
-# Derived from multinode_energy_balance defaults (MJ/km inverted to km/GJ).
-# km/GJ = 1000 / (MJ/km)
 default_efficiency_km_per_gj:
   LPVs:
-    ICE:   11800   # ~0.085 MJ/km ≈ 8.5 L/100km gasoline
-    BEV:   65000   # ~0.015 MJ/km
+    ICE:   11800
+    HEV:   11800
+    EREV:  18000
     PHEV:  18000
+    BEV:   65000
     FCEV:  35000
   Motorcycles:
-    ICE:   33000   # ~0.030 MJ/km
+    ICE:   33000
     BEV:   80000
-    PHEV:  40000
     FCEV:  40000
   Buses:
-    ICE:   2800    # ~0.35 MJ/km
+    ICE:   2800
     BEV:   6000
-    PHEV:  3500
     FCEV:  5000
-  Trucks:
-    ICE:   2000    # ~0.50 MJ/km
-    BEV:   4000
-    PHEV:  2500
-    FCEV:  3500
   LCVs:
-    ICE:   8000    # ~0.125 MJ/km
-    BEV:   18000
+    ICE:   8000
     PHEV:  10000
+    BEV:   18000
     FCEV:  14000
+  Trucks:
+    ICE:   2000
+    BEV:   4000
+    FCEV:  3500

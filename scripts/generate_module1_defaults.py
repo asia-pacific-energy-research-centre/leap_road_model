@@ -5,7 +5,8 @@ This script calls road_model_inputs_interface generation code directly —
 no website required. The outputs are written to:
 
     leap_road_model/input_data/module1_defaults/{version}/{economy}/
-        road_module1_default_filled_inputs.csv
+        road_module1_values_<ECONOMY>_<VERSION>_<YYYYMMDD>.csv
+        road_module1_default_filled_inputs_<ECONOMY>.csv  (legacy compatibility)
 
 These files are consumed automatically by road_workflow.py when running
 the road model. Refresh them whenever Module 1 assumptions are updated.
@@ -32,8 +33,12 @@ Both repos must be in the same parent folder.
 from __future__ import annotations
 
 import argparse
+from datetime import date
+import re
 import sys
 from pathlib import Path
+
+import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Locate the road_model_inputs_interface back-end and add to sys.path
@@ -70,6 +75,174 @@ from core.road_module1_defaults import (  # noqa: E402  (import after sys.path m
 
 MODULE1_OUTPUT_DIR = _THIS_REPO / "input_data" / "module1_defaults"
 
+LEGACY_PREFIX = "road_module1_default_filled_inputs_"
+LONG_PREFIX = "road_module1_values_"
+YEAR_PATTERN = re.compile(r"^\d{4}$")
+VALID_BASE_DRIVES_BY_VEHICLE_TYPE = {
+    "LPVs": {"ICE", "HEV", "EREV", "PHEV", "BEV", "FCEV"},
+    "Motorcycles": {"ICE", "BEV", "FCEV"},
+    "Buses": {"ICE", "BEV", "FCEV"},
+    "Trucks": {"ICE", "BEV", "FCEV"},
+    "LCVs": {"ICE", "PHEV", "BEV", "FCEV"},
+}
+
+
+def _profile_prefixed_branch_path(branch_path: object, variable: object) -> str:
+    """Encode global age-profile rows in Branch Path instead of extra columns."""
+    path_text = str(branch_path or "")
+    variable_text = str(variable or "")
+    if variable_text not in {"Survival Rate", "Vintage Profile Share"}:
+        return path_text
+
+    match = re.search(r"(?:^|\\)Age\s+(\d+)(?:\\|$)", path_text)
+    if not match:
+        return path_text
+
+    age = match.group(1)
+    return f"Age Profile\\{age}"
+
+
+def _parse_vehicle_and_drive(branch_path: object) -> tuple[str | None, str | None]:
+    """Return model vehicle_type and unsized base drive from a LEAP branch path."""
+    parts = str(branch_path or "").split("\\")
+    if len(parts) < 4:
+        return None, None
+    vehicle_type = parts[2]
+    if vehicle_type not in VALID_BASE_DRIVES_BY_VEHICLE_TYPE:
+        return None, None
+    technology = parts[3]
+    tokens = technology.split()
+    if not tokens:
+        return vehicle_type, None
+    return vehicle_type, tokens[0]
+
+
+def _filter_out_of_scope_model_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop generated rows for drive branches outside the current road model scope."""
+    branch_cols = [
+        col for col in df.columns
+        if str(col) in {"Branch Path", "Branch_Path", "expected_key_Branch_Path"}
+    ]
+    if not branch_cols or df.empty:
+        return df
+
+    def _is_out_of_scope(branch_path: object) -> bool:
+        vehicle_type, drive_type = _parse_vehicle_and_drive(branch_path)
+        if vehicle_type is None or drive_type is None:
+            return False
+        return drive_type not in VALID_BASE_DRIVES_BY_VEHICLE_TYPE[vehicle_type]
+
+    out_of_scope = pd.Series(False, index=df.index)
+    for col in branch_cols:
+        out_of_scope = out_of_scope | df[col].apply(_is_out_of_scope)
+    return df.loc[~out_of_scope].copy()
+
+
+def _legacy_wide_to_canonical_long(wide_df: pd.DataFrame, economy_code: str, version: str) -> pd.DataFrame:
+    """Convert the legacy Module 1 wide CSV into the canonical long CSV contract."""
+    year_cols = [col for col in wide_df.columns if YEAR_PATTERN.match(str(col))]
+    id_cols = [col for col in wide_df.columns if col not in year_cols]
+    long_df = wide_df.melt(
+        id_vars=id_cols,
+        value_vars=year_cols,
+        var_name="Year",
+        value_name="Value",
+    )
+    long_df["Economy"] = economy_code
+    long_df["Year"] = pd.to_numeric(long_df["Year"], errors="coerce").astype("Int64")
+    long_df["Source"] = long_df.get("source_name", "")
+    long_df["Comment"] = long_df.get("review_reason", long_df.get("notes", ""))
+    long_df["Input Status"] = long_df.get("input_source", "")
+    long_df["Source Method"] = long_df.get("source_type", "")
+    long_df["Original Value"] = ""
+    long_df["Validation Message"] = ""
+    long_df["Last Updated"] = long_df.get("source_date", "")
+    long_df["Version"] = long_df.get("default_version", version)
+    long_df["Branch Path"] = [
+        _profile_prefixed_branch_path(branch_path, variable)
+        for branch_path, variable in zip(long_df["Branch Path"], long_df["Variable"])
+    ]
+
+    keep = [
+        "Economy", "Scenario", "Branch Path", "Variable", "Year", "Value", "Units",
+        "Source", "Comment", "Input Status", "Source Method",
+        "Original Value", "Validation Message", "Last Updated", "Version",
+    ]
+    return long_df[[col for col in keep if col in long_df.columns]].copy()
+
+
+def _write_long_csv_copies(output_root: Path, version: str) -> list[Path]:
+    """Write canonical long CSV copies next to legacy generated economy files."""
+    version_root = output_root / version
+    today = date.today().strftime("%Y%m%d")
+    written: list[Path] = []
+
+    for economy_dir in sorted(path for path in version_root.iterdir() if path.is_dir()):
+        economy_code = economy_dir.name
+        legacy_candidates = sorted(economy_dir.glob(f"{LEGACY_PREFIX}*.csv"))
+        if not legacy_candidates:
+            continue
+        legacy_path = legacy_candidates[0]
+        wide_df = pd.read_csv(legacy_path, low_memory=False)
+        filtered_wide_df = _filter_out_of_scope_model_rows(wide_df)
+        if len(filtered_wide_df) != len(wide_df):
+            filtered_wide_df.to_csv(legacy_path, index=False)
+        wide_df = filtered_wide_df
+        long_df = _legacy_wide_to_canonical_long(wide_df, economy_code=economy_code, version=version)
+        long_path = economy_dir / f"{LONG_PREFIX}{economy_code}_{version}_{today}.csv"
+
+        for old_long_path in economy_dir.glob(f"{LONG_PREFIX}*.csv"):
+            if old_long_path != long_path:
+                old_long_path.unlink(missing_ok=True)
+
+        long_df.to_csv(long_path, index=False)
+        written.append(long_path)
+
+    return written
+
+
+def _write_local_manifest(output_root: Path, version: str, long_paths: list[Path]) -> Path:
+    """Write a package manifest using local package paths."""
+    version_root = output_root / version
+    manifest_path = version_root / "road_module1_manifest.csv"
+    rows = []
+    for path in sorted(long_paths):
+        economy_code = path.parent.name
+        rows.append({
+            "default_version": version,
+            "economy": economy_code,
+            "file_type": "canonical_long_values",
+            "path": str(path),
+        })
+        legacy_candidates = sorted(path.parent.glob(f"{LEGACY_PREFIX}*.csv"))
+        for legacy_path in legacy_candidates[:1]:
+            rows.append({
+                "default_version": version,
+                "economy": economy_code,
+                "file_type": "legacy_default_filled_inputs",
+                "path": str(legacy_path),
+            })
+
+    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    return manifest_path
+
+
+def _filter_package_support_csvs(output_root: Path, version: str) -> list[Path]:
+    """Clean package-level support CSVs that list branch paths."""
+    version_root = output_root / version
+    written: list[Path] = []
+    for csv_path in sorted(version_root.glob("*.csv")):
+        try:
+            df = pd.read_csv(csv_path, low_memory=False)
+        except Exception:
+            continue
+        filtered_df = _filter_out_of_scope_model_rows(df)
+        if len(filtered_df) == len(df):
+            continue
+        filtered_df.to_csv(csv_path, index=False)
+        written.append(csv_path)
+    return written
+
 
 def generate_defaults(version: str = DEFAULT_VERSION, no_enforce: bool = False) -> None:
     """Generate Module 1 defaults for all APEC economies and write to input_data/module1_defaults/."""
@@ -78,7 +251,12 @@ def generate_defaults(version: str = DEFAULT_VERSION, no_enforce: bool = False) 
 
     print(f"road_model_inputs_interface backend : {_INTERFACE_BACKEND}")
     print(f"Output directory                    : {output_root}")
-    print(f"Version                             : {version}")
+    if version != DEFAULT_VERSION:
+        print(
+            "Requested version                   : "
+            f"{version} (upstream generator currently writes {DEFAULT_VERSION})"
+        )
+    print(f"Version                             : {DEFAULT_VERSION}")
     print(f"Scenarios                           : {list(DEFAULT_SCENARIOS)}")
     print(f"Years                               : {list(DEFAULT_YEARS)}")
     print(f"Enforce source-backed values        : {not no_enforce}")
@@ -90,9 +268,15 @@ def generate_defaults(version: str = DEFAULT_VERSION, no_enforce: bool = False) 
         years=DEFAULT_YEARS,
         enforce_source_backed_values=not no_enforce,
     )
+    long_paths = _write_long_csv_copies(output_root=output_root, version=DEFAULT_VERSION)
+    support_paths = _filter_package_support_csvs(output_root=output_root, version=DEFAULT_VERSION)
+    manifest_path = _write_local_manifest(output_root=output_root, version=DEFAULT_VERSION, long_paths=long_paths)
 
     print(f"\nDone. Generated defaults for {len(paths)} economies.")
-    print(f"Location: {output_root / version}")
+    print(f"Long CSV files written              : {len(long_paths)}")
+    print(f"Support CSV files cleaned           : {len(support_paths)}")
+    print(f"Manifest                            : {manifest_path}")
+    print(f"Location: {output_root / DEFAULT_VERSION}")
     print(
         "\nNext step: run the road model via run_with_config() — it will automatically\n"
         f"load defaults from {output_root}."

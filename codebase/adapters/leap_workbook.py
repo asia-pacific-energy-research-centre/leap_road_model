@@ -25,6 +25,13 @@ from adapters.leap_expressions import to_leap_expression, parse_expression_colum
 
 log = logging.getLogger(__name__)
 
+_ROAD_BRANCH_PREFIXES = (
+    "Demand\\Transport passenger road",
+    "Demand\\Transport freight road",
+    "Demand\\Passenger road",
+    "Demand\\Freight road",
+)
+
 # Column positions match the audit report findings
 _HEADER_ROW = 2  # 0-indexed (row 3 in Excel)
 _BRANCH_PATH = "Branch Path"
@@ -81,9 +88,7 @@ def load_leap_import_workbook_as_template(
     df = df.dropna(subset=["leap_branch_path"])
 
     if road_only:
-        road_mask = df["leap_branch_path"].str.startswith(
-            ("Demand\\Passenger road", "Demand\\Freight road"), na=False
-        )
+        road_mask = df["leap_branch_path"].str.startswith(_ROAD_BRANCH_PREFIXES, na=False)
         df = df[road_mask].copy()
 
     template_cols = ["leap_branch_path", "variable", "scenario", "unit"]
@@ -147,9 +152,7 @@ def load_leap_id_lookup(
     df = df.dropna(subset=["leap_branch_path"])
 
     if road_only:
-        road_mask = df["leap_branch_path"].str.startswith(
-            ("Demand\\Passenger road", "Demand\\Freight road"), na=False
-        )
+        road_mask = df["leap_branch_path"].str.startswith(_ROAD_BRANCH_PREFIXES, na=False)
         df = df[road_mask].copy()
 
     id_cols = ["leap_branch_path", "variable", "scenario", "region",

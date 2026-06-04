@@ -27,7 +27,7 @@ The dashboard should make a large transport model dataset easier to investigate.
 Core requirements:
 
 1. sidebar filters for run, economy, scenario, data stage, year range, transport type, vehicle type, drive, fuel, and variable;
-2. a collapsible model tree showing transport type → vehicle type → drive → fuel;
+2. a collapsible model tree showing transport type -> vehicle type -> drive -> fuel;
 3. clicking the tree should filter the charts and tables;
 4. charts should update from the selected filters;
 5. include Plotly charts for:

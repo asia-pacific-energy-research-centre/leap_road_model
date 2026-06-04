@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD024 MD025 MD033 -->
 
-# Road transport model workflow guide - Part 1 of 2
+# Road transport model workflow guide
 
 > **Purpose note**  
 > This document is the implementation-oriented workflow guide for the road transport model in `leap_road_model`. It defines module boundaries, required logic, and expected outputs for the current codebase. For a shorter conceptual summary of the model, use `road_transport_model_detailed_description.md`. Where the current repo has refined an earlier design idea, this guide should follow the implemented method unless the text explicitly marks a future enhancement.
@@ -9,7 +9,7 @@ This guide describes the Python-side workflow needed to prepare the road transpo
 
 The road model is the most detailed transport demand model because it uses a stock-flow structure: vehicle stock, sales, retirements, mileage, efficiency, and fuel allocation all interact to produce energy use. Existing transport documentation describes this as a sales-based model where ownership assumptions, sales shares, survival curves, efficiency, and mileage combine to produce annual energy use in LEAP.
 
-This first half covers:
+This guide covers:
 
 - Module 1 - Road input data and defaults
 
@@ -18,8 +18,6 @@ This first half covers:
 - Module 3 - Stock target projection
 
 - Module 4 - Sales, survival, vintage, and turnover policy
-
-The second half should cover:
 
 - Module 5 - Vehicle sales share preparation
 
@@ -32,19 +30,23 @@ The second half should cover:
 The current `codebase/road_workflow.py` runtime now treats Module 1 defaults as
 the primary upstream input contract for base-year road assumptions.
 
-In practice this means the workflow expects versioned Module 1 default packages
-to exist under `input_data/module1_defaults/` and loads them before Modules 2â€“6.
-The loaded Module 1 package now supplies (at minimum):
+In practice this means the workflow loads a generated Module 1 package before
+Modules 2-6. The target upstream package is the canonical long CSV contract from
+`road_model_inputs_interface`; older wide packages under
+`input_data/module1_defaults/` are legacy compatibility inputs.
 
-- base-year LEAP-format road inputs (stock, mileage, fuel economy, sales-share rows);
+The loaded Module 1 package supplies, at minimum:
+
+- base-year road inputs (stock, mileage, fuel economy, sales-share rows);
 - survival curves and vintage profiles;
 - passenger saturation level for Module 3;
 - vehicle-equivalent weights for Module 3;
 - PHEV electric utilisation rate and scalar bounds for Module 6;
 - reconciliation weight settings where available in Module 1 outputs.
 
-If defaults are missing locally, generate/refresh them with
-`scripts/generate_module1_defaults.py` in `leap_road_model`.
+If local compatibility defaults are missing, refresh them with
+`scripts/generate_module1_defaults.py`. The long-term package generator lives in
+`road_model_inputs_interface`.
 
 ## Module 1 data-source contract (no hard-coded data)
 
@@ -57,7 +59,6 @@ road_model_inputs_interface/back-end/data/road_model/
 
 This includes reconciliation factors, PHEV utilisation, saturation, vehicle-equivalent weights, and workbook defaults. `leap_road_model` consumes generated Module 1 default packages from those sources and should not embed parallel literal datasets in runtime code.
 
-Note: the guide below is now consolidated into one module sequence. Any older "Part 1 / Part 2" wording above this point is retained only because those lines were already read.
 
 ## Overall Python / LEAP Split
 
@@ -84,7 +85,36 @@ Any Python calculation after the LEAP handoff should be labelled as QA, diagnost
 
 ## Input Format
 
-The current workflow reads LEAP-style input tables from the Module 1 defaults package. Required columns are:
+The target workflow consumes the canonical long Module 1 package contract from
+`road_model_inputs_interface`. The current adapter may still accept the older
+LEAP-style wide CSV as a compatibility artifact.
+
+Canonical long package columns are:
+
+- `Economy`
+- `Scenario`
+- `Branch Path`
+- `Variable`
+- `Year`
+- `Value`
+- `Units`
+- source/comment metadata where available
+
+Profile rows stay in the same CSV. They encode their profile index in the
+branch path, for example `Age Profile\5`, rather than using a mostly blank
+extra column. Current profiles are treated as global road-model profiles unless
+a later package adds more specific profile branch paths.
+
+Generated per-economy filenames use stable underscore economy codes and
+overwrite in place:
+
+```text
+road_module1_values_<ECONOMY>.csv
+road_module1_values_20_USA.csv
+```
+
+The adapter converts those rows into the internal LEAP-style shape used by the
+rest of the workflow. Legacy package files may still provide:
 
 - `Branch Path`
 - `Variable`
@@ -92,7 +122,7 @@ The current workflow reads LEAP-style input tables from the Module 1 defaults pa
 - `Region`
 - at least one year column, usually `2022`
 
-Useful optional columns are:
+Useful optional legacy columns are:
 
 - `Scale`
 - `Units`
@@ -116,9 +146,9 @@ Demand
       BEV small/medium/large
       FCEV small/medium/large
     Motorcycles
-      ICE / BEV / FCEV / PHEV
+      ICE / BEV / FCEV
     Buses
-      ICE / BEV / FCEV / PHEV
+      ICE / BEV / FCEV
   Transport freight road
     Trucks
       ICE medium/heavy
@@ -128,13 +158,18 @@ Demand
       ICE / BEV / FCEV / PHEV
 ```
 
-Current scope rules:
+Current scope rules (important when comparing to the 9th edition and earlier 10th edition LEAP models):
 
 - `HEV` and `EREV` are LPV-only.
 - Truck `PHEV` is out of scope.
 - LPVs use `small`, `medium`, and `large` size labels.
 - Trucks use `medium` and `heavy` size labels where truck-size splits are needed.
 - `Fuel Economy` is the canonical Module 1 efficiency variable. `Final On-Road Fuel Economy` can be accepted only as a legacy input alias.
+
+The same vehicle/drive/size matrix should be used by Module 1 validation and
+Module 2 branch generation. Module 1 rows outside this matrix should be rejected
+or explicitly recategorized before export; Module 2 should not create branches
+outside this matrix during skeleton generation.
 
 ## Module Sequence
 
@@ -156,19 +191,22 @@ Module 1 defaults package
 
 Module 1 gathers, standardises, and documents road model inputs before any stock projection, turnover, fuel allocation, or LEAP preparation is done.
 
-The current orchestrator does not run raw Module 1 processing directly. It loads versioned packages from `input_data/module1_defaults/`, generated with `scripts/generate_module1_defaults.py`.
+The current orchestrator does not run raw Module 1 source processing directly.
+It loads a generated Module 1 package. During migration this can be a legacy
+package from `input_data/module1_defaults/`; the target package is the long CSV
+from `road_model_inputs_interface`.
 
 ### Responsibilities
 
 Module 1 provides:
 
-- base-year stock, mileage, fuel economy, and sales-share rows in LEAP-style format;
+- base-year stock, mileage, fuel economy, and sales-share rows;
 - survival curves and vintage profiles;
 - passenger saturation assumptions;
 - vehicle-equivalent weights;
 - PHEV electric utilisation assumptions;
 - reconciliation weights and scalar bounds where available;
-- source flags and review flags for defaulted values.
+- source and comment metadata for defaulted or researcher-edited values.
 
 ### Researcher Input Tool
 
@@ -189,17 +227,17 @@ The tool should collect or expose:
 
 The generated Module 1 package should include:
 
-- a default-filled LEAP-style input file for each economy;
-- a manifest describing package version and source files;
-- default assumption catalogues;
-- schema or whitelist files used by the interface;
-- review/backlog files for missing or weak assumptions.
+- one canonical long CSV for each economy;
+- a manifest describing generation date, base year, source files, and scripts;
+- any validation report generated during packaging; and
+- source/comment metadata needed for diagnostics.
 
 ## Module 2 - Base-Year Road Structure
 
 ### Purpose
 
-Module 2 parses the Module 1 LEAP-style input rows and produces a base-year road branch table that later modules can use consistently.
+Module 2 parses Module 1 rows and produces a base-year road branch table that
+later modules can use consistently.
 
 ### Responsibilities
 
@@ -460,7 +498,7 @@ Runtime files:
 Support files:
 
 - `scripts/generate_module1_defaults.py`
-- `codebase/config/model_defaults.yaml`
+- `codebase/config/model_defaults.yaml` (legacy fallback; disabled unless explicitly reactivated)
 - `codebase/config/fuel_mappings.yaml`
 - `codebase/schemas/`
 - `codebase/diagnostics/`

@@ -18,6 +18,13 @@ from adapters.leap_expressions import parse_expression_column
 
 log = logging.getLogger(__name__)
 
+_ROAD_BRANCH_PREFIXES = (
+    "Demand\\Transport passenger road",
+    "Demand\\Transport freight road",
+    "Demand\\Passenger road",
+    "Demand\\Freight road",
+)
+
 # Column names in the LEAP sheet (0-indexed positions from audit report)
 _BRANCH_PATH_COL = "Branch Path"
 _VARIABLE_COL = "Variable"
@@ -119,9 +126,7 @@ def load_combined_exports_as_benchmark(
     result = pd.concat(frames, ignore_index=True)
 
     if road_only and "leap_branch_path" in result.columns:
-        road_mask = result["leap_branch_path"].str.startswith(
-            ("Demand\\Passenger road", "Demand\\Freight road"), na=False
-        )
+        road_mask = result["leap_branch_path"].str.startswith(_ROAD_BRANCH_PREFIXES, na=False)
         result = result[road_mask].copy()
         log.info("Filtered to %d road transport rows", len(result))
 

@@ -14,7 +14,7 @@ Responsibilities:
 Does NOT do fuel reconciliation (that is Module 6).
 
 Size handling:
-- LPVs have sizes [medium, large]; Trucks have [medium, heavy].
+- LPVs have sizes [small, medium, large]; Trucks have [medium, heavy].
 - Motorcycles, Buses, LCVs have no size split (size = None).
 - If T3 carries a 'size' column (from the 9th edition adapter), the join is exact.
 - If T3 has no 'size' column, stocks are distributed equally across sizes and
@@ -153,20 +153,20 @@ def build_leap_branch_path(
     Args:
         transport_type: 'passenger' or 'freight'.
         vehicle_type: LEAP vehicle type label e.g. 'LPVs'.
-        drive_type: 'ICE', 'BEV', 'PHEV', 'FCEV'.
+        drive_type: 'ICE', 'HEV', 'PHEV', 'EREV', 'BEV', 'FCEV'.
         fuel: LEAP fuel name e.g. 'Motor gasoline'.
-        size: 'medium', 'large', 'heavy', or None.
+        size: 'small', 'medium', 'large', 'heavy', or None.
 
     Returns:
         Backslash-separated LEAP branch path string.
 
     Examples:
         >>> build_leap_branch_path('passenger', 'LPVs', 'ICE', 'Motor gasoline', 'medium')
-        'Demand\\\\Passenger road\\\\LPVs\\\\ICE medium\\\\Motor gasoline'
+        'Demand\\\\Transport passenger road\\\\LPVs\\\\ICE medium\\\\Motor gasoline'
         >>> build_leap_branch_path('passenger', 'Buses', 'BEV', 'Electricity')
-        'Demand\\\\Passenger road\\\\Buses\\\\BEV\\\\Electricity'
+        'Demand\\\\Transport passenger road\\\\Buses\\\\BEV\\\\Electricity'
     """
-    transport_label = "Passenger road" if transport_type == "passenger" else "Freight road"
+    transport_label = "Transport passenger road" if transport_type == "passenger" else "Transport freight road"
     tech = f"{drive_type} {size}" if size else drive_type
     return f"Demand\\{transport_label}\\{vehicle_type}\\{tech}\\{fuel}"
 
@@ -196,14 +196,18 @@ def _build_branch_skeleton(vehicle_cfg: dict, fuel_cfg: dict) -> pd.DataFrame:
     eligibility = fuel_cfg["drive_fuel_eligibility"]
     bucket_transport = vehicle_cfg["bucket_transport_type"]
     vehicle_sizes = vehicle_cfg.get("vehicle_type_sizes", {})
+    valid_drives = vehicle_cfg.get("valid_drive_types_by_vehicle_type", {})
 
     rows = []
     for vehicle_type, transport_type in bucket_transport.items():
         sizes = vehicle_sizes.get(vehicle_type, [None])
+        allowed_drives = valid_drives.get(vehicle_type, list(eligibility))
         for size in sizes:
             # yaml null → Python None; keep as-is
             actual_size = None if size == "null" or size is None else size
             for drive_type, fuel_groups in eligibility.items():
+                if drive_type not in allowed_drives:
+                    continue
                 all_fuels: list[str] = []
                 for fuel_list in fuel_groups.values():
                     all_fuels.extend(fuel_list)
@@ -224,13 +228,16 @@ def _build_branch_skeleton(vehicle_cfg: dict, fuel_cfg: dict) -> pd.DataFrame:
 def _add_leap_branch_paths(df: pd.DataFrame) -> pd.DataFrame:
     """Add leap_branch_path column using size-qualified technology labels."""
     df = df.copy()
+    def _clean_size(value: object) -> str | None:
+        return None if pd.isna(value) or value == "null" else str(value)
+
     df["leap_branch_path"] = df.apply(
         lambda r: build_leap_branch_path(
             r["transport_type"],
             r["vehicle_type"],
             r["drive_type"],
             r["fuel"],
-            size=r.get("size") or None,
+            size=_clean_size(r.get("size")),
         ),
         axis=1,
     )
@@ -296,7 +303,7 @@ def _populate_base_year_values(
     # Fallback: broadcast vehicle_type-level mileage/efficiency to all drives.
     # Module 1 stores mileage at vehicle_type (or size-category) level with
     # non-standard drive labels (e.g. "Heavy", "Passenger") rather than actual
-    # drive types (ICE, BEV, PHEV).  The exact drive_type join above misses these.
+    # drive types (ICE, HEV, PHEV, EREV, BEV, FCEV). The exact drive_type join above misses these.
     # For each null, look for any mileage/efficiency value for the same
     # (economy, scenario, transport_type, vehicle_type) and replicate it.
     vt_fallback_keys = ["economy", "scenario", "transport_type", "vehicle_type"]

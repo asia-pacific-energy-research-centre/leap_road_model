@@ -33,7 +33,7 @@ from schemas.validation import validate_table
 
 log = logging.getLogger(__name__)
 
-# Default config values (overridden by model_defaults.yaml in run_module3)
+# Local fallback config values. Prefer explicit Module 1/config inputs where available.
 _DEFAULTS = {
     "k_min": 0.0,
     "k_max": 0.15,
@@ -87,7 +87,7 @@ def run_module3(
         elasticity_overrides: Optional dict mapping vehicle_type → GDP elasticity.
             Overrides estimated elasticity.
         vehicle_equivalent_weights: Optional dict mapping vehicle_type → weight.
-            Defaults to values in model_defaults.yaml.
+            Defaults to local fallback vehicle-equivalent weights.
         config: Optional dict overriding _DEFAULTS.
         diagnostics_dir: Optional directory root for Module 3 PNG diagnostic
             charts. When provided, charts are written to

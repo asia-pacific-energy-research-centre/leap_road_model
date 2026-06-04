@@ -2,57 +2,71 @@
 
 Python preparation system for the APERC road transport model in LEAP.
 
-This repo prepares the calibrated base-year road transport assumptions that LEAP needs,
-then hands them off as a LEAP-ready input package. LEAP remains the official projection platform.
+This repo consumes Road Module 1 inputs from `road_model_inputs_interface`,
+builds the downstream Modules 2-7 tables, reconciles base-year road energy to
+ESTO, and writes LEAP-ready import outputs and diagnostics. LEAP remains the
+official projection platform.
 
 ## Design source of truth
 
-`leap_transport/docs/new model/road_transport_model_workflow_guide md version.md`
+Use these docs first:
 
-All modelling decisions should be traced back to that document.
+- `docs/new model/road_transport_model_workflow_guide.md`
+- `docs/new model/road_transport_model_detailed_description.md`
+- `../road_model_inputs_interface/docs/new model/multinode_road_module1_repo_guide.md`
 
-## Reference files
+`transition_audit_report.md` is historical migration context only.
 
-See `leap_transport/docs/new model/transition_audit_report.md` for the full audit of
-what existing code and data can support this system.
+## Module 1 contract
+
+Module 1 is owned by `road_model_inputs_interface`. The target handoff is one
+long CSV per economy, using canonical underscore economy codes:
+
+```text
+road_module1_values_<ECONOMY>.csv
+road_module1_values_20_USA.csv
+```
+
+Core columns are:
+
+```text
+Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment
+```
 
 ## Modules
 
 | Module | Status | Responsibility |
-|--------|--------|----------------|
-| Module 1 | Stub | Road input data and defaults |
-| Module 2 | Stub | Base-year road structure and calibration preparation |
-| Module 3 | **Implemented** | Stock target projection (passenger S-curve + freight elasticity) |
-| Module 4 | **Implemented** | Sales, survival, vintage, and turnover policy |
-| Module 5 | Stub | Vehicle sales share preparation |
-| Module 6 | **Implemented** | LEAP handoff, fuel allocation, iterative bounded reconciliation, Device Shares |
-| Module 7 | Stub | Optional Python mirror and post-LEAP validation |
+|---|---|---|
+| Module 1 | External package | Road input data and defaults from `road_model_inputs_interface` |
+| Module 2 | Implemented | Base-year road structure and calibration preparation |
+| Module 3 | Implemented | Stock target projection |
+| Module 4 | Implemented | Sales, survival, vintage, and turnover policy |
+| Module 5 | Implemented | Base-year and seeded future vehicle sales shares |
+| Module 6 | Implemented | LEAP handoff, fuel allocation, bounded reconciliation, Device Shares |
+| Module 7 | Optional QA | Python mirror and post-LEAP validation |
 
-## Adapters
+## Key runtime files
 
-| Adapter | File | Purpose |
-|---------|------|---------|
-| A1, A2 | `adapters/combined_exports.py` | Load benchmark combined exports |
-| A3, A9 | `adapters/leap_workbook.py` | Read/write LEAP import workbook |
-| A4, A5 | `adapters/ninth_edition.py` | Load 9th edition reference outputs |
-| A8 | `adapters/leap_expressions.py` | Convert tidy series ↔ Data() expressions |
+| Area | File |
+|---|---|
+| Orchestrator | `codebase/road_workflow.py` |
+| Module 1 adapter | `codebase/adapters/road_module1_defaults.py` |
+| Modules 2-7 | `codebase/modules/` |
+| Schemas and validation | `codebase/schemas/` |
+| Configuration | `codebase/config/` |
+| Module 1 package generator | `scripts/generate_module1_defaults.py` |
 
-## Data contracts
+## Configuration
 
-T1–T13 schemas are defined in `schemas/tables.py`.
-Validation helpers are in `schemas/validation.py`.
-
-## Config
-
-All assumptions live in `config/`:
+Key configuration files live in `codebase/config/`:
 
 | File | Content |
-|------|---------|
+|---|---|
 | `economies.yaml` | APEC economy codes and metadata |
 | `scenarios.yaml` | Scenario labels and LEAP IDs |
-| `vehicle_mappings.yaml` | Source vehicle type → model bucket; drive mappings; vehicle-equivalent weights |
-| `fuel_mappings.yaml` | APEC fuel codes → LEAP fuel names; drive-fuel eligibility |
-| `model_defaults.yaml` | k bounds, COVID exclusion years, reconciliation weights, default mileage/efficiency |
+| `vehicle_mappings.yaml` | Vehicle buckets, drive mappings, and vehicle-equivalent weights |
+| `fuel_mappings.yaml` | Fuel names and drive/fuel eligibility |
+| `model_defaults.yaml` | Legacy fallback assumptions; disabled unless `ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS=1` |
 
 ## Running tests
 
@@ -61,28 +75,73 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-Module 3 tests and adapter expression tests will pass immediately.
-Module 4–7 tests will raise `NotImplementedError` until ported.
+## Workflow entrypoint
 
-Module 6 reconciliation now iteratively reapplies bounded stock/mileage/efficiency scalars until the branch fuel target is reached, progress stalls, or the iteration cap is hit.
+`codebase/road_workflow.py` provides the orchestrator entrypoint:
 
-## Single workflow entrypoint
+- `RoadWorkflowConfig`: economy, scenario, year, input, and output settings.
+- `RoadWorkflowInputs`: preloaded input tables when callers do not want file IO.
+- `run_with_config(config, inputs)`: loads Module 1 defaults and runs Modules
+  2-6, with optional diagnostics and output writes.
 
-`codebase/road_workflow.py` now provides a single orchestrator-style entrypoint:
+Module 7 is a QA mirror and can be run separately when LEAP comparison outputs
+are available.
 
-- `RoadWorkflowConfig`: one place for economy/scenario/time settings and output paths.
-- `RoadWorkflowInputs`: one container for preloaded input DataFrames/Series.
-- `run_with_config(config, inputs)`: executes Modules 2–6 in sequence and can save
-  intermediate outputs plus diagnostics PNG suites.
+### Usage examples
 
-Notes:
+#### 1. Minimal — one-liner via `run_for_economy`
 
-- Module 1 is still not orchestrated because its merge logic is not fully implemented.
-- Module 7 is still not orchestrated because the mirror module is not implemented.
+Only an economy code is required. ESTO inputs are auto-resolved and future sales shares are auto-discovered.
 
-## Implementation order
+```python
+from codebase.road_workflow import run_for_economy
 
-See `transition_audit_report.md` Section 9 for the recommended phase-by-phase order.
+outputs = run_for_economy("12_NZ", scenario="Target")
+t11 = outputs["T11"]  # LEAP-ready fuel/share table
+```
 
-**Next step:** Answer the human review questions in Section 10 of the audit report,
-then port the Module 4 core functions from `leap_transport/codebase/sales_workflow.py`.
+#### 2. CLI — run from the terminal
+
+```bash
+cd codebase
+python road_workflow.py 12_NZ --scenario Target
+python road_workflow.py 20_USA --no-vis --output results/test
+```
+
+#### 3. Explicit — `RoadWorkflowConfig` + `RoadWorkflowInputs` + `run_with_config`
+
+Use this when you want to supply your own DataFrames instead of relying on file auto-discovery.
+
+```python
+import pandas as pd
+from codebase.road_workflow import RoadWorkflowConfig, RoadWorkflowInputs, run_with_config
+
+config = RoadWorkflowConfig(
+    economy="12_NZ",
+    scenarios=["Reference", "Target"],
+    base_year=2022,
+    final_year=2060,
+    module1_defaults_dir="input_data/module1_defaults",
+    output_root="results/12_NZ",
+    enable_visualisations=False,
+)
+
+inputs = RoadWorkflowInputs(
+    population=pd.Series(..., index=range(2022, 2061)),  # indexed by year
+    gdp=pd.Series(..., index=range(2022, 2061)),
+    esto_road_energy_pj=pd.DataFrame(...),   # columns: economy, year, vehicle_type, energy_pj
+    esto_fuel_totals=pd.DataFrame(...),      # columns: economy, year, fuel, energy_pj
+    future_sales_shares=pd.read_csv("input_data/future_sales_shares/12_NZ.csv"),  # LEAP format
+)
+
+outputs = run_with_config(config, inputs)
+
+# Key outputs
+t4  = outputs["T4"]   # base-year branch table (Module 2)
+t5  = outputs["T5"]   # stock targets (Module 3)
+t6  = outputs["T6"]   # sales & turnover (Module 4)
+t7f = outputs["T7f"]  # future sales shares (Module 5)
+t11 = outputs["T11"]  # LEAP-ready rows (Module 6)
+```
+
+The `future_sales_shares` DataFrame should follow the LEAP workbook column format: `Branch Path`, `Variable`, `Scenario`, `Region`, plus integer year columns (e.g. `2022`, `2030`, `2040`).

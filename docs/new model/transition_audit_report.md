@@ -68,7 +68,7 @@ The current implementation maps the audit concepts as follows:
 
 | Current module | Main role |
 |---|---|
-| Module 1 defaults package | Generated upstream input contract loaded from `input_data/module1_defaults/` |
+| Module 1 defaults package | Generated upstream long CSV contract from `road_model_inputs_interface`; legacy packages may still be loaded from `input_data/module1_defaults/` during migration |
 | Module 2 | Base-year road branch parsing and calibration preparation |
 | Module 3 | Passenger and freight stock target projection |
 | Module 4 | Sales, survival, vintage, and turnover policy |

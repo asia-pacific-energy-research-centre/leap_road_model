@@ -4,13 +4,13 @@
 scenarios:
   Current Accounts:
     leap_id: 1
-    description: Historical baseline / current policy
+    description: Historical baseline / Mandatory in LEAP to fill in base year data
   Reference:
     leap_id: 2
-    description: Reference projection (current policy extended)
+    description: Reference projection from 9th edition (current policy extended)
   Target:
     leap_id: 3
-    description: Decarbonisation / policy target pathway
+    description: Policy target pathway from 9th edition ~partly~ implemented in early 10th edition exploration
 
 # Default projection range
 projection:

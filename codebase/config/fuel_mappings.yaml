@@ -1,7 +1,7 @@
 # Fuel mappings
 # Maps APEC/ESTO fuel codes to LEAP fuel names used in branch paths.
 
-apec_to_leap_fuel:
+9th_apec_to_leap_fuel:
   07_01_motor_gasoline: Motor gasoline
   07_07_gas_diesel_oil: Gas and diesel oil
   07_09_lpg:            LPG
@@ -18,6 +18,19 @@ apec_to_leap_fuel:
   07_x_jet_fuel:        Jet fuel
   07_08_fuel_oil:       Fuel oil
   16_x_ammonia:         Ammonia
+
+ESTO_to_leap_fuel:
+  "07.01 Motor gasoline":   Motor gasoline
+  "07.07 Gas/diesel oil":   Gas and diesel oil
+  "07.09 LPG":              LPG
+  "08.01 Natural gas":      Natural gas
+  "08.02 LNG":              LNG
+  "17 Electricity":         Electricity
+  Hydrogen:                 16.12 Hydrogen    # no ESTO code in historical data — future/modelled fuel
+  "16.06 Biodiesel":        Biodiesel
+  "16.05 Biogasoline":      Biogasoline
+  "16.01 Biogas":           Biogas
+  Efuel:                    16.11 E-fuel       # no ESTO code in historical data — future/modelled fuel
 
 # Valid road transport fuels (subset of above)
 road_fuels:
@@ -41,11 +54,20 @@ drive_fuel_eligibility:
     primary:   [Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG]
     biofuels:  [Biogasoline, Biodiesel, Biogas]
     efuels:    [Efuel]
+  HEV:
+    primary:   [Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG]
+    biofuels:  [Biogasoline, Biodiesel, Biogas]
+    efuels:    [Efuel]
   BEV:
     primary:   [Electricity]
     biofuels:  []
     efuels:    []
   PHEV:
+    electric:  [Electricity]
+    liquid:    [Motor gasoline, Gas and diesel oil]
+    biofuels:  [Biogasoline, Biodiesel]
+    efuels:    [Efuel]
+  EREV:
     electric:  [Electricity]
     liquid:    [Motor gasoline, Gas and diesel oil]
     biofuels:  [Biogasoline, Biodiesel]
@@ -58,14 +80,14 @@ drive_fuel_eligibility:
 # Preferred allocation targets by fuel (for Module 6 Step 4)
 # Lists the drive types that a fuel is primarily allocated to.
 fuel_preferred_drives:
-  Motor gasoline:    [ICE, PHEV]
-  Gas and diesel oil: [ICE, PHEV]
+  Motor gasoline:    [ICE, HEV, PHEV, EREV]
+  Gas and diesel oil: [ICE, HEV, PHEV, EREV]
   LPG:               [ICE]
   Natural gas:       [ICE]
   LNG:               [ICE]
-  Electricity:       [BEV, PHEV]
+  Electricity:       [BEV, PHEV, EREV]
   Hydrogen:          [FCEV]
-  Biodiesel:         [ICE, PHEV]
-  Biogasoline:       [ICE, PHEV]
+  Biodiesel:         [ICE, HEV, PHEV, EREV]
+  Biogasoline:       [ICE, HEV, PHEV, EREV]
   Biogas:            [ICE]
-  Efuel:             [ICE, PHEV]
+  Efuel:             [ICE, HEV, PHEV, EREV]
