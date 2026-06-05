@@ -991,6 +991,87 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
             )
             figs.append(("Freight elasticity by vehicle type", fig))
 
+    diag_cols = {
+        "vehicle_type",
+        "gdp_elasticity_used",
+        "freight_raw_elasticity",
+        "freight_elasticity_clamped",
+        "freight_energy_growth_rate",
+        "freight_gdp_growth_rate",
+        "freight_elasticity_data_source",
+        "freight_elasticity_note",
+    }
+    if diag_cols.issubset(t5.columns):
+        diag = (
+            t5[t5["transport_type"] == "freight"]
+            [[*diag_cols]]
+            .drop_duplicates("vehicle_type")
+            .sort_values("vehicle_type")
+        )
+        if not diag.empty:
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=diag["vehicle_type"].astype(str).tolist(),
+                y=pd.to_numeric(diag["freight_raw_elasticity"], errors="coerce").tolist(),
+                name="Raw elasticity",
+                marker_color="#B0BEC5",
+            ))
+            fig.add_trace(go.Bar(
+                x=diag["vehicle_type"].astype(str).tolist(),
+                y=pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce").tolist(),
+                name="Final elasticity",
+                marker_color="#00897B",
+            ))
+            fig.update_layout(
+                **_layout("Module 3 - Freight elasticity diagnostics"),
+                barmode="group",
+                yaxis_title="Elasticity",
+            )
+            figs.append((
+                "Freight elasticity diagnostics",
+                fig,
+                "Raw and final freight GDP elasticities. Final values include clamping or default/override logic.",
+            ))
+
+            table = go.Figure(data=[go.Table(
+                header=dict(
+                    values=[
+                        "Vehicle type",
+                        "Final elasticity",
+                        "Raw elasticity",
+                        "Clamped",
+                        "Energy growth",
+                        "GDP growth",
+                        "Source",
+                        "Note",
+                    ],
+                    fill_color="#E8EDF7",
+                    align="left",
+                ),
+                cells=dict(
+                    values=[
+                        diag["vehicle_type"].astype(str).tolist(),
+                        pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce").round(4).astype(str).tolist(),
+                        pd.to_numeric(diag["freight_raw_elasticity"], errors="coerce").round(4).astype(str).replace("nan", "").tolist(),
+                        diag["freight_elasticity_clamped"].fillna(False).astype(str).tolist(),
+                        (pd.to_numeric(diag["freight_energy_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
+                        (pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
+                        diag["freight_elasticity_data_source"].fillna("").astype(str).tolist(),
+                        diag["freight_elasticity_note"].fillna("").astype(str).tolist(),
+                    ],
+                    fill_color="white",
+                    align="left",
+                    height=24,
+                ),
+            )])
+            table.update_layout(**_layout("Module 3 - Freight elasticity diagnostic table"))
+            figs.append((
+                "Freight elasticity diagnostic table",
+                table,
+                True,
+                "Energy and GDP growth rates are shown as annual percentages over the configured lookback window.",
+            ))
+
     return figs
 
 
@@ -1079,6 +1160,92 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
                 xaxis_title="Year", yaxis_title="Ratio",
             )
             figs.append(("Sales / stock ratio", fig))
+
+    event_cols = {"year", "vehicle_type", "stock_above_target", "scale_factor_applied"}
+    if t6 is not None and not t6.empty and event_cols.issubset(t6.columns):
+        events = t6[t6["stock_above_target"].fillna(False).astype(bool)].copy()
+        event_count = len(events)
+        affected_vehicle_types = events["vehicle_type"].nunique() if "vehicle_type" in events.columns else 0
+        affected_years = events["year"].nunique() if "year" in events.columns else 0
+        summary = go.Figure(go.Indicator(
+            mode="number",
+            value=event_count,
+            title={
+                "text": (
+                    "Stock-above-target events<br>"
+                    f"<span style='font-size:0.72em;color:#666'>{affected_vehicle_types} vehicle type(s), {affected_years} year(s)</span>"
+                )
+            },
+        ))
+        summary.update_layout(**_layout("Module 4 - Stock above target summary"))
+        figs.append((
+            "Stock above target summary",
+            summary,
+            "Counts years where surviving cohorts exceeded target stock and were scaled down. A zero means no natural-shrink adjustment was applied.",
+        ))
+        if not events.empty:
+            counts = events.groupby(["year", "vehicle_type"]).size().reset_index(name="event_count")
+            fig = go.Figure()
+            for i, (vt, grp) in enumerate(counts.groupby("vehicle_type")):
+                grp = grp.sort_values("year")
+                fig.add_trace(go.Bar(
+                    x=grp["year"].tolist(),
+                    y=grp["event_count"].tolist(),
+                    name=str(vt),
+                    marker_color=_vehicle_type_colour(str(vt), i),
+                ))
+            fig.update_layout(
+                **_layout("Module 4 - Stock above target events"),
+                barmode="stack",
+                xaxis_title="Year",
+                yaxis_title="Event count",
+            )
+            figs.append((
+                "Stock above target events",
+                fig,
+                "Years where surviving cohorts exceeded the target stock and were scaled down instead of requiring new sales.",
+            ))
+
+            shown = events.copy()
+            shown["scale_factor_applied"] = pd.to_numeric(
+                shown["scale_factor_applied"], errors="coerce"
+            )
+            shown = shown.sort_values(["year", "vehicle_type"]).head(80)
+            table_cols = [
+                col for col in [
+                    "year",
+                    "transport_type",
+                    "vehicle_type",
+                    "target_stock",
+                    "new_sales",
+                    "stock",
+                    "scale_factor_applied",
+                ]
+                if col in shown.columns
+            ]
+            table = go.Figure(data=[go.Table(
+                header=dict(values=table_cols, fill_color="#E8EDF7", align="left"),
+                cells=dict(
+                    values=[
+                        (
+                            shown[col].round(4).astype(str).tolist()
+                            if pd.api.types.is_numeric_dtype(shown[col])
+                            else shown[col].fillna("").astype(str).tolist()
+                        )
+                        for col in table_cols
+                    ],
+                    fill_color="white",
+                    align="left",
+                    height=24,
+                ),
+            )])
+            table.update_layout(**_layout("Module 4 - Stock above target event table"))
+            figs.append((
+                "Stock above target event table",
+                table,
+                True,
+                "Shows the first 80 stock-above-target events and the scale factor applied to surviving cohorts.",
+            ))
 
     return figs
 

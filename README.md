@@ -11,8 +11,8 @@ official projection platform.
 
 Use these docs first:
 
-- `docs/new model/road_transport_model_workflow_guide.md`
-- `docs/new model/road_transport_model_detailed_description.md`
+- `docs/new model/road_transport_model_detailed.md`
+- `docs/new model/road_transport_model_simplified.md`
 - `../road_model_inputs_interface/docs/new model/multinode_road_module1_repo_guide.md`
 
 `transition_audit_report.md` is historical migration context only.
@@ -33,6 +33,22 @@ Core columns are:
 Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment
 ```
 
+Vehicle-type stock split inputs use LEAP `Stock Share` rows at the vehicle-type
+branch level:
+
+```text
+Demand\Passenger road\LPVs
+Demand\Passenger road\Motorcycles
+Demand\Passenger road\Buses
+Demand\Freight road\Trucks
+Demand\Freight road\LCVs
+```
+
+Module 3 treats these as physical stock shares. Passenger shares are converted
+internally to LPV-equivalent capacity shares before the motorisation envelope is
+allocated; freight projects total freight stock first and then splits it into
+Trucks and LCVs.
+
 ## Modules
 
 | Module | Status | Responsibility |
@@ -45,6 +61,11 @@ Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment
 | Module 6 | Implemented | LEAP handoff, fuel allocation, bounded reconciliation, Device Shares |
 | Module 7 | Optional QA | Python mirror and post-LEAP validation |
 
+Module 6 writes T11 at LEAP branch levels: `Stock` at transport and
+vehicle-type level, `Sales` at transport level, `Mileage`, `Fuel Economy`, and
+`Device Share` at fuel level, and `Stock Share`/`Sales Share` at share-control
+levels. It does not emit `Activity Level`.
+
 ## Key runtime files
 
 | Area | File |
@@ -55,6 +76,12 @@ Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment
 | Schemas and validation | `codebase/schemas/` |
 | Configuration | `codebase/config/` |
 | Module 1 package generator | `scripts/generate_module1_defaults.py` |
+| Strict LEAP import writer | `codebase/adapters/leap_import_writer.py` |
+
+When a LEAP reference export is available, the workflow writes a strict import
+workbook with LEAP ID columns, metadata rows, and both `LEAP` and `FOR_VIEWING`
+sheets. Any unmatched model/reference rows are returned in
+`outputs["leap_import_warnings"]` and written beside the workbook.
 
 ## Configuration
 
@@ -66,7 +93,7 @@ Key configuration files live in `codebase/config/`:
 | `scenarios.yaml` | Scenario labels and LEAP IDs |
 | `vehicle_mappings.yaml` | Vehicle buckets, drive mappings, and vehicle-equivalent weights |
 | `fuel_mappings.yaml` | Fuel names and drive/fuel eligibility |
-| `model_defaults.yaml` | Legacy fallback assumptions; disabled unless `ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS=1` |
+| `model_defaults.yaml` | Guidance-only calibration reference; do not use as runtime fallback input |
 
 ## Running tests
 

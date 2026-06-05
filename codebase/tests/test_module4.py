@@ -170,6 +170,16 @@ class TestComputeSalesFromStockTargets:
         # In a shrinking scenario, some years should have zero sales
         assert (sales >= 0).all()
 
+    def test_shrinking_stock_records_scale_event(self):
+        target = pd.Series([100_000.0, 50_000.0, 40_000.0], index=[2022, 2023, 2024])
+        survival = _make_survival(10, 0.99)
+        vintage = _make_vintage(10)
+        sales, cohorts, ret = compute_sales_from_stock_targets(
+            target, survival, vintage, return_retirements=True
+        )
+        assert bool(ret["stock_above_target"].loc[2023]) is True
+        assert ret["scale_factor_applied"].loc[2023] < 1.0
+
 
 # ===========================================================================
 # survival_to_vintage

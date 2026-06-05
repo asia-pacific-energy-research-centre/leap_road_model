@@ -162,11 +162,11 @@ def build_leap_branch_path(
 
     Examples:
         >>> build_leap_branch_path('passenger', 'LPVs', 'ICE', 'Motor gasoline', 'medium')
-        'Demand\\\\Transport passenger road\\\\LPVs\\\\ICE medium\\\\Motor gasoline'
+        'Demand\\\\Passenger road\\\\LPVs\\\\ICE medium\\\\Motor gasoline'
         >>> build_leap_branch_path('passenger', 'Buses', 'BEV', 'Electricity')
-        'Demand\\\\Transport passenger road\\\\Buses\\\\BEV\\\\Electricity'
+        'Demand\\\\Passenger road\\\\Buses\\\\BEV\\\\Electricity'
     """
-    transport_label = "Transport passenger road" if transport_type == "passenger" else "Transport freight road"
+    transport_label = "Passenger road" if transport_type == "passenger" else "Freight road"
     tech = f"{drive_type} {size}" if size else drive_type
     return f"Demand\\{transport_label}\\{vehicle_type}\\{tech}\\{fuel}"
 

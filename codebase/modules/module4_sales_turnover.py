@@ -134,6 +134,8 @@ def run_module4(
         for yr in years:
             nat_ret = float(retirements["natural"].get(yr, 0.0))
             add_ret = float(retirements["additional"].get(yr, 0.0))
+            stock_above_target = bool(retirements["stock_above_target"].get(yr, False))
+            scale_factor_applied = float(retirements["scale_factor_applied"].get(yr, 1.0))
             scrp = float(scrappage.get(yr, 0.0))
             _stock = float(target_stock_series.get(yr, 0))
             _sales = float(sales.get(yr, 0))
@@ -149,6 +151,8 @@ def run_module4(
                 "additional_retirements": add_ret,
                 "total_retirements": nat_ret + add_ret,
                 "stock": _stock,
+                "stock_above_target": stock_above_target,
+                "scale_factor_applied": scale_factor_applied,
                 "scrappage_for_leap": scrp,
             })
 
@@ -235,6 +239,8 @@ def compute_sales_from_stock_targets(
     sales = pd.Series(0.0, index=years, dtype=float)
     natural_ret = pd.Series(0.0, index=years, dtype=float)
     additional_ret = pd.Series(0.0, index=years, dtype=float)
+    stock_above_target = pd.Series(False, index=years, dtype=bool)
+    scale_factor_applied = pd.Series(1.0, index=years, dtype=float)
 
     survival_probs = survival_curve.to_numpy(dtype=float)
     ages = pd.Index(vintage_profile.index, dtype=int)
@@ -291,6 +297,8 @@ def compute_sales_from_stock_targets(
             scale = target_total / survivors_total if survivors_total > 0 else 0.0
             new_cohorts *= scale
             required_sales = 0.0
+            stock_above_target.loc[year] = True
+            scale_factor_applied.loc[year] = scale
 
         natural_ret.loc[year] = nat_retired
         additional_ret.loc[year] = extra_retired
@@ -298,7 +306,12 @@ def compute_sales_from_stock_targets(
         sales.loc[year] = required_sales
 
     if return_retirements:
-        return sales, cohorts, {"natural": natural_ret, "additional": additional_ret}
+        return sales, cohorts, {
+            "natural": natural_ret,
+            "additional": additional_ret,
+            "stock_above_target": stock_above_target,
+            "scale_factor_applied": scale_factor_applied,
+        }
     return sales, cohorts
 
 

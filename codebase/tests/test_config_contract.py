@@ -11,38 +11,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "codebase" / "config"
 
 
-def test_legacy_model_defaults_file_is_kept_for_explicit_opt_in():
+def test_model_defaults_file_is_kept_as_guidance_only():
     assert (CONFIG_DIR / "model_defaults.yaml").exists()
 
 
-def test_legacy_load_defaults_fails_loudly_by_default(monkeypatch):
+def test_legacy_load_defaults_fails_loudly(monkeypatch):
     monkeypatch.delenv("ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS", raising=False)
-    with pytest.raises(RuntimeError, match="disabled by default"):
+    with pytest.raises(RuntimeError, match="guidance-only"):
         _load_defaults(CONFIG_DIR)
 
 
-def test_legacy_load_defaults_requires_explicit_opt_in(monkeypatch):
+def test_legacy_load_defaults_env_var_does_not_reactivate(monkeypatch):
     monkeypatch.setenv("ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS", "1")
-    defaults = _load_defaults(CONFIG_DIR)
-
-    assert not defaults.empty
-    assert set(defaults["variable"]) == {
-        "mileage",
-        "efficiency",
-        "phev_electric_utilisation_rate",
-        "vehicle_equivalent_weight",
-        "vehicle_equivalent_weight_lower_bound",
-        "vehicle_equivalent_weight_upper_bound",
-        "reconciliation_weight_stock",
-        "reconciliation_weight_mileage",
-        "reconciliation_weight_efficiency",
-        "reconciliation_bound_lower_stock",
-        "reconciliation_bound_upper_stock",
-        "reconciliation_bound_lower_mileage",
-        "reconciliation_bound_upper_mileage",
-        "reconciliation_bound_lower_efficiency",
-        "reconciliation_bound_upper_efficiency",
-    }
+    with pytest.raises(RuntimeError, match="guidance-only"):
+        _load_defaults(CONFIG_DIR)
 
 
 def test_legacy_model_defaults_match_current_branch_matrix():
@@ -74,28 +56,6 @@ def test_legacy_model_defaults_match_current_branch_matrix():
     assert defaults_cfg["vehicle_equivalent_weight_bounds"] == {
         "Motorcycles": {"lower": 0.05, "upper": 0.80},
         "Buses": {"lower": 8.0, "upper": 30.0},
-    }
-
-
-def test_legacy_model_defaults_emit_module1_style_scalar_rows(monkeypatch):
-    monkeypatch.setenv("ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS", "1")
-    defaults = _load_defaults(CONFIG_DIR)
-
-    weights = defaults[defaults["variable"].str.startswith("reconciliation_weight_")]
-    weight_map = dict(zip(weights["variable"], weights["value"]))
-    assert weight_map == {
-        "reconciliation_weight_stock": 0.50,
-        "reconciliation_weight_mileage": 0.25,
-        "reconciliation_weight_efficiency": 0.25,
-    }
-
-    eq_weights = defaults[defaults["variable"] == "vehicle_equivalent_weight"]
-    assert dict(zip(eq_weights["vehicle_type"], eq_weights["value"])) == {
-        "LPVs": 1.0,
-        "Motorcycles": 0.8,
-        "Buses": 20.0,
-        "Trucks": 5.0,
-        "LCVs": 1.5,
     }
 
 

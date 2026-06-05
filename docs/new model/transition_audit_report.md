@@ -3,7 +3,7 @@
 **Date:** 2026-05-25
 **Status:** Historical migration reference. Do not treat this file as the current implementation source of truth.
 
-Use `road_transport_model_workflow_guide.md` for the current module workflow and `road_transport_model_detailed_description.md` for the conceptual summary.
+Use `road_transport_model_detailed.md` for the current module workflow and `road_transport_model_simplified.md` for the conceptual summary.
 
 ## 1. What This Audit Was For
 
@@ -136,6 +136,6 @@ Current implementation files:
 
 Current documentation files:
 
-- `docs/new model/road_transport_model_workflow_guide.md`
-- `docs/new model/road_transport_model_detailed_description.md`
+- `docs/new model/road_transport_model_detailed.md`
+- `docs/new model/road_transport_model_simplified.md`
 - `docs/new model/transition_audit_report.md`

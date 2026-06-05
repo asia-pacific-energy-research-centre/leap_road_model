@@ -22,6 +22,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from modules.module6_leap_handoff import (
     apply_scalars,
     build_phev_utilisation_diagnostics,
+    build_leap_ready_table,
     calculate_device_shares,
     calculate_initial_branch_energy,
     calculate_remaining_esto,
@@ -573,3 +574,64 @@ class TestAllocateFuelToBranches:
         # Only the BEV+Electricity row should appear
         assert len(t8) == 1
         assert t8["fuel"].iloc[0] == "Electricity"
+
+
+class TestBuildLeapReadyTable:
+    def test_t11_uses_leap_expected_branch_levels(self):
+        t9 = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "scenario": "Target",
+                "base_year": 2022,
+                "transport_type": "freight",
+                "vehicle_type": "Trucks",
+                "drive_type": "ICE",
+                "size": "heavy",
+                "fuel": "Gas and diesel oil",
+                "leap_branch_path": "Demand\\Freight road\\Trucks\\ICE heavy\\Gas and diesel oil",
+                "adjusted_stock": 100.0,
+                "adjusted_mileage_km_per_year": 10000.0,
+                "adjusted_efficiency_km_per_gj": 100.0,
+            },
+            {
+                "economy": "20_USA",
+                "scenario": "Target",
+                "base_year": 2022,
+                "transport_type": "freight",
+                "vehicle_type": "LCVs",
+                "drive_type": "BEV",
+                "size": None,
+                "fuel": "Electricity",
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV\\Electricity",
+                "adjusted_stock": 300.0,
+                "adjusted_mileage_km_per_year": 8000.0,
+                "adjusted_efficiency_km_per_gj": 200.0,
+            },
+        ])
+        t10 = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "scenario": "Target",
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV\\Electricity",
+                "device_share": 1.0,
+            }
+        ])
+        t6 = pd.DataFrame([
+            {"economy": "20_USA", "scenario": "Target", "year": 2022, "transport_type": "freight", "vehicle_type": "Trucks", "new_sales": 10.0},
+            {"economy": "20_USA", "scenario": "Target", "year": 2022, "transport_type": "freight", "vehicle_type": "LCVs", "new_sales": 30.0},
+        ])
+        t7 = pd.DataFrame([
+            {"economy": "20_USA", "scenario": "Target", "year": 2022, "transport_type": "freight", "vehicle_type": "Trucks", "drive_type": "ICE", "sales_share": 1.0},
+            {"economy": "20_USA", "scenario": "Target", "year": 2022, "transport_type": "freight", "vehicle_type": "LCVs", "drive_type": "BEV", "sales_share": 1.0},
+        ])
+
+        t11 = build_leap_ready_table(t9, t10, t6, t7, projection_years=[2022])
+
+        assert "Activity Level" not in set(t11["variable"])
+        assert not t11[(t11["variable"] == "Sales") & (t11["leap_branch_path"] == "Demand\\Freight road")].empty
+        assert not t11[(t11["variable"] == "Stock") & (t11["leap_branch_path"] == "Demand\\Freight road")].empty
+        assert not t11[(t11["variable"] == "Stock") & (t11["leap_branch_path"] == "Demand\\Freight road\\Trucks")].empty
+        assert not t11[(t11["variable"] == "Mileage") & (t11["leap_branch_path"].str.endswith("\\Gas and diesel oil"))].empty
+        assert not t11[(t11["variable"] == "Stock Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")].empty
+        assert not t11[(t11["variable"] == "Sales Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")].empty
+        assert not t11[(t11["variable"] == "Sales Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs\\BEV")].empty

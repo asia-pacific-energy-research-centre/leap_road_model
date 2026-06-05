@@ -3,7 +3,7 @@
 # Road transport model workflow guide
 
 > **Purpose note**  
-> This document is the implementation-oriented workflow guide for the road transport model in `leap_road_model`. It defines module boundaries, required logic, and expected outputs for the current codebase. For a shorter conceptual summary of the model, use `road_transport_model_detailed_description.md`. Where the current repo has refined an earlier design idea, this guide should follow the implemented method unless the text explicitly marks a future enhancement.
+> This document is the implementation-oriented workflow guide for the road transport model in `leap_road_model`. It defines module boundaries, required logic, and expected outputs for the current codebase. For a shorter conceptual summary of the model, use `road_transport_model_simplified.md`. Where the current repo has refined an earlier design idea, this guide should follow the implemented method unless the text explicitly marks a future enhancement.
 
 This guide describes the Python-side workflow needed to prepare the road transport model before it is passed into LEAP.
 
@@ -41,12 +41,15 @@ The loaded Module 1 package supplies, at minimum:
 - survival curves and vintage profiles;
 - passenger saturation level for Module 3;
 - vehicle-equivalent weights for Module 3;
-- PHEV electric utilisation rate and scalar bounds for Module 6;
-- reconciliation weight settings where available in Module 1 outputs.
+- vehicle-type `Stock Share` rows for Module 3 stock split assumptions;
+- PHEV electric utilisation rate (single float) and scalar bounds for Module 6;
+- reconciliation weights for Module 6 (required — Module 1 provides APEC-wide defaults that can be overridden per economy).
 
 If local compatibility defaults are missing, refresh them with
 `scripts/generate_module1_defaults.py`. The long-term package generator lives in
 `road_model_inputs_interface`.
+
+After loading population, GDP, and ESTO energy in `run_for_economy()`, `_validate_macro_inputs()` checks that all three DataFrames have the expected column names and cover every projection year, raising a clear `ValueError` at entry rather than a cryptic error deep in Module 3.
 
 ## Module 1 data-source contract (no hard-coded data)
 
@@ -58,7 +61,6 @@ road_model_inputs_interface/back-end/data/road_model/
 ```
 
 This includes reconciliation factors, PHEV utilisation, saturation, vehicle-equivalent weights, and workbook defaults. `leap_road_model` consumes generated Module 1 default packages from those sources and should not embed parallel literal datasets in runtime code.
-
 
 ## Overall Python / LEAP Split
 
@@ -137,7 +139,7 @@ The road branch hierarchy is:
 
 ```text
 Demand
-  Transport passenger road
+  Passenger road
     LPVs
       ICE small/medium/large
       HEV small/medium/large
@@ -149,7 +151,7 @@ Demand
       ICE / BEV / FCEV
     Buses
       ICE / BEV / FCEV
-  Transport freight road
+  Freight road
     Trucks
       ICE medium/heavy
       BEV medium/heavy
@@ -184,6 +186,8 @@ Module 1 defaults package
   -> Module 6 LEAP handoff and reconciliation
   -> optional Module 7 mirror and post-LEAP validation
 ```
+
+![Road transport model — researcher detail](Road%20transport%20model%20%E2%80%94%20researcher%20detail.png)
 
 ## Module 1 - Road Input Data and Defaults
 
@@ -265,44 +269,142 @@ Module 2 produces `T4_base_year_branches`, the common base-year branch table use
 
 Module 3 creates target stock envelopes for passenger and freight road. Target stock is calculated internally; it is not treated as a fixed external input.
 
+Vehicle-type stock splits come from Module 1 `Stock Share` rows at the five
+vehicle-type branches: `Demand\Passenger road\LPVs`,
+`Demand\Passenger road\Motorcycles`, `Demand\Passenger road\Buses`,
+`Demand\Freight road\Trucks`, and `Demand\Freight road\LCVs`. Values are
+LEAP-style percentages in the Module 1 package. The workflow converts them to
+fractions, interpolates from the base year to supplied target years, and holds
+the last target constant.
+
+**Passenger `Stock Share`** (LPVs, Motorcycles, Buses) is researcher-adjustable.
+Module 1 provides base-year shares derived from base-year Stock rows, plus
+default anchor values at 2040 and 2060 seeded to the same base-year share.
+Researchers may edit the 2040/2060 anchors to define a trajectory; if left
+unchanged, the model holds the base-year split flat. The workflow converts
+passenger physical shares to LPV-equivalent capacity shares using Module 1
+vehicle-equivalent weights before calling Module 3.
+
+**Freight `Stock Share`** (Trucks, LCVs) is **not researcher-adjustable**.
+The truck/LCV split shows no meaningful projected trend and is held flat at the
+base-year proportions. The 2040 and 2060 anchor values are seeded equal to the
+base year by design; researchers should leave these unchanged.
+
 ### Passenger Stock
 
-Passenger stock is projected using vehicle-equivalent ownership. This keeps the ownership envelope comparable when the vehicle mix shifts between LPVs, motorcycles, buses, and other passenger modes.
+Passenger stock is projected using a logistic motorisation envelope. The envelope is defined in vehicle-equivalent terms so that the ownership curve remains comparable when the vehicle mix shifts between LPVs, motorcycles, and buses.
 
-Required logic:
+#### Vehicle-equivalent ownership
 
-- calculate base-year passenger vehicle-equivalent ownership per capita;
-- apply a Gompertz-style ownership curve using income or GDP-per-capita drivers;
-- use Module 1 passenger saturation levels;
-- use Module 1 vehicle-equivalent weights;
-- clamp the growth parameter `k` within configurable bounds;
-- flag economies that hit bounds or are already saturated.
+Physical stocks are converted to a single aggregate using Module 1 `Vehicle Equivalent Weight` values (sourced from `apec_vehicle_equivalent_weights.csv`). Default weights:
 
-For already saturated economies, passenger ownership should remain broadly stable and stock should mainly move with population unless a reviewed assumption says otherwise.
+| Vehicle type | Default weight |
+| --- | --- |
+| LPVs | 1.0 (reference unit) |
+| Motorcycles | 0.8 |
+| Buses | 20.0 |
+
+These are config-driven, not hard-coded. One bus is treated as equivalent to 20 LPVs of ownership demand; ignoring this would produce a meaningless aggregate when bus-heavy economies are compared with car-dominated ones.
+
+Base-year motorisation level:
+
+```text
+M_base = sum(base_stock[vt] × weight[vt]) / population_base
+```
+
+in units of LPV-equivalents per capita.
+
+#### Saturation level
+
+`M_sat` is resolved in priority order:
+
+1. Researcher-supplied value in Module 1 (source flag: `researcher`).
+2. Regional default from `apec_passenger_vehicle_saturation.csv` (source flag: `regional_default`).
+3. Fallback: `M_sat = M_base × 3.0` (source flag: `fallback`).
+
+The source flag is carried through T5 for review.
+
+#### Estimating k
+
+`k` is the S-curve steepness parameter. It is estimated from recent passenger road energy growth, using energy as a proxy for stock growth:
+
+```text
+g_E = mean(log(E[t] / E[t-1]))   over the 10-year lookback window
+k   = g_E / (1 − M_base / M_sat)
+```
+
+COVID years 2020–2022 are excluded. The lookback window and excluded years are config-driven (`lookback_window_years = 10`, `covid_exclude_years = [2020, 2021, 2022]`).
+
+Example: if `g_E = 0.03` and `M_base / M_sat = 0.40`, then `k = 0.03 / 0.60 = 0.05`.
+
+#### k bounds
+
+`k` is clamped to `[k_min, k_max]` (defaults: `0.0` to `0.15`):
+
+- `k = 0.0` means no structural growth in the motorisation envelope — stock moves only with population.
+- `k = 0.15` is a fast upper-bound transition toward saturation.
+- Negative `k` would imply structural decline and is not permitted as a default.
+
+Any economy where `k` hits either bound is flagged in T5 (`k_clamped = True`).
+
+#### Already-saturated economies
+
+If `M_base ≥ 0.95 × M_sat`, the economy is treated as already saturated: `k` is set to `0.0` and the `is_saturated` flag is set. Ownership remains flat; stock changes only with population.
+
+#### Weight calibration
+
+When `passenger_saturation_reached = True`, Module 3 can calibrate vehicle-equivalent weights for Motorcycles and Buses so that the base-year weighted stock equals the saturation target. Calibration solves a constrained minimisation that stays within per-type bounds and minimises deviation from the Module 1 default weights. The original and adjusted weights are both recorded in T5.
+
+#### Allocation to vehicle types
+
+After projecting the aggregate motorisation envelope `M(year)`:
+
+```text
+total_weighted(year) = M(year) × population(year)
+target_stock(vt, year) = total_weighted(year) × capacity_share(vt) / weight(vt)
+```
+
+where `capacity_share(vt) = base_stock(vt) × weight(vt) / sum(base_stock × weight)`.
 
 ### Freight Stock
 
-Freight stock is projected with a transparent GDP-elasticity method.
+Freight stock is projected with a bounded GDP-elasticity method using `estimate_freight_elasticity` and `project_freight_stocks` in `module3_stock_targets.py`.
 
-Required logic:
+#### Elasticity estimation
 
-- estimate historical freight road activity growth where available;
-- estimate a bounded GDP elasticity;
-- project freight stock from GDP growth and the elasticity;
-- apply fallbacks when the historical signal is missing or weak;
-- flag fallback use and extreme elasticities.
+Annual growth rates are estimated as compound rates over the 10-year lookback window (COVID years excluded):
 
-The freight method intentionally prioritises reviewable diagnostics over an opaque freight-demand equation.
+```text
+freight_energy_growth = (E_end / E_start) ^ (1 / n) − 1
+gdp_growth            = (GDP_end / GDP_start) ^ (1 / n) − 1
+elasticity            = freight_energy_growth / gdp_growth
+```
+
+The elasticity is clamped to `[0.0, 2.0]`. If GDP growth is near zero or data are insufficient, the default elasticity `0.8` is used. The data source flag (`estimated` or `override`) and a short note are carried into T5.
+
+#### Stock projection
+
+```text
+total_base = Trucks_base + LCVs_base
+total(year) = total_base × (GDP(year) / GDP_base) ^ elasticity
+target_stock(vt, year) = total(year) × physical_share(vt)
+```
+
+where `physical_share(vt) = base_stock(vt) / total_base` and shares are held flat at base-year proportions (see the Stock Share discussion above).
+
+A researcher-supplied `freight_total` override replaces the estimated elasticity; the override is recorded in diagnostics.
+
+### Diagnostics
+
+T5 carries the following per-row diagnostic columns for review:
+
+**Passenger rows:** `motorisation_level`, `saturation_level`, `k_used`, `k_clamped`, `is_saturated`, `saturation_source_flag`, `original_vehicle_equivalent_weight`, `adjusted_vehicle_equivalent_weight`, `weight_calibration_applied`.
+
+**Freight rows:** `gdp_elasticity_used`, `freight_raw_elasticity`, `freight_elasticity_clamped`, `freight_energy_growth_rate`, `freight_gdp_growth_rate`, `freight_elasticity_data_source`.
 
 ### Outputs
 
-Module 3 produces stock target tables and diagnostics, including:
-
-- passenger target stocks;
-- freight target stocks;
-- ownership and saturation diagnostics;
-- `k` and elasticity values;
-- fallback and review flags.
+Module 3 produces `T5_stock_targets` with columns for `economy`, `scenario`, `year`, `transport_type`, `vehicle_type`, `target_stock`, and all diagnostic columns above.
 
 ## Module 4 - Sales, Survival, Vintage, and Turnover
 
@@ -348,6 +450,8 @@ Module 4 produces `T6_sales_turnover`, including:
 - natural retirements;
 - additional retirements;
 - required sales;
+- `stock_above_target` and `scale_factor_applied` when surviving cohorts exceed
+  the target stock and are scaled down;
 - survival and vintage assumptions;
 - stock accounting diagnostics.
 
@@ -390,7 +494,7 @@ Module 5 produces:
 
 ### Purpose
 
-Module 6 builds the final Python-side road package for LEAP and reconciles base-year energy to ESTO.
+Module 6 builds the final Python-side road package for LEAP and reconciles base-year energy to ESTO. It is the most complex module because fuel energy, stock, mileage, efficiency, and Device Shares all interact.
 
 ### Handoff Package
 
@@ -402,51 +506,153 @@ Module 6 combines:
 - ESTO road fuel totals;
 - Module 1 PHEV utilisation and reconciliation settings.
 
-The LEAP-ready package should preserve economy, scenario, year, transport type, vehicle type, drive type, size, fuel, variable, value, units, and source metadata where available.
+The LEAP-ready package preserves economy, scenario, year, transport type, vehicle type, drive type, size, fuel, variable, value, units, and source metadata.
+
+### Base energy formula
+
+All energy calculations in Module 6 use:
+
+```text
+energy_pj = stock × mileage / efficiency_km_per_gj / 1,000,000
+```
+
+where `efficiency` is distance per unit energy (km/GJ). Higher efficiency means lower energy use per vehicle.
 
 ### Reconciliation Workflow
 
-The current reconciliation workflow is:
+The nine-step workflow is implemented in `run_module6` (`codebase/modules/module6_leap_handoff.py`).
 
-1. Calculate initial branch energy from stock, mileage, and fuel economy.
-2. Reconcile BEV and PHEV electricity before normal liquid/gaseous fuel reconciliation.
-3. Calculate PHEV liquid fuel and subtract it from the relevant ESTO fuel pools.
-4. Allocate remaining ESTO fuel totals to eligible branches.
-5. Derive an energy correction factor for each branch.
-6. Split that correction across stock, mileage, and efficiency using configurable weights and bounds.
-7. Recalculate final branch energy.
-8. Calculate implied vehicles and Device Shares.
-9. Build reconciliation diagnostics.
+#### Step 1 — Initial branch energy
+
+Calculate `energy_pj` for every branch using base-year stock, mileage, and efficiency from Module 2.
+
+#### Step 2 — BEV and PHEV electricity reconciliation
+
+Before touching liquid fuels, reconcile BEV and PHEV electricity to the ESTO road electricity total using the same scalar method as Steps 5–6. PHEV electricity and liquid fuel are calculated from the adjusted PHEV branches using the Module 1 `PHEV electric utilisation rate`, which is held fixed during reconciliation unless config explicitly allows it to move.
+
+#### Step 3 — PHEV liquid fuel subtraction
+
+Remove PHEV liquid fuel from the relevant ESTO pools before normal fuel reconciliation:
+
+```text
+remaining_esto_gasoline = ESTO_gasoline − PHEV_gasoline
+remaining_esto_diesel   = ESTO_diesel   − PHEV_diesel
+```
+
+PHEV liquid fuels covered: Motor gasoline, Gas and diesel oil, Biodiesel, Biogasoline, Efuel. This prevents ICE reconciliation from absorbing energy that actually belongs to PHEVs.
+
+#### Step 4 — Allocate remaining ESTO fuel to eligible branches
+
+For each fuel, the remaining ESTO total is allocated across eligible branches using stock-share allocation by default. Eligibility is driven by `fuel_mappings.yaml` (`drive_fuel_eligibility`). This creates a provisional `allocated_branch_fuel_energy_pj` for each branch before scalar adjustment.
+
+#### Step 5 — Derive energy correction factor
+
+For each branch:
+
+```text
+ECF = allocated_branch_fuel_energy_pj / initial_branch_energy_pj
+```
+
+If a branch has zero initial energy but non-zero allocated ESTO energy (e.g. a hydrogen FCEV branch in an economy with no observed hydrogen use), the ECF is treated as zero and the branch scalars are clamped to their lower bounds rather than raising a division error.
+
+#### Step 6 — Adjust stock, mileage, and efficiency simultaneously
+
+The ECF is split across the three variables using configurable weights (defaults: stock=0.50, mileage=0.25, efficiency=0.25):
+
+```text
+stock_scalar      = ECF ^ 0.50
+mileage_scalar    = ECF ^ 0.25
+efficiency_scalar = ECF ^ −0.25     ← inverted: higher efficiency reduces energy
+```
+
+Because `efficiency` is km/GJ, increasing it lowers energy use. The negative exponent ensures the efficiency scalar moves in the direction that corrects the energy gap.
+
+Each scalar is clamped to its configured per-scalar bounds from Module 1 (`reconciliation_bound_lower/upper_stock/mileage/efficiency`). Bounds are per-scalar by default, allowing stock wider movement than mileage or efficiency. Legacy single-tuple bounds are also supported for backward compatibility.
+
+Adjusted values:
+
+```text
+adjusted_stock      = stock      × stock_scalar
+adjusted_mileage    = mileage    × mileage_scalar
+adjusted_efficiency = efficiency × efficiency_scalar
+```
+
+Whether each scalar stayed within bounds is recorded in T9 and T12.
+
+#### Step 7 — Recalculate final branch fuel energy
+
+```text
+final_energy_pj = adjusted_stock × adjusted_mileage / adjusted_efficiency / 1,000,000
+```
+
+This should match `allocated_branch_fuel_energy_pj` within tolerance. If scalars were clamped, a residual gap will remain and is reported in T12.
+
+#### Step 8 — Calculate implied vehicles and Device Shares
+
+```text
+energy_per_vehicle = adjusted_mileage / adjusted_efficiency / 1,000,000
+implied_vehicles   = final_energy_pj / energy_per_vehicle
+Device Share       = implied_vehicles / adjusted_total_vehicles_in_branch
+```
+
+Device Shares must be calculated after reconciliation because they depend on the final reconciled stock, mileage, efficiency, and fuel allocation. Single-fuel drive types (e.g. BEV) always have Device Share = 1.0.
+
+#### Step 9 — Validate
+
+T12 diagnostics check:
+
+- final fuel energy matches ESTO totals (after adding PHEV liquid back) within tolerance;
+- all scalars stayed within bounds;
+- Device Shares sum to 1 within each parent branch;
+- no negative values or impossible fuel/drive combinations.
 
 ### Fuel Allocation Rules
 
-Fuel eligibility should come from configuration and branch mappings, not hard-coded one-off assumptions.
+Fuel eligibility is config-driven (`fuel_mappings.yaml`), not hard-coded. Key rules:
 
-Current allocation principles:
+| Fuel | Eligible drives | Notes |
+| --- | --- | --- |
+| Motor gasoline | ICE, HEV, PHEV, EREV | Biogasoline follows the same branches |
+| Gas and diesel oil | ICE, HEV, PHEV, EREV | Biodiesel follows the same branches; freight-preferred allocation where ESTO diesel is freight-dominated |
+| LPG | ICE only | Separate fuel from natural gas |
+| Natural gas | ICE only | Separate fuel from LPG; biogas follows the same branches |
+| Electricity | BEV, PHEV, EREV | Handled in Step 2 before normal reconciliation |
+| Hydrogen | FCEV | Not expected in most base years; clamped to lower bound if no ESTO hydrogen observed |
+| E-fuels | ICE, HEV, PHEV, EREV | Not expected in most base years |
+| Ammonia | Not assigned to road unless a reviewed branch rule exists | — |
 
-- gasoline and diesel go to eligible ICE and relevant hybrid/liquid branches;
-- LPG, natural gas, and biogas remain separate fuels even when their allocation logic is similar;
-- electricity is handled through the BEV/PHEV electricity process;
-- hydrogen is assigned to FCEV branches;
-- e-fuels and other emerging fuels require explicit configuration;
-- ammonia is not assigned to road unless a reviewed branch rule exists.
+Any fuel present in ESTO but with no valid branch is flagged in T12.
 
 ### PHEV Treatment
 
-PHEV electricity and liquid fuel are calculated before normal gasoline/diesel reconciliation. The supplied PHEV electric utilisation rate should remain fixed unless configuration explicitly allows it to move.
+PHEV branches carry two fuel streams: electricity and a liquid fuel (gasoline or diesel depending on the PHEV type). The electric utilisation rate (fraction of km driven on electricity) is a Module 1 input from `apec_phev_utilisation_rates.csv` and is held fixed during reconciliation.
 
-Final PHEV outputs are expressed as LEAP Device Shares after accounting for different electric and liquid fuel economies.
+After BEV/PHEV electricity is reconciled in Step 2, PHEV liquid fuel is computed and removed from the ESTO pools before ICE reconciliation. This preserves the ESTO fuel balance:
+
+```text
+final_gasoline = reconciled_non_phev_gasoline + phev_gasoline
+final_diesel   = reconciled_non_phev_diesel   + phev_diesel
+```
 
 ### Outputs
 
 Module 6 produces:
 
-- `T8`: fuel allocation table;
-- `T9`: reconciliation scalar table and reconciled branch values;
+- `T8`: fuel allocation table (provisional allocated branch fuel energy);
+- `T9`: reconciliation scalar table and reconciled branch values (stock, mileage, efficiency, scalars, within-bounds flags);
 - `T10`: Device Share table;
 - `T11`: LEAP-ready output table;
-- `T12`: reconciliation diagnostics;
+- `T12`: reconciliation diagnostics (ECF, residual gaps, validation status);
 - `T12_phev`: PHEV utilisation diagnostics.
+
+T11 is written at LEAP-compatible variable levels:
+
+- `Stock`: transport-type and vehicle-type branches;
+- `Sales`: transport-type branches;
+- `Mileage`, `Fuel Economy`, `Device Share`: fuel-level branches;
+- `Sales Share`, `Stock Share`: vehicle-type rows and drive/technology rows.
+
+`Activity Level` is intentionally excluded. When a reference LEAP export is available, the final Excel workbook is written through `codebase/adapters/leap_import_writer.py`, which merges BranchID, VariableID, ScenarioID, and RegionID and returns structured warnings for unmatched rows.
 
 ## Module 7 - Optional Python Mirror and Post-LEAP Validation
 
@@ -498,7 +704,7 @@ Runtime files:
 Support files:
 
 - `scripts/generate_module1_defaults.py`
-- `codebase/config/model_defaults.yaml` (legacy fallback; disabled unless explicitly reactivated)
+- `codebase/config/model_defaults.yaml` (guidance-only calibration reference; not a runtime fallback source)
 - `codebase/config/fuel_mappings.yaml`
 - `codebase/schemas/`
 - `codebase/diagnostics/`
@@ -507,6 +713,6 @@ Support files:
 
 Use this guide for implementation sequence and module responsibilities.
 
-Use `road_transport_model_detailed_description.md` for the shorter conceptual explanation.
+Use `road_transport_model_simplified.md` for the shorter conceptual explanation.
 
 Use `transition_audit_report.md` only for historical migration context. It is not the current implementation source of truth.

@@ -36,6 +36,13 @@ _VALUES_FILE_PREFIX = "road_module1_values_"
 
 _PASSENGER_VEHICLE_TYPES = ("LPVs", "Motorcycles", "Buses")
 _FREIGHT_VEHICLE_TYPES = ("Trucks", "LCVs")
+_VEHICLE_TYPE_STOCK_SHARE_BRANCHES = {
+    "Demand\\Passenger road\\LPVs": ("passenger", "LPVs"),
+    "Demand\\Passenger road\\Motorcycles": ("passenger", "Motorcycles"),
+    "Demand\\Passenger road\\Buses": ("passenger", "Buses"),
+    "Demand\\Freight road\\Trucks": ("freight", "Trucks"),
+    "Demand\\Freight road\\LCVs": ("freight", "LCVs"),
+}
 
 # Default reconciliation split used when Module 1 provides only aggregate
 # reconciliation_weight values.
@@ -621,6 +628,7 @@ def _load_single_economy(
             "economy":           economy_code,
             "version":           version_name,
             "scope":             economy_code,
+            "year":              int(row.get("_source_year", 2022)),
             "variable":          variable,
             "transport_type":    parsed["transport_type"],
             "vehicle_type":      parsed["vehicle_type"],
@@ -856,6 +864,13 @@ def get_passenger_saturation_level(defaults_df: pd.DataFrame, economy: str) -> f
         log.warning("No passenger saturation level found for %s in Module 1 defaults", economy)
         return None
     value = float(sub.iloc[0])
+    if value > 10.0:
+        log.info(
+            "Module 1 passenger saturation for %s appears to be vehicles per 1000 people; converting %.4f to per-capita",
+            economy,
+            value,
+        )
+        value = value / 1000.0
     log.info("Module 1 passenger saturation for %s: %.4f", economy, value)
     return value
 
@@ -969,14 +984,13 @@ def get_reconciliation_weights(defaults_df: pd.DataFrame, economy: str) -> dict[
     return None
 
 
-def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float | dict[str, float]:
+def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float:
     """
-    Extract the PHEV electric driving share for the economy.
+    Extract the PHEV electric driving share for the economy as a single float.
 
-    Returns a dict {vehicle_type: rate} when vehicle-type-specific rows are
-    present (e.g. {"LPVs": 0.45, "LCVs": 0.35}). Returns a single float when
-    only an economy-level row without a vehicle type is available. Falls back
-    to 0.50 if no rows are found.
+    Falls back to 0.50 if no row is found. If vehicle-type-specific rows are
+    present instead of a single economy-level value, their mean is used and a
+    warning is logged — supply a single economy-level row to avoid this.
     """
     mask = (
         (defaults_df["economy"] == economy)
@@ -989,12 +1003,16 @@ def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float 
             economy,
         )
         return 0.50
-    typed = sub[sub["vehicle_type"].notna()]
-    if not typed.empty:
-        rates = {str(row["vehicle_type"]): float(row["value"]) for _, row in typed.iterrows()}
-        log.info("Module 1 PHEV utilisation rates for %s: %s", economy, rates)
-        return rates
-    rate = float(sub["value"].iloc[0])
+    economy_level = sub[sub["vehicle_type"].isna()] if "vehicle_type" in sub.columns else sub
+    if not economy_level.empty:
+        rate = float(economy_level["value"].iloc[0])
+    else:
+        rate = float(sub["value"].mean())
+        log.warning(
+            "Only vehicle-type-specific PHEV rates found for %s; averaging to %.3f. "
+            "Supply a single economy-level row instead.",
+            economy, rate,
+        )
     log.info("Module 1 PHEV utilisation rate for %s: %.3f", economy, rate)
     return rate
 
@@ -1083,6 +1101,45 @@ def get_vehicle_equivalent_weights(defaults_df: pd.DataFrame, economy: str) -> d
     return weights
 
 
+def get_vehicle_type_stock_shares(defaults_df: pd.DataFrame, economy: str) -> dict[str, pd.Series]:
+    """
+    Extract vehicle-type physical Stock Share rows from Module 1.
+
+    Only the five LEAP vehicle-type branches are used:
+    Passenger LPVs/Motorcycles/Buses and freight Trucks/LCVs. Lower-level
+    drive/size Stock Share rows are intentionally ignored.
+    Values are stored in Module 1 as LEAP-style percentages and returned here
+    as fractions indexed by year.
+    """
+    required_columns = {"economy", "variable", "leap_branch_path", "value"}
+    if defaults_df.empty or not required_columns.issubset(defaults_df.columns):
+        return {}
+
+    sub = defaults_df[
+        (defaults_df["economy"] == economy)
+        & (defaults_df["variable"] == "stock_share")
+        & (defaults_df["leap_branch_path"].isin(_VEHICLE_TYPE_STOCK_SHARE_BRANCHES))
+    ].copy()
+    if sub.empty:
+        return {}
+
+    sub["year"] = pd.to_numeric(sub["year"], errors="coerce")
+    sub["value"] = pd.to_numeric(sub["value"], errors="coerce")
+    sub = sub.dropna(subset=["year", "value"])
+    result: dict[str, pd.Series] = {}
+    for branch_path, (_, vehicle_type) in _VEHICLE_TYPE_STOCK_SHARE_BRANCHES.items():
+        rows = sub[sub["leap_branch_path"] == branch_path].sort_values("year")
+        if rows.empty:
+            continue
+        series = rows.groupby("year")["value"].first().sort_index() / 100.0
+        series.index = series.index.astype(int)
+        result[vehicle_type] = series
+
+    log.info("Module 1 vehicle-type Stock Share rows for %s: %s", economy, {k: v.to_dict() for k, v in result.items()})
+    return result
+
+
+
 def load_module1_leap_df(
     defaults_dir: str | Path,
     economy: str,
@@ -1166,7 +1223,7 @@ def load_module1_for_economy(
             raw_leap_df            : LEAP-format DataFrame, pass to parse_leap_format_inputs()
             survival_curves        : dict[vehicle_type → pd.Series by age]
             vintage_profiles       : dict[vehicle_type → pd.Series by age]
-            phev_utilisation_rate  : float or dict[vehicle_type → float]
+            phev_utilisation_rate  : float
             scalar_bounds          : tuple(lower, upper) or None
             passenger_saturation_level : float or None
             reconciliation_weights : dict{stock,mileage,efficiency} or None
@@ -1206,6 +1263,7 @@ def load_module1_for_economy(
         "reconciliation_weights": get_reconciliation_weights(defaults_df, economy),
         "vehicle_equivalent_weights": get_vehicle_equivalent_weights(defaults_df, economy),
         "vehicle_equivalent_weight_bounds": get_vehicle_equivalent_weight_bounds(defaults_df, economy),
+        "vehicle_type_stock_shares": get_vehicle_type_stock_shares(defaults_df, economy),
     }
 
 

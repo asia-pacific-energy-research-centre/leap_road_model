@@ -34,14 +34,6 @@ log = logging.getLogger(__name__)
 
 _CONFIG_DIR = pathlib.Path(__file__).parent.parent / "config"
 
-# Local fallback reconciliation weights.
-_DEFAULT_WEIGHTS = {"stock": 0.50, "mileage": 0.25, "efficiency": 0.25}
-
-_DEFAULT_SCALAR_BOUNDS: dict[str, tuple[float, float]] = {
-    "stock": (0.0, np.inf),
-    "mileage": (0.85, 1.15),
-    "efficiency": (0.90, 1.10),
-}
 
 # Single-fuel drive types: device_share is always 1.0
 _SINGLE_FUEL_DRIVES = {"BEV", "FCEV"}
@@ -78,6 +70,16 @@ def _tech_path(fuel_branch_path: str) -> str:
     return parts[0] if len(parts) > 1 else fuel_branch_path
 
 
+def _vehicle_path(branch_path: str) -> str:
+    """Return Demand\\{road}\\{vehicle type} from a road LEAP branch path."""
+    return "\\".join(str(branch_path).split("\\")[:3])
+
+
+def _transport_path(branch_path: str) -> str:
+    """Return Demand\\{road} from a road LEAP branch path."""
+    return "\\".join(str(branch_path).split("\\")[:2])
+
+
 # ===========================================================================
 # Public entry point
 # ===========================================================================
@@ -89,7 +91,7 @@ def run_module6(
     esto_fuel_totals: pd.DataFrame,
     projection_years: list[int],
     reconciliation_weights: dict[str, float] | None = None,
-    phev_electric_utilisation_rate: float | dict[str, float] = 0.50,
+    phev_electric_utilisation_rate: float = 0.50,
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]] | None = None,
     match_tolerance: float = 0.01,
     phev_utilisation_tolerance: float = 0.10,
@@ -105,9 +107,8 @@ def run_module6(
         esto_fuel_totals: DataFrame with columns [fuel, energy_pj] —
             ESTO road fuel totals for the base year.
         projection_years: Full year range (e.g. range(2022, 2061)).
-        reconciliation_weights: Optional override for {stock, mileage, efficiency}.
-        phev_electric_utilisation_rate: PHEV fraction driven on electricity.
-            Can be a scalar or dict mapping vehicle_type → rate.
+        reconciliation_weights: Required weights for {stock, mileage, efficiency} — must sum to 1.0.
+        phev_electric_utilisation_rate: PHEV fraction driven on electricity (single float).
                 scalar_bounds: Reconciliation scalar bounds. Supports either:
                         - tuple(min_scalar, max_scalar) applied to all scalars (legacy), or
                         - dict with keys {'stock','mileage','efficiency'} each mapping to
@@ -122,8 +123,16 @@ def run_module6(
     Returns:
         Dict with keys: T8, T9, T10, T11, T12 — each a DataFrame.
     """
-    weights = reconciliation_weights or _DEFAULT_WEIGHTS
-    scalar_bounds = scalar_bounds or _DEFAULT_SCALAR_BOUNDS
+    if reconciliation_weights is None:
+        raise ValueError(
+            "reconciliation_weights is required. Supply {stock, mileage, efficiency} weights "
+            "summing to 1.0 — they should come from Module 1 defaults."
+        )
+    if scalar_bounds is None:
+        raise ValueError(
+            "scalar_bounds is required. Supply per-scalar bounds from Module 1 defaults."
+        )
+    weights = reconciliation_weights
     assert abs(sum(weights.values()) - 1.0) < 1e-6, "Reconciliation weights must sum to 1.0"
 
     # Step 1
@@ -183,7 +192,7 @@ def run_module6(
 
 def calculate_initial_branch_energy(
     base_year_branches: pd.DataFrame,
-    phev_utilisation_rate: float | dict[str, float] | None = None,
+    phev_utilisation_rate: float | None = None,
 ) -> pd.DataFrame:
     """
     Calculate initial branch energy from base-year stock, mileage, and efficiency.
@@ -207,7 +216,7 @@ def calculate_initial_branch_energy(
 
 def apply_phev_mileage_split(
     base_year_branches: pd.DataFrame,
-    phev_utilisation_rate: float | dict[str, float],
+    phev_utilisation_rate: float,
 ) -> pd.DataFrame:
     """
     Split PHEV annual mileage into electric-mode and liquid-mode mileage.
@@ -232,9 +241,7 @@ def apply_phev_mileage_split(
         if electric_idx.empty or liquid_idx.empty:
             continue
 
-        key_values = dict(zip(group_keys, key if isinstance(key, tuple) else (key,)))
-        rate = _lookup_phev_utilisation_rate(phev_utilisation_rate, key_values.get("vehicle_type"))
-        rate = min(1.0, max(0.0, rate))
+        rate = min(1.0, max(0.0, float(phev_utilisation_rate)))
 
         electric_mileage = pd.to_numeric(df.loc[electric_idx, "mileage_km_per_year"], errors="coerce").dropna()
         liquid_mileage = pd.to_numeric(df.loc[liquid_idx, "mileage_km_per_year"], errors="coerce").dropna()
@@ -276,7 +283,7 @@ def apply_phev_mileage_split(
 def reconcile_electricity(
     branch_energy: pd.DataFrame,
     electricity_esto_pj: float,
-    phev_utilisation_rate: float | dict[str, float],
+    phev_utilisation_rate: float,
     weights: dict[str, float],
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -359,7 +366,7 @@ def reconcile_electricity(
 
 def _compute_phev_liquid(
     branch_energy: pd.DataFrame,
-    phev_utilisation_rate: float | dict[str, float],
+    phev_utilisation_rate: float,
 ) -> pd.DataFrame:
     """
     Compute PHEV liquid fuel consumption from adjusted PHEV liquid branches.
@@ -758,9 +765,9 @@ def reconcile_stock_mileage_efficiency(
             "stock_scalar": ss,
             "mileage_scalar": ms,
             "efficiency_scalar": es,
-            "stock_weight": weights.get("stock", _DEFAULT_WEIGHTS["stock"]),
-            "mileage_weight": weights.get("mileage", _DEFAULT_WEIGHTS["mileage"]),
-            "efficiency_weight": weights.get("efficiency", _DEFAULT_WEIGHTS["efficiency"]),
+            "stock_weight": weights["stock"],
+            "mileage_weight": weights["mileage"],
+            "efficiency_weight": weights["efficiency"],
             "adjusted_stock": adj_s,
             "adjusted_mileage_km_per_year": adj_m,
             "adjusted_efficiency_km_per_gj": adj_e,
@@ -897,18 +904,15 @@ def apply_scalars_with_cumulative_bounds(
 
 
 def _normalise_scalar_bounds(
-    scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]] | None,
+    scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]],
 ) -> dict[str, tuple[float, float]]:
     """
     Normalise scalar-bounds input into per-scalar bounds.
 
     Accepts:
-      - tuple(min, max): applied to stock/mileage/efficiency (legacy mode)
-      - dict with optional keys {'stock','mileage','efficiency'}
+      - tuple(min, max): applied to stock/mileage/efficiency
+      - dict with all keys {'stock','mileage','efficiency'} — all three are required
     """
-    if scalar_bounds is None:
-        return dict(_DEFAULT_SCALAR_BOUNDS)
-
     if isinstance(scalar_bounds, tuple):
         lo, hi = scalar_bounds
         return {
@@ -918,12 +922,18 @@ def _normalise_scalar_bounds(
         }
 
     out: dict[str, tuple[float, float]] = {}
+    missing = []
     for key in ("stock", "mileage", "efficiency"):
         if key in scalar_bounds and scalar_bounds[key] is not None:
             lo, hi = scalar_bounds[key]
             out[key] = (float(lo), float(hi))
         else:
-            out[key] = _DEFAULT_SCALAR_BOUNDS[key]
+            missing.append(key)
+    if missing:
+        raise ValueError(
+            f"scalar_bounds is missing required keys: {missing}. "
+            "Supply bounds for all of stock, mileage, and efficiency."
+        )
     return out
 
 
@@ -1053,7 +1063,7 @@ def build_reconciliation_diagnostics(
 
 def build_phev_utilisation_diagnostics(
     reconciliation_scalars: pd.DataFrame,
-    phev_utilisation_rate: float | dict[str, float],
+    phev_utilisation_rate: float,
     tolerance: float = 0.10,
 ) -> pd.DataFrame:
     """
@@ -1106,10 +1116,7 @@ def build_phev_utilisation_diagnostics(
         liquid_km_proxy = float(liquid["km_proxy"].sum())
         total_km_proxy = electric_km_proxy + liquid_km_proxy
 
-        provided_rate = _lookup_phev_utilisation_rate(
-            phev_utilisation_rate,
-            key_data.get("vehicle_type"),
-        )
+        provided_rate = float(phev_utilisation_rate)
         lower_rate = max(0.0, provided_rate - float(tolerance))
         upper_rate = min(1.0, provided_rate + float(tolerance))
         backcalculated_rate = (
@@ -1149,23 +1156,6 @@ def build_phev_utilisation_diagnostics(
     return pd.DataFrame(rows)[cols].reset_index(drop=True)
 
 
-def _lookup_phev_utilisation_rate(
-    phev_utilisation_rate: float | dict[str, float],
-    vehicle_type: Any,
-) -> float:
-    """Return scalar or vehicle-type-specific PHEV utilisation rate."""
-    if isinstance(phev_utilisation_rate, dict):
-        if vehicle_type in phev_utilisation_rate:
-            return float(phev_utilisation_rate[vehicle_type])
-        if "default" in phev_utilisation_rate:
-            return float(phev_utilisation_rate["default"])
-        if "all" in phev_utilisation_rate:
-            return float(phev_utilisation_rate["all"])
-        if phev_utilisation_rate:
-            return float(next(iter(phev_utilisation_rate.values())))
-        return 0.50
-    return float(phev_utilisation_rate)
-
 
 # ===========================================================================
 # LEAP-ready output
@@ -1193,6 +1183,8 @@ def build_leap_ready_table(
 
     t9 = reconciliation_scalars.copy()
     t9["_tech_path"] = t9["leap_branch_path"].apply(_tech_path)
+    t9["_vehicle_path"] = t9["leap_branch_path"].apply(_vehicle_path)
+    t9["_transport_path"] = t9["leap_branch_path"].apply(_transport_path)
 
     base_year: int = int(t9["base_year"].iloc[0]) if "base_year" in t9.columns else min(projection_years)
     economy_col = t9["economy"].iloc[0]
@@ -1222,29 +1214,60 @@ def build_leap_ready_table(
     )
     t9 = t9.drop(columns=["_sort"])
 
-    # ── Stock (base year, technology-level path) ──────────────────────────
-    for _, row in tech_rows.iterrows():
+    # Stock: LEAP expects transport totals and vehicle-type totals.
+    for _, row in tech_rows.groupby(
+        ["economy", "scenario", "_transport_path"],
+        dropna=False,
+        as_index=False,
+    )["adjusted_stock"].sum().iterrows():
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
-            "year": base_year, "leap_branch_path": row["_tech_path"],
+            "year": base_year, "leap_branch_path": row["_transport_path"],
+            "variable": "Stock", "value": row["adjusted_stock"], "unit": "Device",
+        })
+    for _, row in tech_rows.groupby(
+        ["economy", "scenario", "_vehicle_path"],
+        dropna=False,
+        as_index=False,
+    )["adjusted_stock"].sum().iterrows():
+        rows.append({
+            "economy": row["economy"], "scenario": row["scenario"],
+            "year": base_year, "leap_branch_path": row["_vehicle_path"],
             "variable": "Stock", "value": row["adjusted_stock"], "unit": "Device",
         })
 
-    # ── Mileage (base year, technology-level path) ────────────────────────
-    for _, row in tech_rows.iterrows():
+    # Stock Share: vehicle-type split of transport total and tech split of vehicle total.
+    transport_totals = tech_rows.groupby("_transport_path")["adjusted_stock"].sum().to_dict()
+    vehicle_totals = tech_rows.groupby("_vehicle_path")["adjusted_stock"].sum().to_dict()
+    vehicle_share_rows = tech_rows.groupby(
+        ["economy", "scenario", "_transport_path", "_vehicle_path"],
+        dropna=False,
+        as_index=False,
+    )["adjusted_stock"].sum()
+    for _, row in vehicle_share_rows.iterrows():
+        transport_total = float(transport_totals.get(row["_transport_path"], 0.0))
+        vehicle_share = (float(row["adjusted_stock"]) / transport_total * 100.0) if transport_total > 0 else 0.0
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
-            "year": base_year, "leap_branch_path": row["_tech_path"],
-            "variable": "Mileage", "value": row["adjusted_mileage_km_per_year"], "unit": "Kilometer",
+            "year": base_year, "leap_branch_path": row["_vehicle_path"],
+            "variable": "Stock Share", "value": vehicle_share, "unit": "Share",
         })
 
-    # ── Activity Level (base year, technology-level path) ─────────────────
     for _, row in tech_rows.iterrows():
-        activity = row["adjusted_stock"] * row["adjusted_mileage_km_per_year"]
+        vehicle_total = float(vehicle_totals.get(row["_vehicle_path"], 0.0))
+        tech_share = (float(row["adjusted_stock"]) / vehicle_total * 100.0) if vehicle_total > 0 else 0.0
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
             "year": base_year, "leap_branch_path": row["_tech_path"],
-            "variable": "Activity Level", "value": activity, "unit": "Kilometer",
+            "variable": "Stock Share", "value": tech_share, "unit": "Share",
+        })
+
+    # Mileage: LEAP expects fuel-level paths.
+    for _, row in t9.iterrows():
+        rows.append({
+            "economy": row["economy"], "scenario": row["scenario"],
+            "year": base_year, "leap_branch_path": row["leap_branch_path"],
+            "variable": "Mileage", "value": row["adjusted_mileage_km_per_year"], "unit": "Kilometer",
         })
 
     # ── Fuel Economy (base year, fuel-level path) ─────────────────────────
@@ -1268,7 +1291,7 @@ def build_leap_ready_table(
 
     # ── Build (vehicle_type, drive_type) → tech_path lookup from T9 ───────
     vt_dt_path = (
-        t9.groupby(tech_dedup_keys)["_tech_path"]
+        t9.groupby(tech_dedup_keys, dropna=False)["_tech_path"]
         .first()
         .reset_index()
         .rename(columns={"_tech_path": "_tech_path_lookup"})
@@ -1276,17 +1299,58 @@ def build_leap_ready_table(
     # Lookup keys: use whatever dimension columns are available in both sides
     lookup_keys = [k for k in tech_dedup_keys if k in vt_dt_path.columns]
 
-    # ── Sales (all projection years, technology-level path) ───────────────
+    # Sales: LEAP expects transport-type totals.
     if not sales_turnover.empty and "new_sales" in sales_turnover.columns:
-        t6_keys = [k for k in lookup_keys if k in sales_turnover.columns]
-        t6_path = sales_turnover.merge(vt_dt_path, on=t6_keys, how="left")
-        for _, row in t6_path.iterrows():
-            if pd.isna(row.get("_tech_path_lookup")) or int(row["year"]) not in projection_years:
+        t6 = sales_turnover.copy()
+        t6["_transport_path"] = t6["transport_type"].map(
+            lambda value: "Demand\\Passenger road" if str(value) == "passenger" else "Demand\\Freight road"
+        )
+        for _, row in t6.groupby(
+            ["economy", "scenario", "year", "transport_type", "_transport_path"],
+            dropna=False,
+            as_index=False,
+        )["new_sales"].sum().iterrows():
+            if int(row["year"]) not in projection_years:
                 continue
             rows.append({
                 "economy": row["economy"], "scenario": row["scenario"],
-                "year": int(row["year"]), "leap_branch_path": row["_tech_path_lookup"],
+                "year": int(row["year"]), "leap_branch_path": row["_transport_path"],
                 "variable": "Sales", "value": row["new_sales"], "unit": "Device",
+            })
+
+        # Vehicle-type Sales Share as share of transport-type sales.
+        t6["_vehicle_path"] = t6.apply(
+            lambda row: (
+                "Demand\\Passenger road\\" + str(row["vehicle_type"])
+                if str(row["transport_type"]) == "passenger"
+                else "Demand\\Freight road\\" + str(row["vehicle_type"])
+            ),
+            axis=1,
+        )
+        vehicle_sales = t6.groupby(
+            ["economy", "scenario", "year", "transport_type", "_vehicle_path"],
+            dropna=False,
+            as_index=False,
+        )["new_sales"].sum()
+        transport_sales = t6.groupby(
+            ["economy", "scenario", "year", "transport_type"],
+            dropna=False,
+            as_index=False,
+        )["new_sales"].sum().rename(columns={"new_sales": "_transport_sales"})
+        vehicle_sales = vehicle_sales.merge(
+            transport_sales,
+            on=["economy", "scenario", "year", "transport_type"],
+            how="left",
+        )
+        for _, row in vehicle_sales.iterrows():
+            if int(row["year"]) not in projection_years:
+                continue
+            total = float(row.get("_transport_sales", 0.0))
+            share = (float(row["new_sales"]) / total * 100.0) if total > 0 else 0.0
+            rows.append({
+                "economy": row["economy"], "scenario": row["scenario"],
+                "year": int(row["year"]), "leap_branch_path": row["_vehicle_path"],
+                "variable": "Sales Share", "value": share, "unit": "Share",
             })
 
     # ── Sales Share (all projection years, technology-level path) ─────────

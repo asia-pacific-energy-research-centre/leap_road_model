@@ -133,6 +133,7 @@ def run_module3(
         gdp=gdp,
         energy_series=frt_energy,
         base_stocks={vt: base_stocks.get(vt, 0.0) for vt in freight_types},
+        vehicle_type_shares=vehicle_type_shares,
         elasticity_overrides=elasticity_overrides or {},
         cfg=cfg,
     )
@@ -166,6 +167,13 @@ def run_module3(
                     row["weight_calibration_gap"] = stocks_dict["weight_calibration_gap"]
                 else:
                     row["gdp_elasticity_used"] = stocks_dict["elasticities"].get(vt)
+                    diagnostics = stocks_dict.get("elasticity_diagnostics", {})
+                    row["freight_raw_elasticity"] = diagnostics.get("raw_elasticity")
+                    row["freight_elasticity_clamped"] = diagnostics.get("elasticity_clamped")
+                    row["freight_energy_growth_rate"] = diagnostics.get("energy_growth_rate")
+                    row["freight_gdp_growth_rate"] = diagnostics.get("gdp_growth_rate")
+                    row["freight_elasticity_data_source"] = diagnostics.get("data_source")
+                    row["freight_elasticity_note"] = diagnostics.get("note")
                 rows.append(row)
 
     result = pd.DataFrame(rows)
@@ -626,6 +634,7 @@ def project_freight_stocks(
     gdp: pd.Series,
     energy_series: pd.Series,
     base_stocks: dict[str, float],
+    vehicle_type_shares: dict[str, pd.Series] | None = None,
     elasticity_overrides: dict[str, float] | None = None,
     cfg: dict | None = None,
 ) -> dict:
@@ -650,7 +659,7 @@ def project_freight_stocks(
     base_year = years[0]
     gdp_base = float(gdp[base_year])
 
-    elasticity = estimate_freight_elasticity(
+    elasticity_diag = estimate_freight_elasticity(
         energy_series,
         gdp,
         lookback_years=cfg["lookback_window_years"],
@@ -660,20 +669,47 @@ def project_freight_stocks(
         elasticity_max=cfg["elasticity_max"],
         default_elasticity=cfg["default_elasticity"],
     )
+    elasticity = float(elasticity_diag["elasticity"])
     log.info("Estimated freight GDP elasticity: %.4f", elasticity)
+
+    e = overrides.get("freight_total", elasticity)
+    if "freight_total" in overrides:
+        elasticity_diag = {
+            **elasticity_diag,
+            "elasticity": float(e),
+            "data_source": "override",
+            "note": "freight_total override used",
+        }
+    gdp_ratio = gdp / gdp_base
+    total_base_stock = sum(float(value) for value in base_stocks.values())
+    total_target_stock = pd.Series(
+        total_base_stock * (gdp_ratio ** e),
+        index=gdp_ratio.index,
+    ).reindex(years)
+
+    freight_types = list(base_stocks)
+    if vehicle_type_shares is None or not any(vt in vehicle_type_shares for vt in freight_types):
+        total = total_base_stock or 1.0
+        vehicle_type_shares = {
+            vt: pd.Series(float(base_stocks.get(vt, 0.0)) / total, index=years)
+            for vt in freight_types
+        }
 
     target_stocks = {}
     elasticities = {}
-    for vt, base_stock in base_stocks.items():
-        e = overrides.get(vt, elasticity)
+    for vt in freight_types:
+        shares = vehicle_type_shares.get(vt)
+        if shares is None:
+            shares = pd.Series(0.0, index=years)
+        shares = shares.reindex(years).interpolate(method="index").ffill().bfill().fillna(0.0)
+        target_stocks[vt] = total_target_stock * shares
         elasticities[vt] = e
-        gdp_ratio = gdp / gdp_base
-        target_stocks[vt] = pd.Series(
-            base_stock * (gdp_ratio ** e),
-            index=gdp_ratio.index,
-        ).reindex(years)
 
-    return {"elasticities": elasticities, "target_stocks": target_stocks}
+    return {
+        "elasticities": elasticities,
+        "target_stocks": target_stocks,
+        "elasticity_diagnostics": elasticity_diag,
+    }
 
 
 def estimate_freight_elasticity(
@@ -685,26 +721,12 @@ def estimate_freight_elasticity(
     elasticity_min: float = 0.0,
     elasticity_max: float = 2.0,
     default_elasticity: float = 0.8,
-) -> float:
+) -> dict[str, float | bool | str | None]:
     """
     Estimate freight stock elasticity from historical energy and GDP growth.
 
-    elasticity = average_freight_energy_growth / average_gdp_growth
-
-    Both are geometric average annual growth rates over the lookback window.
-
-    Args:
-        energy_series: pd.Series indexed by year (freight road energy, PJ).
-        gdp: pd.Series indexed by year.
-        lookback_years: Years to look back from base_year.
-        base_year: End of the lookback window.
-        exclude_years: Years to exclude (e.g. [2020, 2021, 2022]).
-        elasticity_min: Minimum allowed elasticity.
-        elasticity_max: Maximum allowed elasticity.
-        default_elasticity: Fallback if data are insufficient.
-
-    Returns:
-        Freight GDP elasticity (float).
+    Returns diagnostics for dashboard/review use, including raw elasticity,
+    clamping status, growth rates, and fallback reason when estimation is not possible.
     """
     exclude = set(exclude_years or [])
     window_start = base_year - lookback_years
@@ -725,21 +747,44 @@ def estimate_freight_elasticity(
     gdp_growth = _geometric_growth(gdp)
 
     if energy_growth is None or gdp_growth is None:
-        log.warning("Insufficient data for freight elasticity estimation — using default %.2f", default_elasticity)
-        return default_elasticity
+        log.warning("Insufficient data for freight elasticity estimation; using default %.2f", default_elasticity)
+        return {
+            "elasticity": float(default_elasticity),
+            "raw_elasticity": None,
+            "elasticity_clamped": False,
+            "energy_growth_rate": energy_growth,
+            "gdp_growth_rate": gdp_growth,
+            "data_source": "default",
+            "note": "insufficient data",
+        }
 
     if abs(gdp_growth) < 1e-6:
-        log.warning("Near-zero GDP growth — using default freight elasticity %.2f", default_elasticity)
-        return default_elasticity
+        log.warning("Near-zero GDP growth; using default freight elasticity %.2f", default_elasticity)
+        return {
+            "elasticity": float(default_elasticity),
+            "raw_elasticity": None,
+            "elasticity_clamped": False,
+            "energy_growth_rate": energy_growth,
+            "gdp_growth_rate": gdp_growth,
+            "data_source": "default",
+            "note": "near-zero GDP growth",
+        }
 
     raw_elasticity = energy_growth / gdp_growth
     clamped = float(np.clip(raw_elasticity, elasticity_min, elasticity_max))
-    if not np.isclose(raw_elasticity, clamped):
-        log.warning(
-            "Freight elasticity clamped from %.4f to %.4f — flag for review",
-            raw_elasticity, clamped,
-        )
-    return clamped
+    was_clamped = not np.isclose(raw_elasticity, clamped)
+    if was_clamped:
+        log.warning("Freight elasticity clamped from %.4f to %.4f; flag for review", raw_elasticity, clamped)
+
+    return {
+        "elasticity": clamped,
+        "raw_elasticity": float(raw_elasticity),
+        "elasticity_clamped": bool(was_clamped),
+        "energy_growth_rate": float(energy_growth),
+        "gdp_growth_rate": float(gdp_growth),
+        "data_source": "estimated",
+        "note": "clamped" if was_clamped else "estimated",
+    }
 
 
 # ===========================================================================

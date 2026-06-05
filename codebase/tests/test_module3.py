@@ -182,28 +182,60 @@ class TestEstimateFreightElasticity:
         # Energy grows at same rate as GDP → elasticity = 1.0
         energy = pd.Series([100.0 * (1.03 ** i) for i in range(11)], index=years)
         gdp = pd.Series([1000.0 * (1.03 ** i) for i in range(11)], index=years)
-        e = estimate_freight_elasticity(energy, gdp, lookback_years=10, base_year=2022)
-        assert abs(e - 1.0) < 0.01
+        diag = estimate_freight_elasticity(energy, gdp, lookback_years=10, base_year=2022)
+        assert abs(diag["elasticity"] - 1.0) < 0.01
+        assert diag["data_source"] == "estimated"
 
     def test_clamped_to_bounds(self):
         years = list(range(2012, 2023))
         # Energy grows much faster than GDP → elasticity would be > 2.0
         energy = pd.Series([100.0 * (1.10 ** i) for i in range(11)], index=years)
         gdp = pd.Series([1000.0 * (1.01 ** i) for i in range(11)], index=years)
-        e = estimate_freight_elasticity(
+        diag = estimate_freight_elasticity(
             energy, gdp, lookback_years=10, base_year=2022,
             elasticity_max=2.0
         )
-        assert e <= 2.0
+        assert diag["elasticity"] <= 2.0
+        assert diag["elasticity_clamped"] is True
 
     def test_returns_default_on_zero_gdp_growth(self):
         years = list(range(2012, 2023))
         energy = pd.Series([100.0 * (1.03 ** i) for i in range(11)], index=years)
         gdp = pd.Series([1000.0] * 11, index=years)  # flat GDP
-        e = estimate_freight_elasticity(
+        diag = estimate_freight_elasticity(
             energy, gdp, lookback_years=10, base_year=2022, default_elasticity=0.8
         )
-        assert e == 0.8
+        assert diag["elasticity"] == 0.8
+        assert diag["data_source"] == "default"
+
+
+class TestProjectFreightStocks:
+    def test_projects_total_freight_then_splits_by_vehicle_type_share(self):
+        years = [2022, 2023, 2024]
+        gdp = pd.Series([100.0, 110.0, 121.0], index=years)
+        energy = pd.Series([50.0, 55.0, 60.5], index=years)
+        shares = {
+            "Trucks": pd.Series({2022: 0.30, 2024: 0.40}),
+            "LCVs": pd.Series({2022: 0.70, 2024: 0.60}),
+        }
+
+        result = project_freight_stocks(
+            years=years,
+            gdp=gdp,
+            energy_series=energy,
+            base_stocks={"Trucks": 300.0, "LCVs": 700.0},
+            vehicle_type_shares=shares,
+            elasticity_overrides={"freight_total": 1.0},
+        )
+
+        total_2024 = 1000.0 * (121.0 / 100.0)
+        assert result["target_stocks"]["Trucks"].loc[2024] == pytest.approx(total_2024 * 0.40)
+        assert result["target_stocks"]["LCVs"].loc[2024] == pytest.approx(total_2024 * 0.60)
+        assert (
+            result["target_stocks"]["Trucks"].loc[2024]
+            + result["target_stocks"]["LCVs"].loc[2024]
+        ) == pytest.approx(total_2024)
+        assert result["elasticity_diagnostics"]["data_source"] == "override"
 
 
 # ===========================================================================

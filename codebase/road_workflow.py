@@ -75,6 +75,7 @@ _ECONOMY_LONG_NAMES: dict[str, str] = {
 }
 from diagnostics.module_charts import write_module1_charts, write_workflow_summary_charts
 from diagnostics.plotly_dashboard import write_module_pages
+from adapters.leap_import_writer import write_leap_import_workbook as write_strict_leap_import_workbook
 
 
 #%%
@@ -297,6 +298,81 @@ def parse_leap_format_inputs(
     return melted[[c for c in keep if c in melted.columns]].reset_index(drop=True)
 
 
+def _read_base_stocks_for_shares(base_year_branches: pd.DataFrame, base_year: int) -> dict[str, float]:
+    if base_year_branches is None or base_year_branches.empty or "stock" not in base_year_branches.columns:
+        return {}
+    df = base_year_branches.copy()
+    if "base_year" in df.columns:
+        df = df[df["base_year"] == base_year]
+    branch_keys = [c for c in ["transport_type", "vehicle_type", "size", "drive_type"] if c in df.columns]
+    if branch_keys:
+        df = df.drop_duplicates(subset=branch_keys)
+    return df.groupby("vehicle_type")["stock"].sum().to_dict()
+
+
+def _interpolate_vehicle_type_stock_shares(
+    module1_stock_shares: dict[str, pd.Series] | None,
+    base_stocks: dict[str, float],
+    years: list[int],
+) -> dict[str, pd.Series] | None:
+    """Build annual physical vehicle-type stock shares from base stocks and sparse Module 1 Stock Share rows."""
+    if not years:
+        return None
+    base_year = years[0]
+    module1_stock_shares = module1_stock_shares or {}
+    vehicle_types = ["LPVs", "Motorcycles", "Buses", "Trucks", "LCVs"]
+    result: dict[str, pd.Series] = {}
+
+    group_members = {
+        "passenger": ["LPVs", "Motorcycles", "Buses"],
+        "freight": ["Trucks", "LCVs"],
+    }
+    base_share_by_type: dict[str, float] = {}
+    for members in group_members.values():
+        total = sum(float(base_stocks.get(vt, 0.0)) for vt in members)
+        for vt in members:
+            base_share_by_type[vt] = (float(base_stocks.get(vt, 0.0)) / total) if total > 0 else 0.0
+
+    for vt in vehicle_types:
+        points = {base_year: base_share_by_type.get(vt, 0.0)}
+        if vt in module1_stock_shares:
+            for year, value in module1_stock_shares[vt].dropna().items():
+                points[int(year)] = float(value)
+        point_series = pd.Series(points).sort_index()
+        annual = point_series.reindex(years).interpolate(method="index").ffill().bfill()
+        if not point_series.empty:
+            last_target_year = int(point_series.index.max())
+            annual.loc[annual.index > last_target_year] = float(point_series.loc[last_target_year])
+        result[vt] = annual
+
+    for members in group_members.values():
+        totals = sum(result[vt] for vt in members)
+        for vt in members:
+            result[vt] = result[vt].where(totals == 0, result[vt] / totals)
+    return result
+
+
+def _convert_passenger_physical_to_capacity_shares(
+    physical_shares: dict[str, pd.Series] | None,
+    weights: dict[str, float] | None,
+) -> dict[str, pd.Series] | None:
+    if physical_shares is None:
+        return None
+    weights = weights or {"LPVs": 1.0, "Motorcycles": 0.8, "Buses": 20.0}
+    result = dict(physical_shares)
+    passenger_types = ["LPVs", "Motorcycles", "Buses"]
+    weighted = {
+        vt: physical_shares[vt] * float(weights.get(vt, 1.0))
+        for vt in passenger_types
+        if vt in physical_shares
+    }
+    if weighted:
+        total = sum(weighted.values())
+        for vt, series in weighted.items():
+            result[vt] = series.where(total == 0, series / total)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Configuration / inputs
 # ---------------------------------------------------------------------------
@@ -344,9 +420,13 @@ class RoadWorkflowConfig:
     # Output behavior
     save_csv_outputs: bool = True
     show_progress: bool = True
+    write_leap_row_diagnostics: bool = field(
+        default_factory=lambda: os.getenv("ROAD_MODEL_WRITE_LEAP_ROW_DIAGNOSTICS", "").lower() in {"1", "true", "yes", "on"}
+    )
 
     # Optional module settings
     leap_workbook_path: str | Path | None = None
+    leap_reference_path: str | Path | None = None
     module3_config: dict[str, Any] | None = None
     module4_config: dict[str, Any] | None = None
     module6_match_tolerance: float = 0.01
@@ -520,13 +600,24 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         _print_progress(config, "Module 3: projecting stock targets.")
         _sat = m1.get("passenger_saturation_level")
         _saturation_overrides = {"researcher": float(_sat)} if _sat is not None else None
+        _vehicle_type_shares = inputs.vehicle_type_shares
+        if _vehicle_type_shares is None:
+            _physical_stock_shares = _interpolate_vehicle_type_stock_shares(
+                module1_stock_shares=m1.get("vehicle_type_stock_shares"),
+                base_stocks=_read_base_stocks_for_shares(t4, config.base_year),
+                years=config.projection_years(),
+            )
+            _vehicle_type_shares = _convert_passenger_physical_to_capacity_shares(
+                _physical_stock_shares,
+                m1["vehicle_equivalent_weights"] or None,
+            )
         t5 = run_module3(
             base_year_branches=t4,
             population=inputs.population,
             gdp=inputs.gdp,
             esto_road_energy_pj=inputs.esto_road_energy_pj,
             projection_years=config.projection_years(),
-            vehicle_type_shares=inputs.vehicle_type_shares,
+            vehicle_type_shares=_vehicle_type_shares,
             saturation_overrides=_saturation_overrides,
             passenger_saturation_reached=bool(m1.get("passenger_saturation_reached", False)),
             elasticity_overrides=inputs.elasticity_overrides,
@@ -682,11 +773,44 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             _write_df(m6["T11"], output_root / "module6" / "T11_leap_ready.csv")
             _write_df(m6["T12"], output_root / "module6" / "T12_reconciliation_diagnostics.csv")
             _write_df(m6["T12_phev"], output_root / "module6" / "T12_phev_utilisation_diagnostics.csv")
-            write_leap_import_workbook(
-                m6["T11"],
-                output_root / "module6" / f"{config.economy}_leap_import.xlsx",
-                economy_long_name=_ECONOMY_LONG_NAMES.get(config.economy, config.economy),
-            )
+            leap_import_path = output_root / "module6" / f"{config.economy}_leap_import.xlsx"
+            reference_path = Path(config.leap_reference_path) if config.leap_reference_path else _default_leap_reference_path()
+            if reference_path is not None and reference_path.exists():
+                warnings = write_strict_leap_import_workbook(
+                    m6["T11"],
+                    leap_import_path,
+                    reference_path=reference_path,
+                    economy_long_name=_ECONOMY_LONG_NAMES.get(config.economy, config.economy),
+                    coverage_diagnostics_path=(
+                        output_root / "module6" / f"{config.economy}_leap_import_row_coverage_diagnostics.csv"
+                        if config.write_leap_row_diagnostics
+                        else None
+                    ),
+                    economy_code=config.economy,
+                )
+                outputs["leap_import_warnings"] = warnings
+                if config.write_leap_row_diagnostics:
+                    outputs["leap_import_row_coverage_diagnostics_path"] = (
+                        output_root / "module6" / f"{config.economy}_leap_import_row_coverage_diagnostics.csv"
+                    )
+                if warnings:
+                    pd.DataFrame(warnings).to_csv(
+                        output_root / "module6" / f"{config.economy}_leap_import_warnings.csv",
+                        index=False,
+                    )
+            else:
+                write_leap_import_workbook(
+                    m6["T11"],
+                    leap_import_path,
+                    economy_long_name=_ECONOMY_LONG_NAMES.get(config.economy, config.economy),
+                )
+                outputs["leap_import_warnings"] = [
+                    {
+                        "severity": "warning",
+                        "type": "missing_reference_export",
+                        "message": "Strict LEAP writer skipped because no reference export was found.",
+                    }
+                ]
 
     # ------------------------ Module 7 ------------------------
     if config.run_m7:
@@ -780,6 +904,50 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 def _write_df(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
+
+
+def _default_leap_reference_path() -> Path | None:
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates = [
+        repo_root.parent
+        / "road_model_inputs_interface"
+        / "back-end"
+        / "data"
+        / "road_model"
+        / "leap_import_workbooks"
+        / "transport_leap_export_combined_ALL_ECONS_domestic_international_Target_20260526.xlsx",
+        Path(r"C:\Users\Work\github\leap_utilities\data\full model export.xlsx"),
+    ]
+    return next((path for path in candidates if path.exists()), None)
+
+
+def _validate_macro_inputs(
+    population: pd.DataFrame,
+    gdp: pd.DataFrame,
+    esto_road_energy_pj: pd.DataFrame,
+    projection_years: list[int],
+) -> None:
+    """Fail fast if macro driver DataFrames are structurally wrong or under-cover projection years."""
+    checks = [
+        ("population", population, {"year", "value"}),
+        ("gdp", gdp, {"year", "value"}),
+        ("esto_road_energy_pj", esto_road_energy_pj, {"year", "transport_type", "energy_pj"}),
+    ]
+    for name, df, required_cols in checks:
+        actual_cols = set(df.columns)
+        missing_cols = required_cols - actual_cols
+        if missing_cols:
+            raise ValueError(
+                f"{name} is missing required columns: {sorted(missing_cols)}. "
+                f"Found columns: {sorted(actual_cols)}"
+            )
+        covered_years = set(pd.to_numeric(df["year"], errors="coerce").dropna().astype(int))
+        missing_years = sorted(set(projection_years) - covered_years)
+        if missing_years:
+            raise ValueError(
+                f"{name} has no data for {len(missing_years)} projection year(s): "
+                f"{missing_years[:5]}{'...' if len(missing_years) > 5 else ''}"
+            )
 
 
 def _print_progress(config: RoadWorkflowConfig, message: str) -> None:
@@ -1039,6 +1207,9 @@ def run_for_economy(
     esto_road_energy = load_esto_road_energy(economy)
     esto_fuel_totals = load_esto_fuel_totals(economy, base_year=base_year)
 
+    projection_years = list(range(base_year, final_year + 1))
+    _validate_macro_inputs(population, gdp, esto_road_energy, projection_years)
+
     _repo_root = Path(__file__).resolve().parents[1]  # leap_road_model/
     _output_root = Path(output_root) if output_root else _repo_root / "results" / economy
 
@@ -1115,6 +1286,8 @@ Examples:
                         help="Skip PNG/HTML diagnostic outputs")
     parser.add_argument("--output", default=None, dest="output_root",
                         help="Output directory (default: results/<economy>)")
+    parser.add_argument("--leap-row-diagnostics", action="store_true", dest="write_leap_row_diagnostics",
+                        help="Write LEAP row coverage diagnostics CSV with missing and not-needed rows")
     args = parser.parse_args()
 
     result = run_for_economy(
@@ -1124,6 +1297,7 @@ Examples:
         final_year=args.final_year,
         enable_visualisations=args.enable_visualisations,
         output_root=args.output_root,
+        write_leap_row_diagnostics=args.write_leap_row_diagnostics,
     )
     timings = result.get("timings", {})
     total = sum(v for v in timings.values())

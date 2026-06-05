@@ -24,6 +24,7 @@ from adapters.road_module1_defaults import (
     get_passenger_saturation_reached,
     get_reconciliation_weights,
     get_vehicle_equivalent_weight_bounds,
+    get_vehicle_type_stock_shares,
     load_road_module1_defaults,
     load_module1_leap_df,
 )
@@ -218,7 +219,7 @@ class TestModule1DefaultsSaturationUnits:
 
         loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="vtest")
 
-        assert get_passenger_saturation_level(loaded, economy="20_USA") == pytest.approx(890.0)
+        assert get_passenger_saturation_level(loaded, economy="20_USA") == pytest.approx(0.89)
         assert loaded.iloc[0]["source"] == "test_source.csv"
         assert loaded.iloc[0]["notes"] == "per 1000 people"
 
@@ -252,6 +253,28 @@ class TestModule1DefaultsSaturationUnits:
         assert "2022" in loaded.columns
         assert loaded.loc[0, "Region"] == "20_USA"
         assert loaded.loc[0, "2022"] == pytest.approx(100.0)
+
+    def test_vehicle_type_stock_shares_use_only_exact_vehicle_branches(self):
+        # Long-format defaults_df — mirrors what load_road_module1_defaults() produces.
+        defaults_df = pd.DataFrame([
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Freight road\\Trucks", "year": 2022, "value": 33.52055086},
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Freight road\\Trucks", "year": 2040, "value": 40.0},
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Freight road\\LCVs", "year": 2022, "value": 66.47944914},
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Freight road\\LCVs", "year": 2040, "value": 60.0},
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Passenger road\\Motorcycles", "year": 2022, "value": 3.135620686},
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Passenger road\\Buses", "year": 2022, "value": 0.347687436},
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Passenger road\\LPVs", "year": 2022, "value": 96.51669188},
+            # sub-branch row — must be filtered out
+            {"economy": "20_USA", "variable": "stock_share", "leap_branch_path": "Demand\\Freight road\\Trucks\\ICE heavy", "year": 2022, "value": 99.0},
+        ])
+
+        shares = get_vehicle_type_stock_shares(defaults_df, economy="20_USA")
+
+        assert shares["Trucks"].loc[2022] == pytest.approx(0.3352055086)
+        assert shares["Trucks"].loc[2040] == pytest.approx(0.40)
+        assert shares["LCVs"].loc[2040] == pytest.approx(0.60)
+        assert shares["LPVs"].loc[2022] == pytest.approx(0.9651669188)
+        assert "ICE heavy" not in shares
 
     def test_global_profile_prefixed_branch_path_age_is_loaded(self, tmp_path: Path):
         df = pd.DataFrame([

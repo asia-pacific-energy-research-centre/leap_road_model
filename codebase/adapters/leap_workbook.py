@@ -26,8 +26,6 @@ from adapters.leap_expressions import to_leap_expression, parse_expression_colum
 log = logging.getLogger(__name__)
 
 _ROAD_BRANCH_PREFIXES = (
-    "Demand\\Transport passenger road",
-    "Demand\\Transport freight road",
     "Demand\\Passenger road",
     "Demand\\Freight road",
 )

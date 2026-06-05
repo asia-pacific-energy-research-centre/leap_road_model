@@ -197,7 +197,12 @@ SCHEMAS: dict[str, dict] = {
             "motorisation_level":     _col("float", False, "Car-equiv per capita (passenger only)"),
             "saturation_level":       _col("float", False, "Saturation car-equiv per capita"),
             "k_used":                 _col("float", False, "S-curve steepness parameter"),
-            "gdp_elasticity_used":    _col("float", False, "GDP elasticity (freight only)"),
+            "gdp_elasticity_used":    _col("float", False, "GDP elasticity applied (freight only)"),
+            "freight_raw_elasticity": _col("float", False, "Unclipped elasticity estimate (freight only)"),
+            "freight_elasticity_clamped": _col("bool", False, "True if freight elasticity was clamped to bounds"),
+            "freight_energy_growth_rate": _col("float", False, "Annualised freight energy growth rate used for elasticity"),
+            "freight_gdp_growth_rate":    _col("float", False, "Annualised GDP growth rate used for freight elasticity"),
+            "freight_elasticity_data_source": _col("str", False, "estimated | override (freight only)"),
             "saturation_source_flag": _col("str",   False, "Source of saturation assumption"),
             "k_clamped":              _col("bool",  False, "True if k was clamped to bounds"),
             "is_saturated":           _col("bool",  False, "True if economy treated as saturated"),
@@ -233,6 +238,8 @@ SCHEMAS: dict[str, dict] = {
             "additional_retirements":_col("float", True,  "Policy-driven extra retirements"),
             "total_retirements":     _col("float", True,  "natural + additional"),
             "stock":                 _col("float", True,  "Final stock after all adjustments"),
+            "stock_above_target":    _col("bool",  False, "True when surviving stock exceeded target and cohorts were scaled down"),
+            "scale_factor_applied":  _col("float", False, "Scale factor applied to surviving cohorts when stock_above_target is true"),
             # Diagnostic: turnover_rate = new_sales / surviving_stock. Not an input.
             "turnover_rate":         _col("float", False, "new_sales / surviving_stock (diagnostic)"),
             # Optional: explicit scrappage for LEAP. Complex to implement; may be dropped.

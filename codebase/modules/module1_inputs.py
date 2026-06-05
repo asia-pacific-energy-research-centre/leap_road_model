@@ -23,8 +23,6 @@ Note: Connection to Fabian's researcher input tool is a future enhancement.
 from __future__ import annotations
 
 import logging
-import os
-import yaml
 from pathlib import Path
 
 import pandas as pd
@@ -129,133 +127,16 @@ _T1_COLUMNS = [
 
 def _load_defaults(config_dir: Path) -> pd.DataFrame:
     """
-    Build a legacy T2 defaults table only when explicitly reactivated.
+    Legacy defaults are intentionally unavailable.
 
     Returns:
         T2_defaults DataFrame.
     """
-    enabled = os.getenv("ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS", "").strip().lower()
-    if enabled not in {"1", "true", "yes"}:
-        raise RuntimeError(
-            "Legacy model_defaults.yaml fallback defaults are disabled by default. "
-            "Set ROAD_MODEL_ENABLE_LEGACY_MODEL_DEFAULTS=1 to explicitly reactivate them. "
-            "Preferred path: generate input_data/module1_defaults with "
-            "scripts/generate_module1_defaults.py and load them via "
-            "adapters.road_module1_defaults.load_module1_for_economy()."
-        )
-
-    with open(config_dir / "model_defaults.yaml", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-
-    rows = []
-
-    # Mileage defaults
-    for vt, drives in cfg.get("default_mileage_km_per_year", {}).items():
-        for drive, value in drives.items():
-            rows.append({
-                "scope": "global", "variable": "mileage",
-                "vehicle_type": vt, "drive_type": drive,
-                "value": value, "unit": "km/vehicle/year",
-                "source": "multinode_energy_balance road_module1_defaults",
-                "version": "v2026_05_25",
-                "review_recommended": True,
-            })
-
-    # Efficiency defaults
-    for vt, drives in cfg.get("default_efficiency_km_per_gj", {}).items():
-        for drive, value in drives.items():
-            rows.append({
-                "scope": "global", "variable": "efficiency",
-                "vehicle_type": vt, "drive_type": drive,
-                "value": value, "unit": "km/GJ",
-                "source": "multinode_energy_balance road_module1_defaults",
-                "version": "v2026_05_25",
-                "review_recommended": True,
-            })
-
-    # PHEV utilisation rate
-    rows.append({
-        "scope": "global", "variable": "phev_electric_utilisation_rate",
-        "vehicle_type": "all", "drive_type": "PHEV",
-        "value": cfg["phev"]["default_electric_utilisation_rate"],
-        "unit": "fraction",
-        "source": "model_defaults.yaml (legacy opt-in fallback)",
-        "version": "v2026_05_25",
-        "review_recommended": True,
-    })
-
-    # Vehicle-equivalent weights
-    for vt, value in cfg.get("vehicle_equivalent_weights", {}).items():
-        rows.append({
-            "scope": "global", "variable": "vehicle_equivalent_weight",
-            "vehicle_type": vt, "drive_type": None,
-            "value": value, "unit": "vehicle equivalent",
-            "source": "model_defaults.yaml (legacy opt-in fallback)",
-            "version": "v2026_05_25",
-            "review_recommended": True,
-        })
-
-    # Vehicle-equivalent weight calibration bounds
-    for vt, bounds in cfg.get("vehicle_equivalent_weight_bounds", {}).items():
-        for bound_name, variable in [
-            ("lower", "vehicle_equivalent_weight_lower_bound"),
-            ("upper", "vehicle_equivalent_weight_upper_bound"),
-        ]:
-            if bound_name not in bounds:
-                continue
-            rows.append({
-                "scope": "global", "variable": variable,
-                "vehicle_type": vt, "drive_type": None,
-                "value": bounds[bound_name], "unit": "vehicle equivalent",
-                "source": "model_defaults.yaml (legacy opt-in fallback)",
-                "version": "v2026_05_25",
-                "review_recommended": True,
-            })
-
-    # Reconciliation weights and scalar bounds
-    reconciliation = cfg.get("reconciliation", {})
-    for component in ["stock", "mileage", "efficiency"]:
-        weight_key = f"{component}_weight"
-        if weight_key in reconciliation:
-            rows.append({
-                "scope": "global",
-                "variable": f"reconciliation_weight_{component}",
-                "vehicle_type": None,
-                "drive_type": None,
-                "value": reconciliation[weight_key],
-                "unit": "share",
-                "source": "model_defaults.yaml (legacy opt-in fallback)",
-                "version": "v2026_05_25",
-                "review_recommended": True,
-            })
-        lower_key = f"{component}_scalar_min"
-        upper_key = f"{component}_scalar_max"
-        if lower_key in reconciliation:
-            rows.append({
-                "scope": "global",
-                "variable": f"reconciliation_bound_lower_{component}",
-                "vehicle_type": None,
-                "drive_type": None,
-                "value": reconciliation[lower_key],
-                "unit": "scalar",
-                "source": "model_defaults.yaml (legacy opt-in fallback)",
-                "version": "v2026_05_25",
-                "review_recommended": True,
-            })
-        if upper_key in reconciliation:
-            rows.append({
-                "scope": "global",
-                "variable": f"reconciliation_bound_upper_{component}",
-                "vehicle_type": None,
-                "drive_type": None,
-                "value": reconciliation[upper_key],
-                "unit": "scalar",
-                "source": "model_defaults.yaml (legacy opt-in fallback)",
-                "version": "v2026_05_25",
-                "review_recommended": True,
-            })
-
-    return pd.DataFrame(rows)
+    raise RuntimeError(
+        "model_defaults.yaml is guidance-only and must not be used as a runtime fallback. "
+        "Provide mileage, efficiency, and other defaults through Module 1 LEAP-style inputs "
+        "generated by road_model_inputs_interface or scripts/generate_module1_defaults.py."
+    )
 
 
 def _merge_inputs_with_defaults(

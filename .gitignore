@@ -48,6 +48,13 @@ intermediate_data/
 # Keep bulky module outputs and static diagnostic PNG suites ignored.
 # Git requires each directory level to be explicitly un-ignored when the parent is ignored.
 !results/*/
+# Smoke test and ad-hoc diagnostic run directories stay local only.
+# These must come after !results/*/ so they take precedence and re-ignore those dirs.
+results/codex_smoke*/
+results/_codex_smoke*/
+results/*_saturation_check/
+results/*_rowdiag/
+results/*_latest*/
 results/*/*
 !results/*/diagnostics/
 results/*/diagnostics/*

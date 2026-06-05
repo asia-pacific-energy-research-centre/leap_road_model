@@ -230,6 +230,69 @@ def write_module3_charts(t5: pd.DataFrame, diagnostics_dir: str | Path) -> list[
             ax.tick_params(axis="x", rotation=30)
             saved.append(_save(fig, out / "module3_freight_elasticity.png"))
 
+    diag_cols = {
+        "vehicle_type",
+        "gdp_elasticity_used",
+        "freight_raw_elasticity",
+        "freight_energy_growth_rate",
+        "freight_gdp_growth_rate",
+        "freight_elasticity_data_source",
+    }
+    if diag_cols.issubset(t5.columns):
+        diag = (
+            t5[t5["transport_type"] == "freight"]
+            [[*diag_cols]]
+            .drop_duplicates("vehicle_type")
+            .sort_values("vehicle_type")
+        )
+        if not diag.empty:
+            fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+            x = np.arange(len(diag))
+            width = 0.35
+            axes[0].bar(
+                x - width / 2,
+                pd.to_numeric(diag["freight_raw_elasticity"], errors="coerce"),
+                width,
+                label="raw",
+                color="#B0BEC5",
+            )
+            axes[0].bar(
+                x + width / 2,
+                pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce"),
+                width,
+                label="final",
+                color="#00897B",
+            )
+            axes[0].set_xticks(x)
+            axes[0].set_xticklabels(diag["vehicle_type"], rotation=30)
+            axes[0].set_title("Freight elasticity")
+            axes[0].set_ylabel("Elasticity")
+            axes[0].legend(fontsize=8)
+            axes[0].grid(axis="y", alpha=0.3)
+
+            axes[1].bar(
+                x - width / 2,
+                pd.to_numeric(diag["freight_energy_growth_rate"], errors="coerce") * 100,
+                width,
+                label="energy",
+                color="#5E6AD2",
+            )
+            axes[1].bar(
+                x + width / 2,
+                pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce") * 100,
+                width,
+                label="GDP",
+                color="#EF6C00",
+            )
+            axes[1].set_xticks(x)
+            axes[1].set_xticklabels(diag["vehicle_type"], rotation=30)
+            axes[1].set_title("Lookback growth rates")
+            axes[1].set_ylabel("Annual growth (%)")
+            axes[1].legend(fontsize=8)
+            axes[1].grid(axis="y", alpha=0.3)
+            fig.suptitle("Module 3: Freight elasticity diagnostics")
+            saved.append(_save(fig, out / "module3_freight_elasticity_diagnostics.png"))
+
     return saved
 
 
@@ -286,6 +349,24 @@ def write_module4_charts(t6: pd.DataFrame, t6v: pd.DataFrame, diagnostics_dir: s
         ax.set_ylabel("Ratio")
         ax.grid(alpha=0.3)
         saved.append(_save(fig, out / "module4_sales_to_stock_ratio.png"))
+
+    event_cols = {"year", "vehicle_type", "stock_above_target"}
+    if t6 is not None and not t6.empty and event_cols.issubset(t6.columns):
+        events = t6[t6["stock_above_target"].fillna(False).astype(bool)].copy()
+        if not events.empty:
+            counts = events.groupby(["year", "vehicle_type"]).size().unstack(fill_value=0).sort_index()
+            fig, ax = plt.subplots(figsize=(10, 4))
+            bottom = np.zeros(len(counts))
+            for idx, vt in enumerate(counts.columns):
+                values = counts[vt].to_numpy()
+                ax.bar(counts.index, values, bottom=bottom, label=str(vt))
+                bottom += values
+            ax.set_title("Module 4: Stock above target events")
+            ax.set_xlabel("Year")
+            ax.set_ylabel("Event count")
+            ax.legend(fontsize=8)
+            ax.grid(axis="y", alpha=0.3)
+            saved.append(_save(fig, out / "module4_stock_above_target_events.png"))
 
     return saved
 
