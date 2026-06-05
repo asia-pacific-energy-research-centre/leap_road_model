@@ -1,0 +1,29 @@
+name: Update interface Dockerfile SHA
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  update-sha:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout road_model_inputs_interface
+        uses: actions/checkout@v4
+        with:
+          repository: H3yfinn/road_model_inputs_interface
+          token: ${{ secrets.INTERFACE_REPO_TOKEN }}
+
+      - name: Update LEAP_ROAD_MODEL_VERSION in Dockerfile
+        run: |
+          NEW_SHA="${{ github.sha }}"
+          SHORT_SHA="${NEW_SHA:0:7}"
+          sed -i "s/ARG LEAP_ROAD_MODEL_VERSION=.*/ARG LEAP_ROAD_MODEL_VERSION=${SHORT_SHA}/" Dockerfile
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Dockerfile
+          git diff --staged --quiet || git commit -m "chore: bump leap_road_model to ${{ github.sha }}"
+          git push
