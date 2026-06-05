@@ -27,9 +27,26 @@ Triggers on push to `main`. Updates `LEAP_ROAD_MODEL_VERSION` in `road_model_inp
 **Secret required:** `INTERFACE_REPO_TOKEN` — a GitHub fine-grained PAT with Contents Read & Write on `H3yfinn/road_model_inputs_interface`. Set in `asia-pacific-energy-research-centre/leap_road_model` → Settings → Secrets → Actions.
 
 ### `road_model_inputs_interface/.github/workflows/sync_to_hf.yml`
-Triggers on push to `main`. Force-pushes the repo to the HF Space git remote.
+Triggers on push to `main`. Creates an orphan commit (no history) and force-pushes it to the HF Space. Using an orphan avoids HF rejecting pushes that contain large files in old commits.
 
 **Secret required:** `HF_TOKEN` — a Hugging Face token with write access to `finbarmaunsell/leap_road_model`. Set in `H3yfinn/road_model_inputs_interface` → Settings → Secrets → Actions.
+
+## Data files
+
+HF Spaces reject individual files over 10 MB. The two large source files have been replaced:
+
+| Original | Replacement | How |
+| --- | --- | --- |
+| `00APEC_2024_low_with_subtotals.csv` (34 MB) | Same path, filtered (1.3 MB) | Kept 5 queried flows, years 2000–2022 |
+| `transport_leap_export_combined_ALL_ECONS_*.xlsx` (>10 MB) | 21 per-economy files (~0.5 MB each) | Split by Region; app already prefers per-economy files |
+
+To regenerate these when source data changes, run:
+
+```sh
+python back-end/scripts/preprocess_large_files.py
+```
+
+Then commit the outputs.
 
 ## Keys (stored in gitignored `keys.txt`)
 
