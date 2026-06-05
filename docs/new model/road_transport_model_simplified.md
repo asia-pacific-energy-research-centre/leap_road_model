@@ -70,6 +70,8 @@ LEAP input package creation
 optional Python mirror validation
 ```
 
+![Road model interface and LEAP pipeline workflow](Road%20model%20interface%20and%20LEAP%20pipeline%20workflow.png)
+
 The goal is a calibrated base-year road model that matches ESTO road energy by fuel while producing the stock, sales, mileage, fuel economy, Device Share, survival, and projection inputs needed by LEAP.
 
 ## 3. Inputs Needed Before LEAP

@@ -7,6 +7,14 @@ builds the downstream Modules 2-7 tables, reconciles base-year road energy to
 ESTO, and writes LEAP-ready import outputs and diagnostics. LEAP remains the
 official projection platform.
 
+## Overview diagrams
+
+![Road transport model — quick view](docs/new%20model/Road%20transport%20model%20%E2%80%94%20quick%20view.png)
+
+![Road model interface and LEAP pipeline workflow](docs/new%20model/Road%20model%20interface%20and%20LEAP%20pipeline%20workflow.png)
+
+![Road transport model — researcher detail](docs/new%20model/Road%20transport%20model%20%E2%80%94%20researcher%20detail.png)
+
 ## Design source of truth
 
 Use these docs first:
