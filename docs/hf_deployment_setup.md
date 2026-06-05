@@ -35,43 +35,22 @@ Triggers on push to `main`. Creates an orphan commit (no history) and force-push
 
 ## HF push constraints and how we handle them
 
-HF Spaces enforce three hard limits on git pushes. Each required a code change:
+HF Spaces enforce hard limits on git pushes. Each required a change:
 
-### 1. No files over 10 MB
+### 1. No files over 10 MB / no binary files (PNGs etc.)
 
-HF rejects any file in the pushed history that exceeds 10 MB.
+The repo had large source data files and PNG diagrams in `docs/` that HF rejects.
 
-**Problem files:**
+**Fix:** These files are simply not pushed to HF:
 
-- `back-end/data/multinodeenergy_backend/00APEC_2024_low_with_subtotals.csv` — 34 MB full APEC energy database
-- `back-end/data/road_model/leap_import_workbooks/transport_leap_export_combined_ALL_ECONS_*.xlsx` — combined all-economy LEAP export workbook
-
-**Fix:** Pre-process both files down to what the app actually uses:
-
-| Original | Replacement | How |
-| --- | --- | --- |
-| `00APEC_2024_low_with_subtotals.csv` (34 MB) | Same path, filtered (1.3 MB) | Kept only the 5 flows the frontend queries, years 2000–2022 |
-| `transport_leap_export_combined_ALL_ECONS_*.xlsx` (>10 MB) | 21 per-economy files (~0.5 MB each) | Split by Region column; app already prefers per-economy files over the combined file |
-
-To regenerate when source data changes:
-
-```sh
-python back-end/scripts/preprocess_large_files.py
-```
-
-Then commit the outputs.
+- The APEC energy database CSV and LEAP export xlsx files are gitignored — the app's `processed_source/` per-economy CSVs (already committed) are what HF uses at runtime. The energy model tab (residential/industry sector view) is not needed on HF so the APEC CSV is excluded entirely.
+- `docs/` is stripped from the orphan commit before pushing via `git rm -rf --cached docs/`
 
 ### 2. No large files in git history
 
-Even after fixing the current files, HF rejected the push because old commits in the GitHub history still contained the original large files.
+Even with large files absent from the current commit, HF rejected pushes because old commits in the GitHub history still contained them.
 
-**Fix:** The `sync_to_hf.yml` Action uses `git checkout --orphan` to create a history-free snapshot commit before pushing. This means HF only sees the current state of the repo, not any prior commits.
-
-### 3. No binary files (PNGs etc.)
-
-HF also rejects binary files such as PNGs, asking you to use their Xet storage instead. The `docs/` folder contains PNG diagrams that the HF Space doesn't need.
-
-**Fix:** The Action runs `git rm -rf --cached docs/` on the orphan branch before committing, so the docs folder is never pushed to HF.
+**Fix:** The `sync_to_hf.yml` Action uses `git checkout --orphan` to create a history-free snapshot commit before pushing. HF only ever sees the current state of the repo, not any prior commits.
 
 ## Keys (stored in gitignored `keys.txt`)
 
