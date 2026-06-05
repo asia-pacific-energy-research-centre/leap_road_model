@@ -52,6 +52,17 @@ Even with large files absent from the current commit, HF rejected pushes because
 
 **Fix:** The `sync_to_hf.yml` Action uses `git checkout --orphan` to create a history-free snapshot commit before pushing. HF only ever sees the current state of the repo, not any prior commits.
 
+## ⚠️ After every deployment: hard-refresh your browser
+
+After a new deployment, your browser will likely still be running the **old cached `app.js`**. This causes subtle failures — e.g. requesting `.json` files when the new code expects `.csv` — that look like server errors but are actually stale client code.
+
+**Always hard-refresh after a deploy:**
+
+- Windows/Linux: `Ctrl + Shift + R`
+- Mac: `Cmd + Shift + R`
+
+If the error persists after a hard refresh, then it is a real server-side issue.
+
 ## Keys (stored in gitignored `keys.txt`)
 
 - **GitHub PAT** (`INTERFACE_REPO_TOKEN`): fine-grained token, Contents R/W on `road_model_inputs_interface`
