@@ -300,16 +300,54 @@ def _populate_base_year_values(
         t4 = branches.merge(wide, on=base_join_keys, how="left")
         t4 = _split_stock_equally_across_sizes(t4)
 
+    # Fallback: distribute vehicle_type-level stock equally across all branches.
+    # Module 1 provides stock only at vehicle_type level (e.g. Demand\Passenger road\LPVs),
+    # with no drive_type or size qualifier. The drive_type-keyed join above misses these rows.
+    # For each null stock, find the vehicle_type-level total and divide by the number of
+    # distinct (drive_type, size) combinations in the branch table for that vehicle_type.
+    vt_fallback_keys = ["economy", "scenario", "transport_type", "vehicle_type"]
+    if "stock" in t4.columns and t4["stock"].isna().any() and "stock" in (wide.columns if wide_parts else []):
+        vt_stock_src = (
+            wide[vt_fallback_keys + ["stock", "stock_source_flag"]]
+            .dropna(subset=["stock"])
+            .groupby(vt_fallback_keys)
+            .agg(stock=("stock", "sum"), stock_source_flag=("stock_source_flag", "first"))
+            .reset_index()
+            .rename(columns={"stock": "_vt_stock", "stock_source_flag": "_vt_stock_flag"})
+        )
+        if not vt_stock_src.empty:
+            branch_dim_keys = [c for c in ["drive_type", "size"] if c in t4.columns]
+            n_branches = (
+                t4[vt_fallback_keys + branch_dim_keys]
+                .drop_duplicates()
+                .groupby(vt_fallback_keys)
+                .size()
+                .rename("_n_branches")
+                .reset_index()
+            )
+            t4 = t4.merge(vt_stock_src, on=vt_fallback_keys, how="left").merge(n_branches, on=vt_fallback_keys, how="left")
+            was_null = t4["stock"].isna()
+            has_vt = t4["_vt_stock"].notna() & t4["_n_branches"].notna()
+            n_filled = int((was_null & has_vt).sum())
+            if n_filled:
+                t4.loc[was_null & has_vt, "stock"] = (
+                    t4.loc[was_null & has_vt, "_vt_stock"] / t4.loc[was_null & has_vt, "_n_branches"]
+                )
+                t4["stock_source_flag"] = t4["stock_source_flag"].where(~(was_null & has_vt), t4["_vt_stock_flag"])
+                t4["stock_granularity"] = t4.get("stock_granularity", pd.Series("branch_level", index=t4.index))
+                t4.loc[was_null & has_vt, "stock_granularity"] = "vehicle_type_equal_split"
+                log.info("Distributed vehicle_type-level stock equally across %d null branch rows", n_filled)
+            t4 = t4.drop(columns=["_vt_stock", "_vt_stock_flag", "_n_branches"])
+
     # Fallback: broadcast vehicle_type-level mileage/efficiency to all drives.
     # Module 1 stores mileage at vehicle_type (or size-category) level with
     # non-standard drive labels (e.g. "Heavy", "Passenger") rather than actual
     # drive types (ICE, HEV, PHEV, EREV, BEV, FCEV). The exact drive_type join above misses these.
     # For each null, look for any mileage/efficiency value for the same
     # (economy, scenario, transport_type, vehicle_type) and replicate it.
-    vt_fallback_keys = ["economy", "scenario", "transport_type", "vehicle_type"]
     for var, (col_name, flag_col) in _T3_VARIABLES.items():
         if var == "stock":
-            continue  # stock broadcast doesn't make sense
+            continue  # handled above
         if col_name not in t4.columns or not t4[col_name].isna().any():
             continue
         fb_col = f"_fb_{col_name}"

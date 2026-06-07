@@ -108,7 +108,7 @@ def run_module5(
     Returns:
         (T7_base_year, T7f_future_shares)
     """
-    scenarios = scenarios or ["Reference", "Target"]
+    scenarios = scenarios or ["Target"]
 
     # 1. Prepare future shares — filter/fill from provided tidy DataFrame
     provided_shares = _prepare_future_shares(
@@ -931,8 +931,7 @@ def _build_requested_scenario_lookup(scenarios: list[str]) -> dict[str, str]:
 
     Example:
       scenarios=["TGT"] gives {"target": "TGT"}
-      scenarios=["Reference", "Target"] gives
-          {"reference": "Reference", "target": "Target"}
+      scenarios=["Target"] gives {"target": "Target"}
     """
     lookup: dict[str, str] = {}
     for scenario in scenarios:

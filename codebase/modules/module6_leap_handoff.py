@@ -310,24 +310,31 @@ def reconcile_electricity(
         return df, _build_phev_liquid(df)
 
     phev_electric_pj = float(df.loc[phev_elec_mask, "initial_energy_pj"].sum())
-    residual_electricity_pj = max(0.0, float(electricity_esto_pj) - phev_electric_pj)
+    total_initial_elec = df.loc[non_phev_elec_mask, "initial_energy_pj"].sum()
+
     if phev_electric_pj > electricity_esto_pj:
+        # PHEV stock alone implies more electricity than ESTO records — scale all
+        # electricity branches (PHEV + BEV) together so the fleet size lands at a
+        # value consistent with ESTO, rather than clamping BEVs to zero.
         log.warning(
             "PHEV electricity implied by utilisation (%.3f PJ) exceeds ESTO road electricity (%.3f PJ)",
             phev_electric_pj,
             electricity_esto_pj,
         )
+        total_all_elec = phev_electric_pj + total_initial_elec
+        if total_all_elec <= 0:
+            return df, _build_phev_liquid(df)
+        ecf = electricity_esto_pj / total_all_elec
+        adjust_mask = elec_mask
+    else:
+        residual_electricity_pj = electricity_esto_pj - phev_electric_pj
+        if total_initial_elec <= 0:
+            return df, _build_phev_liquid(df)
+        ecf = residual_electricity_pj / total_initial_elec
+        # PHEV electricity is within ESTO budget; only adjust non-PHEV branches.
+        adjust_mask = non_phev_elec_mask
 
-    total_initial_elec = df.loc[non_phev_elec_mask, "initial_energy_pj"].sum()
-    if total_initial_elec <= 0:
-        return df, _build_phev_liquid(df)
-
-    ecf = residual_electricity_pj / total_initial_elec
-
-    # Apply scalars to non-PHEV electricity branches only. PHEV electricity is
-    # governed by the utilisation factor and reconciled as paired electric /
-    # liquid demand.
-    for idx in df[non_phev_elec_mask].index:
+    for idx in df[adjust_mask].index:
         s = df.at[idx, "stock"]
         m = df.at[idx, "mileage_km_per_year"]
         e = df.at[idx, "efficiency_km_per_gj"]

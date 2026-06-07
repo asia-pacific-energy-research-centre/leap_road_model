@@ -26,16 +26,21 @@ MODULE1_DEFAULTS_DIR = REPO_ROOT / "input_data" / "module1_defaults"
 
 # --- Functions ---
 
-def discover_economies(module1_dir: Path) -> list[str]:
-    """Return canonical economy codes from the most recent module1_defaults version."""
-    version_dirs = sorted(
-        [p for p in module1_dir.iterdir() if p.is_dir()],
-        key=lambda p: p.stat().st_mtime,
-    )
-    if not version_dirs:
-        raise FileNotFoundError(f"No version folders in {module1_dir}")
+def discover_economies(module1_dir: Path, version: str | None = None) -> list[str]:
+    """Return canonical economy codes from the specified (or most recently modified) version."""
+    if version is not None:
+        version_dir = module1_dir / version
+        if not version_dir.exists():
+            raise FileNotFoundError(f"Module 1 version folder not found: {version_dir}")
+    else:
+        version_dirs = sorted(
+            [p for p in module1_dir.iterdir() if p.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+        )
+        if not version_dirs:
+            raise FileNotFoundError(f"No version folders in {module1_dir}")
+        version_dir = version_dirs[-1]
 
-    version_dir = version_dirs[-1]
     print(f"Module 1 version: {version_dir.name}")
 
     codes: list[str] = []
@@ -54,6 +59,7 @@ def run_one_economy(
     scenario: str,
     build_dashboards: bool,
     repo_root: Path,
+    module1_defaults_version: str | None = None,
 ) -> dict:
     """Run one economy and return model/dashboard timing."""
     sys.path.insert(0, str(repo_root / "codebase"))
@@ -65,6 +71,7 @@ def run_one_economy(
             economy=economy,
             scenario=scenario,
             enable_visualisations=build_dashboards,
+            module1_defaults_version=module1_defaults_version,
         )
         timings = outputs.get("timings", {})
         workflow_meta = outputs.get("workflow_meta", {})
@@ -90,14 +97,15 @@ def run_one_economy(
         }
 
 
-def run_one_economy_from_work_item(work_item: tuple[str, str, bool, str]) -> dict:
+def run_one_economy_from_work_item(work_item: tuple[str, str, bool, str, str | None]) -> dict:
     """ProcessPool wrapper for one economy run."""
-    economy, scenario, build_dashboards, repo_root = work_item
+    economy, scenario, build_dashboards, repo_root, module1_defaults_version = work_item
     return run_one_economy(
         economy=economy,
         scenario=scenario,
         build_dashboards=build_dashboards,
         repo_root=Path(repo_root),
+        module1_defaults_version=module1_defaults_version,
     )
 
 
@@ -159,17 +167,22 @@ def run_all_economies(
     build_dashboards: bool,
     worker_count: int,
     economies_to_run: list[str] | None,
+    module1_defaults_version: str | None = None,
 ) -> list[dict]:
     """Run selected economies and print timing results."""
-    all_economies = discover_economies(MODULE1_DEFAULTS_DIR)
+    all_economies = discover_economies(MODULE1_DEFAULTS_DIR, version=module1_defaults_version)
     economies = economies_to_run if economies_to_run else all_economies
 
     print(
         f"Running {len(economies)} economies | scenario={scenario} | "
-        f"workers={worker_count} | build_dashboards={build_dashboards}\n"
+        f"workers={worker_count} | build_dashboards={build_dashboards} | "
+        f"version={module1_defaults_version or 'auto'}\n"
     )
 
-    work_items = [(economy, scenario, build_dashboards, str(REPO_ROOT)) for economy in economies]
+    work_items = [
+        (economy, scenario, build_dashboards, str(REPO_ROOT), module1_defaults_version)
+        for economy in economies
+    ]
     results: list[dict] = []
 
     start = time.perf_counter()
@@ -187,10 +200,13 @@ def run_all_economies(
 #%%
 # --- Frequently Changed Run Settings ---
 
-SCENARIO = "Reference"
+SCENARIO = "Target"
 BUILD_DASHBOARDS = True
 WORKER_COUNT = 4
 ECONOMIES_TO_RUN: list[str] | None = None
+# Pin to the complete defaults set (the auto-detected version picks the most
+# recently modified folder, which may be an incomplete in-progress version).
+MODULE1_DEFAULTS_VERSION = "v2026_05_25_best_guess"
 
 # For a quick timing test, uncomment one of these:
 # ECONOMIES_TO_RUN = ["05_PRC"]
@@ -206,6 +222,7 @@ if __name__ == "__main__":
         build_dashboards=BUILD_DASHBOARDS,
         worker_count=WORKER_COUNT,
         economies_to_run=ECONOMIES_TO_RUN,
+        module1_defaults_version=MODULE1_DEFAULTS_VERSION,
     )
 
 #%%

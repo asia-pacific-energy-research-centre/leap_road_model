@@ -43,6 +43,12 @@ _DEFAULT_MACRO_CSV = _LEAP_TRANSPORT / "data" / "9th_macro_data.csv"
 _LEAP_MAPPINGS_GLOB = str(_REPO_ROOT / "config" / "leap_mappings*.xlsx")
 
 
+# When a scenario has no dedicated macro data (population/GDP), fall back to
+# loading a surrogate scenario's data. Extend this map when new scenarios are
+# added before dedicated macro data is available for them.
+MACRO_SCENARIO_FALLBACK: dict[str, str] = {}
+
+
 def _resolve_path(explicit: str | Path | None, env_var: str, default: Path) -> Path:
     if explicit is not None:
         return Path(explicit)
@@ -135,41 +141,70 @@ def load_ninth_fuel_mapping(mappings_path: str | Path | None = None) -> dict[str
 # Macro data
 # ---------------------------------------------------------------------------
 
+def _load_macro_series(
+    df: pd.DataFrame,
+    economy: str,
+    scenario: str,
+    column: str,
+    csv_path: Path,
+) -> pd.Series:
+    """Return a year-indexed macro series, falling back via MACRO_SCENARIO_FALLBACK if needed."""
+    mask = (df["Economy"] == economy) & (df["Scenario"] == scenario)
+    sub = df[mask].set_index("Date")[column].sort_index()
+    if not sub.empty:
+        return sub
+
+    fallback = MACRO_SCENARIO_FALLBACK.get(scenario)
+    if fallback is not None:
+        mask_fb = (df["Economy"] == economy) & (df["Scenario"] == fallback)
+        sub_fb = df[mask_fb].set_index("Date")[column].sort_index()
+        if not sub_fb.empty:
+            log.warning(
+                "macro_scenario_fallback: economy=%s requested_scenario=%s fallback_scenario=%s column=%s",
+                economy, scenario, fallback, column,
+            )
+            return sub_fb
+
+    raise ValueError(
+        f"No {column} data for economy='{economy}' scenario='{scenario}' in {csv_path}"
+        + (f" (fallback '{fallback}' also missing)" if fallback else "")
+    )
+
+
 def load_population(
     economy: str,
     macro_csv: str | Path | None = None,
-    scenario: str = "Reference",
+    scenario: str = "Target",
 ) -> pd.Series:
     """
     Population Series indexed by year (persons).
 
     9th_macro_data.csv Population column is in thousands; multiplied by 1 000.
+    If the scenario is absent from the macro CSV, MACRO_SCENARIO_FALLBACK is tried.
     """
     csv = _resolve_path(macro_csv, "ROAD_MODEL_MACRO_CSV", _DEFAULT_MACRO_CSV)
     if not csv.exists():
         raise FileNotFoundError(f"Macro CSV not found: {csv}. Set ROAD_MODEL_MACRO_CSV.")
     df = pd.read_csv(csv)
-    mask = (df["Economy"] == economy) & (df["Scenario"] == scenario)
-    sub = df[mask].set_index("Date")["Population"].sort_index()
-    if sub.empty:
-        raise ValueError(f"No population data for economy='{economy}' scenario='{scenario}' in {csv}")
+    sub = _load_macro_series(df, economy, scenario, "Population", csv)
     return (sub * 1_000).rename("population")
 
 
 def load_gdp(
     economy: str,
     macro_csv: str | Path | None = None,
-    scenario: str = "Reference",
+    scenario: str = "Target",
 ) -> pd.Series:
-    """GDP Series indexed by year (billions USD, 2017 PPP)."""
+    """
+    GDP Series indexed by year (billions USD, 2017 PPP).
+
+    If the scenario is absent from the macro CSV, MACRO_SCENARIO_FALLBACK is tried.
+    """
     csv = _resolve_path(macro_csv, "ROAD_MODEL_MACRO_CSV", _DEFAULT_MACRO_CSV)
     if not csv.exists():
         raise FileNotFoundError(f"Macro CSV not found: {csv}. Set ROAD_MODEL_MACRO_CSV.")
     df = pd.read_csv(csv)
-    mask = (df["Economy"] == economy) & (df["Scenario"] == scenario)
-    sub = df[mask].set_index("Date")["Gdp"].sort_index()
-    if sub.empty:
-        raise ValueError(f"No GDP data for economy='{economy}' scenario='{scenario}' in {csv}")
+    sub = _load_macro_series(df, economy, scenario, "Gdp", csv)
     return sub.rename("gdp")
 
 

@@ -398,18 +398,34 @@ def calibrate_passenger_vehicle_equivalent_weights(
     min_flexible_stock = motorcycle_stock * motorcycle_lo + bus_stock * bus_lo
     max_flexible_stock = motorcycle_stock * motorcycle_hi + bus_stock * bus_hi
     if required_flexible_stock < min_flexible_stock or required_flexible_stock > max_flexible_stock:
-        closest = fixed_weighted_stock + (
-            min_flexible_stock
-            if required_flexible_stock < min_flexible_stock
-            else max_flexible_stock
+        # Target is outside the achievable range of motorcycle/bus weight combinations
+        # (common when LPV stock alone exceeds the saturation target, or when minimum
+        # bus weight already pushes the combined stock above target). Clamp to the
+        # nearest feasible solution and continue rather than hard-failing.
+        if required_flexible_stock < min_flexible_stock:
+            adjusted_weights["Motorcycles"] = motorcycle_lo
+            adjusted_weights["Buses"] = bus_lo
+        else:
+            adjusted_weights["Motorcycles"] = motorcycle_hi
+            adjusted_weights["Buses"] = bus_hi
+        clamped_weighted_stock = sum(
+            float(base_stocks.get(vt, 0.0)) * float(adjusted_weights.get(vt, 1.0))
+            for vt in base_stocks
         )
-        raise ValueError(
-            "Passenger saturation weight calibration is infeasible: "
-            f"target_weighted_stock={target_weighted_stock:.6f}, "
-            f"current_weighted_stock={current_weighted_stock:.6f}, "
-            f"motorcycle_bounds={motorcycle_bounds}, bus_bounds={bus_bounds}, "
-            f"closest_possible_weighted_stock={closest:.6f}"
+        log.warning(
+            "Passenger saturation weight calibration clamped to bounds (target unreachable): "
+            "target=%.1f current=%.1f clamped=%.1f motorcycle_w=%.3f bus_w=%.3f "
+            "motorcycle_bounds=%s bus_bounds=%s",
+            target_weighted_stock, current_weighted_stock, clamped_weighted_stock,
+            adjusted_weights["Motorcycles"], adjusted_weights["Buses"],
+            motorcycle_bounds, bus_bounds,
         )
+        return {
+            "adjusted_weights": adjusted_weights,
+            "applied": True,
+            "target_weighted_stock": target_weighted_stock,
+            "gap": clamped_weighted_stock - target_weighted_stock,
+        }
 
     if motorcycle_stock <= 0 and bus_stock <= 0:
         raise ValueError(

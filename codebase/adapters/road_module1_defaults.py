@@ -473,13 +473,17 @@ def _long_to_legacy_wide(long_df: pd.DataFrame) -> pd.DataFrame:
         ]
         if col in long_df.columns
     ]
+    # Fill NaN in index columns so the pivot doesn't compute a Cartesian product
+    # of all unique values per column (which explodes when free-text fields like
+    # review_reason/notes have many unique values).
+    for col in metadata_cols:
+        long_df[col] = long_df[col].fillna("")
     wide = (
         long_df.pivot_table(
             index=metadata_cols,
             columns="Year",
             values="Value",
             aggfunc="first",
-            dropna=False,
         )
         .reset_index()
         .rename_axis(columns=None)

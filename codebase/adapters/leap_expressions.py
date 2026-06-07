@@ -16,20 +16,28 @@ import pandas as pd
 
 def to_leap_expression(series: pd.Series) -> str:
     """
-    Convert a pd.Series indexed by year into a LEAP Data() expression string.
+    Convert a pd.Series indexed by year into a LEAP expression string.
+
+    A single-point series returns a bare scalar (matching LEAP's Current Accounts
+    base-year format). Multi-point series return a Data() expression.
 
     Args:
         series: pd.Series indexed by integer year, sorted ascending.
 
     Returns:
-        String like 'Data(2022, 0.0, 2023, 1234.5, ...)'
+        Scalar string like '1234.5' for a single year, or
+        'Data(2022, 0.0, 2023, 1234.5, ...)' for multiple years.
 
     Example:
         >>> s = pd.Series({2022: 0.0, 2023: 100.0, 2024: 200.0})
         >>> to_leap_expression(s)
         'Data(2022, 0.0, 2023, 100.0, 2024, 200.0)'
+        >>> to_leap_expression(pd.Series({2022: 42.0}))
+        '42'
     """
     series = series.sort_index()
+    if len(series) == 1:
+        return f"{series.iloc[0]:g}"
     parts = []
     for year, value in series.items():
         parts.append(str(int(year)))

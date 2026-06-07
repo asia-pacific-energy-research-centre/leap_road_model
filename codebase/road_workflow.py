@@ -384,7 +384,7 @@ class RoadWorkflowConfig:
 
     # Scope
     economy: str
-    scenarios: list[str] = field(default_factory=lambda: ["Reference", "Target"])
+    scenarios: list[str] = field(default_factory=lambda: ["Target"])
 
     # Time
     base_year: int = 2022
@@ -526,7 +526,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         m1["raw_leap_df"],
         base_year=config.base_year,
     )
-    # Module 1 base-year data carries a single scenario label (usually "Reference").
+    # Module 1 base-year data carries a single scenario label (usually "Target" or "Reference" in older files).
     # The base year is scenario-agnostic — replicate rows for every requested scenario
     # so Module 2's cross-join finds matching data regardless of which scenario is run.
     if "scenario" in _merged.columns and config.scenarios:
@@ -764,6 +764,14 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         _print_progress(config, f"Module 6 complete: {len(m6['T11']):,} LEAP-ready rows.")
         for line in _module6_reconciliation_summary(m6):
             _print_progress(config, line)
+
+        base_year_warnings = _validate_t11_base_year_consistency(m6["T11"], config.base_year)
+        for w in base_year_warnings:
+            _print_progress(config, f"Base year consistency warning: {w['message']}")
+            logger.warning("t11_base_year_mismatch", **{k: v for k, v in w.items() if k != "message"})
+
+        t11_with_ca = _extract_current_accounts_base_year(m6["T11"], config.base_year)
+        m6 = {**m6, "T11": t11_with_ca}
         outputs.update(m6)
 
         if config.save_csv_outputs:
@@ -906,6 +914,60 @@ def _write_df(df: pd.DataFrame, path: Path) -> None:
     df.to_csv(path, index=False)
 
 
+def _validate_t11_base_year_consistency(t11: pd.DataFrame, base_year: int) -> list[dict]:
+    """Warn if any (branch, variable) has different base-year values across scenarios.
+
+    The base year is calibrated from observed data and should be scenario-agnostic.
+    Differences indicate a bug in the upstream modules.
+    """
+    from itertools import combinations
+
+    base = t11[t11["year"] == base_year].copy()
+    scenarios = sorted(base["scenario"].dropna().unique())
+    if len(scenarios) < 2:
+        return []
+
+    key_cols = [c for c in ["economy", "leap_branch_path", "variable"] if c in base.columns]
+    pivot = base.pivot_table(index=key_cols, columns="scenario", values="value", aggfunc="first")
+    warnings: list[dict] = []
+    for s1, s2 in combinations(scenarios, 2):
+        if s1 not in pivot.columns or s2 not in pivot.columns:
+            continue
+        diff = (pivot[s1] - pivot[s2]).abs()
+        for idx in diff[diff > 1e-9].index:
+            warnings.append({
+                "severity": "warning",
+                "type": "base_year_scenario_mismatch",
+                "key": str(idx),
+                "scenario_a": s1,
+                "scenario_b": s2,
+                "value_a": float(pivot.loc[idx, s1]),
+                "value_b": float(pivot.loc[idx, s2]),
+                "message": (
+                    f"Base year ({base_year}) values differ between '{s1}' and '{s2}' "
+                    f"for {idx}"
+                ),
+            })
+    return warnings
+
+
+def _extract_current_accounts_base_year(t11: pd.DataFrame, base_year: int) -> pd.DataFrame:
+    """Append Current Accounts rows to T11 by extracting the base-year slice.
+
+    Current Accounts in LEAP holds base-year stock/sales scalars (not a projection).
+    We derive them from the first available scenario's base-year values rather than
+    running a separate CA scenario, which keeps them consistent with the projection.
+    """
+    if "Current Accounts" in t11["scenario"].values:
+        return t11
+    first_scenario = t11["scenario"].dropna().iloc[0] if not t11.empty else None
+    if first_scenario is None:
+        return t11
+    base_rows = t11[(t11["year"] == base_year) & (t11["scenario"] == first_scenario)].copy()
+    base_rows["scenario"] = "Current Accounts"
+    return pd.concat([t11, base_rows], ignore_index=True)
+
+
 def _default_leap_reference_path() -> Path | None:
     repo_root = Path(__file__).resolve().parents[1]
     candidates = [
@@ -922,32 +984,33 @@ def _default_leap_reference_path() -> Path | None:
 
 
 def _validate_macro_inputs(
-    population: pd.DataFrame,
-    gdp: pd.DataFrame,
+    population: pd.Series,
+    gdp: pd.Series,
     esto_road_energy_pj: pd.DataFrame,
     projection_years: list[int],
 ) -> None:
-    """Fail fast if macro driver DataFrames are structurally wrong or under-cover projection years."""
-    checks = [
-        ("population", population, {"year", "value"}),
-        ("gdp", gdp, {"year", "value"}),
-        ("esto_road_energy_pj", esto_road_energy_pj, {"year", "transport_type", "energy_pj"}),
+    """Fail fast if macro driver inputs are structurally wrong or under-cover projection years."""
+    series_checks = [
+        ("population", population),
+        ("gdp", gdp),
     ]
-    for name, df, required_cols in checks:
-        actual_cols = set(df.columns)
-        missing_cols = required_cols - actual_cols
-        if missing_cols:
-            raise ValueError(
-                f"{name} is missing required columns: {sorted(missing_cols)}. "
-                f"Found columns: {sorted(actual_cols)}"
-            )
-        covered_years = set(pd.to_numeric(df["year"], errors="coerce").dropna().astype(int))
+    for name, s in series_checks:
+        covered_years = set(pd.to_numeric(s.index, errors="coerce").dropna().astype(int))
         missing_years = sorted(set(projection_years) - covered_years)
         if missing_years:
             raise ValueError(
                 f"{name} has no data for {len(missing_years)} projection year(s): "
                 f"{missing_years[:5]}{'...' if len(missing_years) > 5 else ''}"
             )
+
+    required_cols = {"year", "transport_type", "energy_pj"}
+    actual_cols = set(esto_road_energy_pj.columns)
+    missing_cols = required_cols - actual_cols
+    if missing_cols:
+        raise ValueError(
+            f"esto_road_energy_pj is missing required columns: {sorted(missing_cols)}. "
+            f"Found columns: {sorted(actual_cols)}"
+        )
 
 
 def _print_progress(config: RoadWorkflowConfig, message: str) -> None:
@@ -1116,7 +1179,7 @@ def _autodiscover_future_sales_shares(
     repo_root: Path,
     economy: str,
     base_year: int,
-    scenario: str = "Reference",
+    scenario: str = "Target",
 ) -> tuple[pd.DataFrame | None, Path | None]:
     """Try to find and load a future-sales-share LEAP table for one economy."""
     if os.getenv("ROAD_MODEL_DISABLE_AUTO_FUTURE_SALES_SHARES", "").strip() in {"1", "true", "True"}:
@@ -1161,7 +1224,7 @@ def _print_dashboard_link(outputs: dict[str, Any]) -> None:
 
 def run_for_economy(
     economy: str,
-    scenario: str = "Reference",
+    scenario: str = "Target",
     base_year: int = 2022,
     final_year: int = 2060,
     enable_visualisations: bool = True,
@@ -1179,7 +1242,7 @@ def run_for_economy(
 
     Args:
         economy:               Canonical economy code, e.g. '20_USA'.
-        scenario:              Macro scenario label (default 'Reference').
+        scenario:              Macro scenario label (default 'Target').
         base_year:             Base year (default 2022).
         final_year:            Final projection year (default 2060).
         enable_visualisations: Write PNG/HTML diagnostics (default True).
@@ -1276,7 +1339,7 @@ Examples:
         """,
     )
     parser.add_argument("economy", help="Economy code, e.g. 20_USA")
-    parser.add_argument("--scenario", default="Reference", help="Macro scenario (default: Reference)")
+    parser.add_argument("--scenario", default="Target", help="Macro scenario (default: Target)")
     parser.add_argument("--base-year", type=int, default=2022)
     parser.add_argument("--final-year", type=int, default=2060)
     parser.set_defaults(enable_visualisations=True)

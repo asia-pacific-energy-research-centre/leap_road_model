@@ -307,7 +307,11 @@ def _module1_source_category(row: pd.Series) -> str:
 
     if "transport_leap_export" in source_type or "transport_leap_export" in source_name:
         return "Researcher-provided"
-    if source_type == "default_input_workbook" or input_source in {"default", "default_filled"}:
+    if input_source in {"researcher", "researcher_import", "researcher_provided"}:
+        return "Researcher-provided"
+    # "provided" is the marker emitted by the static bundle for all values — treat as default.
+    # "default" and "default_filled" are explicit default markers.
+    if source_type == "default_input_workbook" or input_source in {"default", "default_filled", "provided"}:
         return "Default value"
     return "Other model input"
 
@@ -596,7 +600,7 @@ def _module1_summary_html(
     ]
     if n_comments > 0:
         items.append(
-            f'<li><strong>Researcher comments:</strong> {n_comments} row{"s" if n_comments != 1 else ""} — see table below</li>'
+            f'<li><strong>Notes:</strong> {n_comments} row{"s" if n_comments != 1 else ""} with notes — see input data table below</li>'
         )
 
     return (
@@ -607,43 +611,45 @@ def _module1_summary_html(
     )
 
 
-def _module1_comments_table(
+def _module1_input_data_table(
     merged_inputs: pd.DataFrame,
     raw_df: pd.DataFrame | None = None,
 ) -> Any | None:
-    """Return a table of rows that carry a researcher comment (review_reason).
+    """Return a table of all input rows sent to Module 2.
 
-    Uses raw_df when available so that comments on survival/vintage profile rows
-    (which are filtered out of merged_inputs) are also captured. Profile age-series
-    rows that share the same comment are collapsed to a single representative line.
+    Uses raw_df when available. Profile age-series rows that share the same
+    note are collapsed to a single representative line.
     """
-    # Prefer raw_df: it covers all variable types including survival/vintage rows.
     source = raw_df if raw_df is not None else merged_inputs
-    if "review_reason" not in source.columns:
+    if source is None or source.empty:
         return None
 
     df = source.copy()
-    df["review_reason"] = df["review_reason"].fillna("").astype(str).str.strip()
-    commented = df[df["review_reason"] != ""].copy()
-    if commented.empty:
-        return None
+    if "review_reason" in df.columns:
+        df["review_reason"] = df["review_reason"].fillna("").astype(str).str.strip()
+    else:
+        df["review_reason"] = ""
 
     # Collapse age-series profile rows before displaying.
-    commented = _collapse_age_series(commented)
+    df = _collapse_age_series(df)
 
     if raw_df is not None:
-        # Raw LEAP format: use Branch Path, Variable, year value columns, comment.
+        # Raw LEAP format: Branch Path, Variable, unit, scale, year value, note.
         year_cols = sorted(
-            [c for c in commented.columns if isinstance(c, str) and c.strip().isdigit()],
+            [c for c in df.columns if isinstance(c, str) and c.strip().isdigit()],
             key=int,
         )
         value_col = year_cols[0] if year_cols else None
         col_map: dict[str, str] = {"Branch Path": "Branch", "Variable": "Measure"}
         if value_col:
             col_map[value_col] = f"Value ({value_col})"
-        col_map["review_reason"] = "Researcher comment"
+        if "unit" in df.columns:
+            col_map["unit"] = "Unit"
+        if "scale" in df.columns:
+            col_map["scale"] = "Scale"
+        col_map["review_reason"] = "Note"
         col_widths: dict[str, float] = {
-            "Branch Path": 2.2, "Variable": 0.9, "review_reason": 2.5,
+            "Branch Path": 2.2, "Variable": 0.9, "unit": 0.6, "scale": 0.5, "review_reason": 2.5,
         }
         if value_col:
             col_widths[value_col] = 0.7
@@ -656,18 +662,20 @@ def _module1_comments_table(
             "variable": "Measure",
             "value": "Value",
             "unit": "Unit",
-            "review_reason": "Researcher comment",
+            "scale": "Scale",
+            "review_reason": "Note",
         }
         col_widths = {
             "transport_type": 0.8, "vehicle_type": 1.0, "drive_type": 0.6,
-            "fuel": 0.9, "variable": 0.8, "value": 0.6, "unit": 0.7,
+            "fuel": 0.9, "variable": 0.8, "value": 0.6, "unit": 0.6, "scale": 0.5,
             "review_reason": 2.5,
         }
 
-    display_cols = [c for c in col_map if c in commented.columns]
-    shown = commented[display_cols].copy()
+    display_cols = [c for c in col_map if c in df.columns]
+    shown = df[display_cols].copy()
+    non_text = {"Branch Path", "Variable", "variable", "review_reason", "unit", "scale"}
     for col in display_cols:
-        if col not in {"Branch Path", "Variable", "variable", "review_reason", "unit"}:
+        if col not in non_text:
             shown[col] = pd.to_numeric(shown[col], errors="coerce").round(3).astype(str).replace("nan", "")
     shown = shown.fillna("").astype(str)
 
@@ -679,7 +687,7 @@ def _module1_comments_table(
         ),
         columnwidth=[col_widths.get(c, 1.0) for c in display_cols],
     )])
-    fig.update_layout(**_layout("Module 1 — Researcher comments"))
+    fig.update_layout(**_layout("Module 1 — Input data table"))
     return fig
 
 
@@ -722,15 +730,14 @@ def module1_figures(
                 "These were dropped before processing and are not included in any model calculations.",
             ))
 
-    # Comments table — only shown when at least one row has a review_reason.
-    # raw_df is preferred so comments on survival/vintage rows are captured too.
-    comments_table = _module1_comments_table(merged_inputs, raw_df=raw_df)
-    if comments_table is not None:
+    # Input data table — all rows sent to Module 2, with unit, scale and any notes.
+    input_data_table = _module1_input_data_table(merged_inputs, raw_df=raw_df)
+    if input_data_table is not None:
         figs.append((
-            "Researcher comments",
-            comments_table,
+            "Input data table",
+            input_data_table,
             True,
-            "Rows where the researcher left a comment. Shows the branch, measure, value and the comment text.",
+            "All data inputs sent to the model. Shows the branch, measure, value, unit, scale and any notes.",
         ))
 
     return figs
@@ -991,6 +998,44 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
             )
             figs.append(("Freight elasticity by vehicle type", fig))
 
+    if {"year", "transport_type", "vehicle_type", "target_stock", "gdp_elasticity_used"}.issubset(t5.columns):
+        freight_sub = t5[t5["transport_type"] == "freight"].copy()
+        if not freight_sub.empty:
+            base_year = int(freight_sub["year"].min())
+            base_stocks = (
+                freight_sub[freight_sub["year"] == base_year]
+                .groupby("vehicle_type")["target_stock"].sum()
+            )
+            el_map = (
+                freight_sub[["vehicle_type", "gdp_elasticity_used"]]
+                .dropna(subset=["gdp_elasticity_used"])
+                .drop_duplicates("vehicle_type")
+                .set_index("vehicle_type")["gdp_elasticity_used"]
+            )
+            fig = go.Figure()
+            for i, (vt, grp) in enumerate(freight_sub.groupby("vehicle_type")):
+                series = grp.groupby("year")["target_stock"].sum().sort_index()
+                base = base_stocks.get(vt)
+                indexed = (series / base * 100).tolist() if (base is not None and base > 0) else series.tolist()
+                el_val = el_map.get(vt)
+                el_str = f" (ε={el_val:.2f})" if el_val is not None and not pd.isna(el_val) else ""
+                fig.add_trace(go.Scatter(
+                    x=series.index.tolist(), y=indexed,
+                    mode="lines+markers",
+                    name=f"{vt}{el_str}",
+                    line=dict(color=_vehicle_type_colour(str(vt), i)),
+                ))
+            fig.update_layout(
+                **_layout("Module 3 — Freight stock growth index"),
+                yaxis_title=f"Stock index ({base_year} = 100)",
+                xaxis_title="Year",
+            )
+            figs.append((
+                "Freight stock growth index",
+                fig,
+                f"Freight stock indexed to {base_year} = 100. Elasticity (ε) in the legend shows GDP sensitivity — higher ε means faster stock growth per unit of GDP growth.",
+            ))
+
     diag_cols = {
         "vehicle_type",
         "gdp_elasticity_used",
@@ -1033,6 +1078,11 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                 "Raw and final freight GDP elasticities. Final values include clamping or default/override logic.",
             ))
 
+            _el_num = pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce")
+            _gdp_gr = pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce")
+            _implied_growth = (_el_num * _gdp_gr * 100).round(2)
+            _implied_growth_str = _implied_growth.where(_implied_growth.notna(), other=pd.NA).astype(str).replace("<NA>", "").replace("nan", "").tolist()
+
             table = go.Figure(data=[go.Table(
                 header=dict(
                     values=[
@@ -1040,8 +1090,9 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                         "Final elasticity",
                         "Raw elasticity",
                         "Clamped",
-                        "Energy growth",
-                        "GDP growth",
+                        "Energy growth %/yr",
+                        "GDP growth %/yr",
+                        "Implied freight growth %/yr",
                         "Source",
                         "Note",
                     ],
@@ -1056,6 +1107,7 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                         diag["freight_elasticity_clamped"].fillna(False).astype(str).tolist(),
                         (pd.to_numeric(diag["freight_energy_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
                         (pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
+                        _implied_growth_str,
                         diag["freight_elasticity_data_source"].fillna("").astype(str).tolist(),
                         diag["freight_elasticity_note"].fillna("").astype(str).tolist(),
                     ],
@@ -1069,7 +1121,8 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                 "Freight elasticity diagnostic table",
                 table,
                 True,
-                "Energy and GDP growth rates are shown as annual percentages over the configured lookback window.",
+                "Energy and GDP growth rates are annual percentages over the configured lookback window. "
+                "Implied freight growth = elasticity × historical GDP growth rate — the freight growth rate you'd expect if GDP continues at the same pace.",
             ))
 
     return figs
