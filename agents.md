@@ -111,17 +111,15 @@ The interface runner normalizes compact codes in
 
 ### Module 1 long-row columns
 
-Core canonical hand-off columns:
+Canonical hand-off columns:
 
 ```text
-Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment
+Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment, Input Status
 ```
 
-Browser/model-run exports add provenance/status columns such as `Input Status`.
-The `leap_road_model` adapter accepts both shapes: if `Input Status` is absent,
-it treats the row as `provided`; if present, it maps it to `input_source`.
-Preserve these optional columns unless there is a specific reason to drop them;
-the dashboard uses that metadata to classify values.
+`Input Status` is the default/researcher provenance marker. The
+`leap_road_model` adapter still accepts older 9-column files without this field;
+when it is absent, rows are treated as `provided` for backward compatibility.
 
 ### Generated versus source files
 
@@ -288,13 +286,12 @@ or supplemental-source merging.
 |--------|------------|---------|
 | Source-specific CSV/XLSX | `back-end/data/road_model/` | Raw documented inputs. Shape can vary by source. |
 | Internal wide schema | `MODULE1_INPUT_COLUMNS` in `road_module1_defaults.py` | Convenient Python processing shape with one column per model year. |
-| Core canonical long CSV | `MODULE1_LONG_COLUMNS` | Stable 9-column boundary format for generated static defaults. |
-| Long CSV with provenance | `ROAD_MODULE1_LONG_COLUMNS` | Browser export/model-run format; extends the core long CSV with `Input Status`. |
+| Canonical long CSV | `MODULE1_LONG_COLUMNS` / `ROAD_MODULE1_LONG_COLUMNS` | Stable boundary format for generated static defaults, browser download/upload, and model handoff. |
 | UI-wide rows | `normalizeRoadModule1RowsForUi()` in `app.js` | Browser-only editing shape. Do not persist as the formal package. |
 
-When confused, prefer the core long CSV plus optional provenance columns as the
-explanation and contract. The internal wide schema exists because it is
-convenient for Python and UI editing, not because it is the conceptual model.
+When confused, prefer the canonical long CSV as the explanation and contract.
+The internal wide schema exists because it is convenient for Python and UI
+editing, not because it is the conceptual model.
 
 ### Validation gates
 
@@ -324,10 +321,9 @@ Changes to loading/processing should preserve these gates:
   keep the long CSV unchanged unless the actual handoff contract changed.
   Convert to/from the UI-wide view model at the edge.
 - Changing the handoff contract:
-  decide whether the field is part of the core schema or an optional provenance
-  extension. Then update Python `MODULE1_LONG_COLUMNS`, JS
-  `ROAD_MODULE1_LONG_COLUMNS`, upload validation, and the `leap_road_model`
-  adapter as needed, followed by a direct model check.
+  update Python `MODULE1_LONG_COLUMNS`, JS `ROAD_MODULE1_LONG_COLUMNS`, upload
+  validation, and the `leap_road_model` adapter as needed, followed by a direct
+  model check.
 
 ### Anti-patterns
 
