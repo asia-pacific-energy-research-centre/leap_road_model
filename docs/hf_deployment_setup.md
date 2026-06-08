@@ -1,14 +1,24 @@
 # HF Space Deployment Setup
 
+## Contents
+
+1. [How it works](#how-it-works)
+2. [Repo roles](#repo-roles)
+3. [GitHub Actions](#github-actions)
+4. [HF push constraints and how we handle them](#hf-push-constraints-and-how-we-handle-them)
+5. After every deployment: hard-refresh your browser
+6. [Keys](#keys-stored-in-gitignored-keystxt)
+
 ## How it works
 
 Two GitHub repos feed one Hugging Face Space (`finbarmaunsell/leap_road_model`):
 
 ```
 push to leap_road_model (GitHub)
-    → Action updates LEAP_ROAD_MODEL_VERSION SHA in road_model_inputs_interface Dockerfile
-        → Action pushes road_model_inputs_interface to HF Space
-            → HF rebuilds the container with the new leap_road_model code
+    → Action updates LEAP_ROAD_MODEL_REF to the new commit SHA in road_model_inputs_interface Dockerfile
+        → Action commits and pushes road_model_inputs_interface to GitHub
+            → sync_to_hf.yml pushes road_model_inputs_interface to HF Space
+                → HF rebuilds the container, cloning leap_road_model at that exact SHA
 ```
 
 ## Repo roles
@@ -23,7 +33,7 @@ push to leap_road_model (GitHub)
 
 ### `leap_road_model/.github/workflows/update_interface_sha.yml`
 
-Triggers on push to `main`. Updates `LEAP_ROAD_MODEL_VERSION` in `road_model_inputs_interface/Dockerfile` to the new commit SHA, then commits and pushes to that repo.
+Triggers on push to `main`. Updates `LEAP_ROAD_MODEL_REF` in `road_model_inputs_interface/Dockerfile` to the new commit SHA (full SHA, not short), then commits and pushes to that repo. The Dockerfile's clone step uses this value to check out that exact commit, so the HF build is pinned to the same SHA that triggered the deploy.
 
 **Secret required:** `INTERFACE_REPO_TOKEN` — a GitHub fine-grained PAT with Contents Read & Write on `H3yfinn/road_model_inputs_interface`. Set in `asia-pacific-energy-research-centre/leap_road_model` → Settings → Secrets → Actions.
 

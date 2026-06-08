@@ -1,0 +1,33 @@
+# Runtime workflow defaults for road_workflow.py.
+#
+# These switches control how the workflow runs. They do not provide model
+# assumption fallbacks; Module 1 values still come from generated Module 1
+# packages.
+
+scenario: Target
+base_year: 2022
+final_year: 2060
+
+module1_defaults_dir: input_data/module1_defaults
+module1_defaults_version: v2026_06_05_road_module1_sources
+
+enable_visualisations: true
+save_csv_outputs: true
+show_progress: true
+write_leap_row_diagnostics: false
+auto_load_future_sales_shares: true
+
+run_modules:
+  m2: true
+  m3: true
+  m4: true
+  m5: true
+  m6: true
+  m7: true
+
+module6:
+  match_tolerance: 0.01
+  adjust_stock_targets_after_reconciliation: true
+
+leap_import:
+  export_values_in_raw_units: false

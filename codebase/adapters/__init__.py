@@ -33,6 +33,7 @@ from adapters.road_module1_defaults import (
     get_scalar_bounds,
     get_passenger_saturation_level,
     get_passenger_saturation_reached,
+    get_passenger_stock_growth_rate_adjustment,
     get_reconciliation_weights,
     get_vehicle_equivalent_weights,
     get_vehicle_equivalent_weight_bounds,

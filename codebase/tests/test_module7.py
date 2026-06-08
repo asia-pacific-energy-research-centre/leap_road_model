@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from modules.module7_mirror import (
+    _validate_assumptions_for_nonzero_sales,
     build_base_technology_assumptions,
     calculate_mirror_fuel_outputs,
     compare_with_leap,
@@ -61,11 +62,13 @@ def _reconciliation_scalars() -> pd.DataFrame:
         {
             **base,
             "fuel": "Motor gasoline",
+            "final_branch_fuel_pj": 0.08,
             "leap_branch_path": "Demand\\Passenger road\\LPVs\\ICE\\Motor gasoline",
         },
         {
             **base,
             "fuel": "Biogasoline",
+            "final_branch_fuel_pj": 0.02,
             "leap_branch_path": "Demand\\Passenger road\\LPVs\\ICE\\Biogasoline",
         },
     ])
@@ -101,6 +104,16 @@ def test_base_assumptions_deduplicate_fuel_rows_to_technology_path():
     assert len(base) == 1
     assert base["leap_branch_path"].iloc[0] == "Demand\\Passenger road\\LPVs\\ICE"
     assert base["base_mileage_km_per_year"].iloc[0] == 10_000.0
+
+
+def test_base_assumptions_sum_fuel_implied_vehicles():
+    scalars = _reconciliation_scalars()
+    scalars.loc[scalars["fuel"] == "Biogasoline", "adjusted_stock"] = 1.0
+
+    base = build_base_technology_assumptions(scalars)
+
+    assert base["base_stock"].iloc[0] == 1000.0
+    assert pytest.approx(base["base_energy_pj"].iloc[0], rel=1e-9) == 0.1
 
 
 def test_run_module7_calculates_stock_activity_and_energy():
@@ -153,6 +166,7 @@ def test_run_module7_splits_vehicle_level_turnover_by_sales_share():
             "adjusted_stock": 900.0,
             "adjusted_mileage_km_per_year": 10_000.0,
             "adjusted_efficiency_km_per_gj": 100.0,
+            "final_branch_fuel_pj": 0.09,
             "leap_branch_path": "Demand\\Passenger road\\LPVs\\ICE\\Motor gasoline",
         },
         {
@@ -165,6 +179,7 @@ def test_run_module7_splits_vehicle_level_turnover_by_sales_share():
             "adjusted_stock": 100.0,
             "adjusted_mileage_km_per_year": 10_000.0,
             "adjusted_efficiency_km_per_gj": 400.0,
+            "final_branch_fuel_pj": 0.0025,
             "leap_branch_path": "Demand\\Passenger road\\LPVs\\BEV\\Electricity",
         },
     ])
@@ -204,10 +219,42 @@ def test_run_module7_splits_vehicle_level_turnover_by_sales_share():
     )
 
     stocks = outputs["T13"].set_index(["year", "drive_type"])["mirror_stock"]
-    assert stocks[(2022, "ICE")] == 900.0
-    assert stocks[(2022, "BEV")] == 100.0
+    assert pytest.approx(stocks[(2022, "ICE")], rel=1e-9) == 900.0
+    assert pytest.approx(stocks[(2022, "BEV")], rel=1e-9) == 100.0
     assert pytest.approx(stocks[(2023, "ICE")], rel=1e-9) == 860.0
     assert pytest.approx(stocks[(2023, "BEV")], rel=1e-9) == 240.0
+
+
+def test_missing_assumption_validation_reports_deduplicated_branches():
+    merged = pd.DataFrame([
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "vehicle_type": "LPVs",
+            "drive_type": "ICE",
+            "size": "small",
+            "new_sales": 10.0,
+            "base_mileage_km_per_year": None,
+            "base_efficiency_km_per_gj": None,
+        },
+        {
+            "economy": "12_NZ",
+            "scenario": "Reference",
+            "vehicle_type": "LPVs",
+            "drive_type": "ICE",
+            "size": "small",
+            "new_sales": 12.0,
+            "base_mileage_km_per_year": None,
+            "base_efficiency_km_per_gj": None,
+        },
+    ])
+
+    with pytest.raises(ValueError) as excinfo:
+        _validate_assumptions_for_nonzero_sales(merged)
+
+    message = str(excinfo.value)
+    assert "1 branch(es)" in message
+    assert "mileage and efficiency" in message
 
 
 def test_mileage_and_efficiency_adjustments_are_applied():
@@ -323,3 +370,78 @@ def test_run_module7_writes_png_charts(tmp_path):
         "module7_mirror_energy_by_transport_type.png",
         "module7_mirror_fuel_energy_mix.png",
     })
+
+
+def test_validate_assumptions_raises_when_sales_set_but_mileage_missing():
+    merged = pd.DataFrame([{
+        "economy": "01_AUS",
+        "scenario": "Target",
+        "vehicle_type": "Trucks",
+        "drive_type": "ICE",
+        "size": "heavy",
+        "new_sales": 50.0,
+        "base_mileage_km_per_year": float("nan"),
+        "base_efficiency_km_per_gj": 80.0,
+    }])
+    with pytest.raises(ValueError, match="Sales shares are set > 0"):
+        _validate_assumptions_for_nonzero_sales(merged)
+
+
+def test_validate_assumptions_raises_when_sales_set_but_efficiency_missing():
+    merged = pd.DataFrame([{
+        "economy": "01_AUS",
+        "scenario": "Target",
+        "vehicle_type": "Trucks",
+        "drive_type": "ICE",
+        "size": "heavy",
+        "new_sales": 50.0,
+        "base_mileage_km_per_year": 50_000.0,
+        "base_efficiency_km_per_gj": 0.0,
+    }])
+    with pytest.raises(ValueError, match="Sales shares are set > 0"):
+        _validate_assumptions_for_nonzero_sales(merged)
+
+
+def test_validate_assumptions_does_not_raise_when_sales_zero():
+    merged = pd.DataFrame([{
+        "economy": "01_AUS",
+        "scenario": "Target",
+        "vehicle_type": "Trucks",
+        "drive_type": "ICE",
+        "size": "heavy",
+        "new_sales": 0.0,
+        "base_mileage_km_per_year": float("nan"),
+        "base_efficiency_km_per_gj": float("nan"),
+    }])
+    _validate_assumptions_for_nonzero_sales(merged)  # should not raise
+
+
+def test_validate_assumptions_error_message_names_affected_branches():
+    merged = pd.DataFrame([
+        {
+            "economy": "01_AUS",
+            "scenario": "Target",
+            "vehicle_type": "Trucks",
+            "drive_type": "ICE heavy",
+            "size": "heavy",
+            "new_sales": 100.0,
+            "base_mileage_km_per_year": float("nan"),
+            "base_efficiency_km_per_gj": float("nan"),
+        },
+        {
+            "economy": "01_AUS",
+            "scenario": "Target",
+            "vehicle_type": "LPVs",
+            "drive_type": "FCEV",
+            "size": "medium",
+            "new_sales": 20.0,
+            "base_mileage_km_per_year": float("nan"),
+            "base_efficiency_km_per_gj": float("nan"),
+        },
+    ])
+    with pytest.raises(ValueError) as exc_info:
+        _validate_assumptions_for_nonzero_sales(merged)
+    msg = str(exc_info.value)
+    assert "Trucks" in msg
+    assert "LPVs" in msg
+    assert "researcher input parameters" in msg

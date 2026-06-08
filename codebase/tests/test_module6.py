@@ -1,11 +1,11 @@
-"""
+﻿"""
 Tests for Module 6 — reconciliation and device shares.
 
 Covers:
   1. Device share calculation (BEV single-fuel, ICE multi-fuel, PHEV)
   2. Stock accounting identity after reconciliation
   3. calculate_remaining_esto PHEV subtraction
-  4. allocate_esto_fuel_to_branches stock-share allocation
+  4. allocate_esto_fuel_to_branches priority spillover and stock-share allocation
 """
 
 from __future__ import annotations
@@ -19,13 +19,15 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from modules.module6_leap_handoff import (
+from modules.module6_reconciliation_and_leap_handoff import (
     apply_scalars,
+    apply_scalars_with_cumulative_bounds,
     build_phev_utilisation_diagnostics,
     build_leap_ready_table,
     calculate_device_shares,
     calculate_initial_branch_energy,
     calculate_remaining_esto,
+    reconcile_electricity,
     reconcile_stock_mileage_efficiency,
     allocate_esto_fuel_to_branches,
     distribute_phev_liquid_by_esto_mix,
@@ -118,6 +120,33 @@ class TestApplyScalars:
         assert pytest.approx(adj_s, rel=1e-6) == 3000.0
         assert within is False
 
+
+class TestReconcileElectricity:
+    def test_phev_electricity_above_esto_iterates_stock_to_target(self):
+        t4 = _make_t4(
+            _branch("LPVs", "BEV", "Electricity", stock=100, mileage=10000, efficiency=250),
+            _branch("LPVs", "PHEV", "Electricity", stock=500, mileage=10000, efficiency=250),
+            _branch("LPVs", "PHEV", "Motor gasoline", stock=500, mileage=10000, efficiency=100),
+        )
+        branch_energy = calculate_initial_branch_energy(t4, phev_utilisation_rate=0.6)
+
+        adjusted, phev_liquid = reconcile_electricity(
+            branch_energy=branch_energy,
+            electricity_esto_pj=0.004,
+            phev_utilisation_rate=0.6,
+            weights={"stock": 0.5, "mileage": 0.25, "efficiency": 0.25},
+            scalar_bounds={
+                "stock": (0.0, np.inf),
+                "mileage": (0.85, 1.15),
+                "efficiency": (0.90, 1.10),
+            },
+        )
+
+        electric_total = adjusted.loc[adjusted["fuel"] == "Electricity", "initial_energy_pj"].sum()
+        assert pytest.approx(electric_total, rel=1e-6) == 0.004
+        assert not phev_liquid.empty
+        assert phev_liquid["phev_liquid_pj"].sum() < 0.02
+
     def test_energy_identity_holds_approximately(self):
         """After applying scalars, the energy should approximately equal ECF × original."""
         stock, mileage, eff = 500.0, 12000.0, 150.0
@@ -150,6 +179,29 @@ class TestApplyScalars:
         assert pytest.approx(es, rel=1e-6) == 0.90
         assert within is False
         assert adj_s > 1000.0
+
+    def test_cumulative_step_removes_mileage_efficiency_cancellation(self):
+        """Residual crossover should not leave mileage and efficiency moving together."""
+        ss, ms, es, adj_s, adj_m, adj_e, within = apply_scalars_with_cumulative_bounds(
+            original_stock=1000.0,
+            original_mileage=15000.0,
+            original_efficiency=200.0,
+            ecf=0.60,
+            weights={"stock": 0.5, "mileage": 0.25, "efficiency": 0.25},
+            scalar_bounds={
+                "stock": (0.0, 10.0),
+                "mileage": (0.85, 1.15),
+                "efficiency": (0.90, 1.10),
+            },
+            current_stock_scalar=1.0,
+            current_mileage_scalar=1.15,
+            current_efficiency_scalar=0.90,
+        )
+
+        assert ms / es == pytest.approx((1.15 * (0.60 ** 0.25)) / (0.90 * (0.60 ** -0.25)))
+        assert (ms - 1.0) * (es - 1.0) <= 0.0
+        assert adj_m == pytest.approx(15000.0 * ms)
+        assert adj_e == pytest.approx(200.0 * es)
 
     def test_ecf_zero_flags_out_of_bounds(self):
         """Zero allocated fuel should be treated as an out-of-bounds reconciliation case."""
@@ -446,6 +498,7 @@ class TestStockAccountingIdentity:
         row = t9.iloc[0]
         assert 0.85 <= row["mileage_scalar"] <= 1.15
         assert 0.90 <= row["efficiency_scalar"] <= 1.10
+        assert (row["mileage_scalar"] - 1.0) * (row["efficiency_scalar"] - 1.0) <= 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -464,13 +517,12 @@ class TestCalculateRemainingEsto:
         esto = _make_esto({"Motor gasoline": 5.0, "Gas and diesel oil": 3.0})
         phev = pd.DataFrame([
             {"vehicle_type": "LPVs", "drive_type": "PHEV", "fuel": "Motor gasoline", "phev_liquid_pj": 0.8},
-            {"vehicle_type": "Buses", "drive_type": "PHEV", "fuel": "Gas and diesel oil", "phev_liquid_pj": 0.3},
         ])
         result = calculate_remaining_esto(esto, phev)
         gas = result[result["fuel"] == "Motor gasoline"].iloc[0]
         diesel = result[result["fuel"] == "Gas and diesel oil"].iloc[0]
         assert pytest.approx(gas["remaining_esto_fuel_pj"]) == 4.2
-        assert pytest.approx(diesel["remaining_esto_fuel_pj"]) == 2.7
+        assert pytest.approx(diesel["remaining_esto_fuel_pj"]) == 3.0
 
     def test_remaining_never_negative(self):
         esto = _make_esto({"Motor gasoline": 1.0})
@@ -482,12 +534,13 @@ class TestCalculateRemainingEsto:
 
 
 class TestPHEVLiquidDistribution:
-    def test_ignores_lpg_and_cng_when_splitting_phev_liquid(self):
+    def test_phev_liquid_uses_gasoline_family_only(self):
         phev = pd.DataFrame([
             {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Motor gasoline", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Gas and diesel oil", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Biodiesel", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Biogasoline", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Efuel", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "LPG", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "PHEV", "size": "small", "fuel": "Natural gas", "phev_liquid_pj": 1.0},
         ])
@@ -496,6 +549,7 @@ class TestPHEVLiquidDistribution:
             "Gas and diesel oil": 60.0,
             "Biodiesel": 4.0,
             "Biogasoline": 6.0,
+            "Efuel": 4.0,
             "LPG": 1000.0,
             "Natural gas": 1000.0,
         })
@@ -503,14 +557,38 @@ class TestPHEVLiquidDistribution:
         result = distribute_phev_liquid_by_esto_mix(phev, esto)
         by_fuel = result.set_index("fuel")["phev_liquid_pj"]
 
-        total_preferred = by_fuel[["Motor gasoline", "Gas and diesel oil", "Biodiesel", "Biogasoline"]].sum()
-        assert pytest.approx(total_preferred, rel=1e-6) == 1.0
+        assert pytest.approx(by_fuel["Motor gasoline"], rel=1e-4) == 40.0 / 50.0
+        assert pytest.approx(by_fuel["Biogasoline"], rel=1e-4) == 6.0 / 50.0
+        assert pytest.approx(by_fuel["Efuel"], rel=1e-4) == 4.0 / 50.0
+        assert by_fuel["Gas and diesel oil"] == 0.0
+        assert by_fuel["Biodiesel"] == 0.0
         assert by_fuel["LPG"] == 0.0
         assert by_fuel["Natural gas"] == 0.0
-        assert pytest.approx(by_fuel["Motor gasoline"], rel=1e-4) == 40.0 / 110.0
-        assert pytest.approx(by_fuel["Gas and diesel oil"], rel=1e-4) == 60.0 / 110.0
-        assert pytest.approx(by_fuel["Biodiesel"], rel=1e-4) == 4.0 / 110.0
-        assert pytest.approx(by_fuel["Biogasoline"], rel=1e-4) == 6.0 / 110.0
+
+    def test_erev_uses_same_gasoline_family_rule_as_phev(self):
+        erev = pd.DataFrame([
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "EREV", "size": "small", "fuel": "Motor gasoline", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "EREV", "size": "small", "fuel": "Gas and diesel oil", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "EREV", "size": "small", "fuel": "Biodiesel", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "EREV", "size": "small", "fuel": "Biogasoline", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Reference", "transport_type": "passenger", "vehicle_type": "LPVs", "drive_type": "EREV", "size": "small", "fuel": "Efuel", "phev_liquid_pj": 1.0},
+        ])
+        esto = _make_esto({
+            "Motor gasoline": 40.0,
+            "Gas and diesel oil": 60.0,
+            "Biodiesel": 4.0,
+            "Biogasoline": 6.0,
+            "Efuel": 4.0,
+        })
+
+        result = distribute_phev_liquid_by_esto_mix(erev, esto)
+        by_fuel = result.set_index("fuel")["phev_liquid_pj"]
+
+        assert pytest.approx(by_fuel["Motor gasoline"], rel=1e-4) == 40.0 / 50.0
+        assert pytest.approx(by_fuel["Biogasoline"], rel=1e-4) == 6.0 / 50.0
+        assert pytest.approx(by_fuel["Efuel"], rel=1e-4) == 4.0 / 50.0
+        assert by_fuel["Gas and diesel oil"] == 0.0
+        assert by_fuel["Biodiesel"] == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +625,89 @@ class TestAllocateFuelToBranches:
         assert pytest.approx(shares["LPVs"], rel=1e-4) == 0.60
         assert pytest.approx(shares["Buses"], rel=1e-4) == 0.40
 
+    def test_diesel_allocates_to_trucks_before_lcvs_and_passenger(self):
+        t4 = _make_t4(
+            _branch(
+                "Trucks", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\ICE\\Gas and diesel oil",
+            ),
+            _branch(
+                "LCVs", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\ICE\\Gas and diesel oil",
+            ),
+            _branch("LPVs", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100),
+        )
+        branch_energy = calculate_initial_branch_energy(t4)
+        remaining = calculate_remaining_esto(
+            pd.DataFrame([{"fuel": "Gas and diesel oil", "energy_pj": 1.5}]), pd.DataFrame()
+        )
+
+        t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
+
+        allocated = t8.set_index("vehicle_type")["allocated_branch_fuel_pj"]
+        assert pytest.approx(allocated["Trucks"], rel=1e-4) == 1.0
+        assert pytest.approx(allocated["LCVs"], rel=1e-4) == 0.5
+        assert pytest.approx(allocated["LPVs"], abs=1e-9) == 0.0
+        assert set(t8["allocation_rule"]) == {"priority_spillover_stock_share"}
+
+    def test_diesel_uses_lcv_liquid_capacity_before_passenger_spillover(self):
+        t4 = _make_t4(
+            _branch(
+                "Trucks", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\ICE\\Gas and diesel oil",
+            ),
+            _branch(
+                "LCVs", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=500,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\ICE\\Gas and diesel oil",
+            ),
+            _branch(
+                "LCVs", "ICE", "Motor gasoline", stock=10000, mileage=10000, efficiency=125,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\ICE\\Motor gasoline",
+            ),
+            _branch("LPVs", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100),
+        )
+        branch_energy = calculate_initial_branch_energy(t4)
+        remaining = calculate_remaining_esto(
+            pd.DataFrame([
+                {"fuel": "Gas and diesel oil", "energy_pj": 1.8},
+                {"fuel": "Motor gasoline", "energy_pj": 0.5},
+            ]),
+            pd.DataFrame(),
+        )
+
+        t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
+
+        diesel = t8[t8["fuel"] == "Gas and diesel oil"].set_index("vehicle_type")["allocated_branch_fuel_pj"]
+        gasoline = t8[t8["fuel"] == "Motor gasoline"].set_index("vehicle_type")["allocated_branch_fuel_pj"]
+        assert pytest.approx(diesel["Trucks"], rel=1e-4) == 1.0
+        assert pytest.approx(diesel["LCVs"], rel=1e-4) == 0.8
+        assert pytest.approx(diesel["LPVs"], abs=1e-9) == 0.0
+        assert pytest.approx(gasoline["LCVs"], rel=1e-4) == 0.5
+
+    def test_gasoline_allocates_to_passenger_before_lcvs_and_trucks(self):
+        t4 = _make_t4(
+            _branch("LPVs", "ICE", "Motor gasoline", stock=10000, mileage=10000, efficiency=100),
+            _branch(
+                "LCVs", "ICE", "Motor gasoline", stock=10000, mileage=10000, efficiency=100,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\ICE\\Motor gasoline",
+            ),
+            _branch(
+                "Trucks", "ICE", "Motor gasoline", stock=10000, mileage=10000, efficiency=100,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\ICE\\Motor gasoline",
+            ),
+        )
+        branch_energy = calculate_initial_branch_energy(t4)
+        remaining = calculate_remaining_esto(
+            pd.DataFrame([{"fuel": "Motor gasoline", "energy_pj": 1.5}]), pd.DataFrame()
+        )
+
+        t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
+
+        allocated = t8.set_index("vehicle_type")["allocated_branch_fuel_pj"]
+        assert pytest.approx(allocated["LPVs"], rel=1e-4) == 1.0
+        assert pytest.approx(allocated["LCVs"], rel=1e-4) == 0.5
+        assert pytest.approx(allocated["Trucks"], abs=1e-9) == 0.0
+
     def test_electricity_allocation_rule_uses_residual_energy_share(self):
         t4 = _make_t4(
             _branch("LPVs", "BEV", "Electricity", stock=100, mileage=10000, efficiency=300),
@@ -575,6 +736,35 @@ class TestAllocateFuelToBranches:
         assert len(t8) == 1
         assert t8["fuel"].iloc[0] == "Electricity"
 
+    def test_phev_diesel_branch_excluded_from_fuel_allocation(self):
+        t4 = _make_t4(
+            _branch("LCVs", "PHEV", "Electricity", stock=100, mileage=5000, efficiency=300,
+                    transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Electricity"),
+            _branch("LCVs", "PHEV", "Motor gasoline", stock=100, mileage=5000, efficiency=100,
+                    transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Motor gasoline"),
+            _branch("LCVs", "PHEV", "Biogasoline", stock=100, mileage=5000, efficiency=100,
+                    transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Biogasoline"),
+            _branch("LCVs", "PHEV", "Efuel", stock=100, mileage=5000, efficiency=100,
+                    transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Efuel"),
+            _branch("LCVs", "PHEV", "Gas and diesel oil", stock=100, mileage=5000, efficiency=100,
+                    transport_type="freight", leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Gas and diesel oil"),
+        )
+        branch_energy = calculate_initial_branch_energy(t4)
+        remaining = calculate_remaining_esto(
+            pd.DataFrame([
+                {"fuel": "Electricity", "energy_pj": 1.0},
+                {"fuel": "Motor gasoline", "energy_pj": 1.0},
+                {"fuel": "Biogasoline", "energy_pj": 1.0},
+                {"fuel": "Efuel", "energy_pj": 1.0},
+                {"fuel": "Gas and diesel oil", "energy_pj": 1.0},
+            ]),
+            pd.DataFrame(),
+        )
+
+        t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
+
+        assert set(t8["fuel"]) == {"Electricity", "Motor gasoline", "Biogasoline", "Efuel"}
+
 
 class TestBuildLeapReadyTable:
     def test_t11_uses_leap_expected_branch_levels(self):
@@ -592,6 +782,7 @@ class TestBuildLeapReadyTable:
                 "adjusted_stock": 100.0,
                 "adjusted_mileage_km_per_year": 10000.0,
                 "adjusted_efficiency_km_per_gj": 100.0,
+                "final_branch_fuel_pj": 0.01,
             },
             {
                 "economy": "20_USA",
@@ -606,6 +797,7 @@ class TestBuildLeapReadyTable:
                 "adjusted_stock": 300.0,
                 "adjusted_mileage_km_per_year": 8000.0,
                 "adjusted_efficiency_km_per_gj": 200.0,
+                "final_branch_fuel_pj": 0.012,
             },
         ])
         t10 = pd.DataFrame([

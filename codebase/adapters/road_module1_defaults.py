@@ -6,7 +6,7 @@ a long-format DataFrame.
 
 Supported package formats:
 1. Canonical long CSV:
-    Economy, Scenario, Branch Path, Variable, Year, Value, Units, ...
+    Economy, Scenario, Branch Path, Variable, Year, Value, Scale, Units, ...
 2. Legacy LEAP workbook style:
     Branch Path, Variable, Scenario, Region, Scale, Units, Per...,
     2022, [2030, 2040, 2050, ...], input_source, ..., default_version,
@@ -90,6 +90,8 @@ _VARIABLE_MAP = {
     "Passenger Saturation":         "saturation_level",
     "Passenger Vehicle Saturation": "saturation_level",
     "Passenger Saturation Reached": "passenger_saturation_reached",
+    "Passenger Stock Growth Rate Adjustment": "passenger_stock_growth_rate_adjustment",
+    "Freight GDP Elasticity Adjustment": "freight_gdp_elasticity_adjustment",
     "PHEV Electric Driving Share":  "phev_electric_utilisation_rate",
     "PHEV Electric Utilisation Rate": "phev_electric_utilisation_rate",
     "PHEV Electric Utilization Rate": "phev_electric_utilisation_rate",
@@ -624,6 +626,8 @@ def _load_single_economy(
             "reconciliation_bound_upper_efficiency", "reconciliation_weight_stock",
             "reconciliation_weight_mileage", "reconciliation_weight_efficiency",
             "saturation_level", "passenger_saturation_reached",
+            "passenger_stock_growth_rate_adjustment",
+            "freight_gdp_elasticity_adjustment",
             "phev_electric_utilisation_rate",
         ):
             continue
@@ -988,6 +992,64 @@ def get_reconciliation_weights(defaults_df: pd.DataFrame, economy: str) -> dict[
     return None
 
 
+def get_freight_gdp_elasticity_adjustment(defaults_df: pd.DataFrame, economy: str) -> float:
+    """Extract the researcher-facing freight elasticity multiplier from Module 1."""
+    mask = (
+        (defaults_df["economy"] == economy)
+        & (defaults_df["variable"] == "freight_gdp_elasticity_adjustment")
+    )
+    sub = defaults_df[mask]["value"].dropna()
+    if sub.empty:
+        return 1.0
+    value = float(sub.iloc[0])
+    if value < 0:
+        log.warning(
+            "Negative freight GDP elasticity adjustment %.4f for %s; using 1.0",
+            value,
+            economy,
+        )
+        return 1.0
+    if value > 2:
+        log.warning(
+            "Freight GDP elasticity adjustment %.4f for %s exceeds 2.0; clamping to 2.0",
+            value,
+            economy,
+        )
+        return 2.0
+    log.info("Module 1 freight GDP elasticity adjustment for %s: %.4f", economy, value)
+    return value
+
+
+def get_passenger_stock_growth_rate_adjustment(defaults_df: pd.DataFrame, economy: str) -> float:
+    """Extract the researcher-facing passenger S-curve steepness multiplier from Module 1."""
+    if defaults_df.empty or "economy" not in defaults_df.columns or "variable" not in defaults_df.columns:
+        return 1.2
+    mask = (
+        (defaults_df["economy"] == economy)
+        & (defaults_df["variable"] == "passenger_stock_growth_rate_adjustment")
+    )
+    sub = defaults_df[mask]["value"].dropna()
+    if sub.empty:
+        return 1.2
+    value = float(sub.iloc[0])
+    if value < 0:
+        log.warning(
+            "Negative passenger stock growth rate adjustment %.4f for %s; using 1.2",
+            value,
+            economy,
+        )
+        return 1.2
+    if value > 2:
+        log.warning(
+            "Passenger stock growth rate adjustment %.4f for %s exceeds 2.0; clamping to 2.0",
+            value,
+            economy,
+        )
+        return 2.0
+    log.info("Module 1 passenger stock growth rate adjustment for %s: %.4f", economy, value)
+    return value
+
+
 def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float:
     """
     Extract the PHEV electric driving share for the economy as a single float.
@@ -1264,6 +1326,8 @@ def load_module1_for_economy(
         "scalar_bounds": get_scalar_bounds(defaults_df, economy),
         "passenger_saturation_level": get_passenger_saturation_level(defaults_df, economy),
         "passenger_saturation_reached": get_passenger_saturation_reached(defaults_df, economy),
+        "passenger_stock_growth_rate_adjustment": get_passenger_stock_growth_rate_adjustment(defaults_df, economy),
+        "freight_gdp_elasticity_adjustment": get_freight_gdp_elasticity_adjustment(defaults_df, economy),
         "reconciliation_weights": get_reconciliation_weights(defaults_df, economy),
         "vehicle_equivalent_weights": get_vehicle_equivalent_weights(defaults_df, economy),
         "vehicle_equivalent_weight_bounds": get_vehicle_equivalent_weight_bounds(defaults_df, economy),

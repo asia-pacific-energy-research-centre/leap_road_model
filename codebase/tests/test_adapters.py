@@ -13,6 +13,7 @@ from adapters.leap_expressions import (
     from_leap_expression,
     parse_expression_column,
 )
+from adapters import esto_inputs
 from adapters.combined_exports import parse_branch_path
 from adapters.road_module1_defaults import (
     _find_default_inputs_csv,
@@ -20,14 +21,17 @@ from adapters.road_module1_defaults import (
     _filter_out_of_scope_model_rows,
     get_vintage_profiles,
     get_phev_utilisation_rate,
+    get_freight_gdp_elasticity_adjustment,
     get_passenger_saturation_level,
     get_passenger_saturation_reached,
+    get_passenger_stock_growth_rate_adjustment,
     get_reconciliation_weights,
     get_vehicle_equivalent_weight_bounds,
     get_vehicle_type_stock_shares,
     load_road_module1_defaults,
     load_module1_leap_df,
 )
+from road_workflow import parse_leap_format_inputs
 
 
 # ===========================================================================
@@ -41,6 +45,53 @@ class TestLeapExpressions:
         assert expr.startswith("Data(")
         assert "2022" in expr
         assert "2023" in expr
+
+
+class TestEstoInputs:
+    def test_default_esto_csv_is_repo_input_data_copy(self):
+        default_path = esto_inputs._DEFAULT_ESTO_CSV
+
+        assert default_path.name == "esto_transport_2000_2022.csv"
+        assert default_path.parent.name == "input_data"
+        assert default_path.exists()
+
+
+class TestLeapFormatInputParsing:
+    def test_stock_scale_millions_is_converted_to_devices(self):
+        df = pd.DataFrame([
+            {
+                "Branch Path": "Demand\\Passenger road\\LPVs\\ICE small\\Motor gasoline",
+                "Variable": "Stock",
+                "Scenario": "Current Accounts",
+                "Region": "20_USA",
+                "Scale": "Millions",
+                "Units": "Device",
+                "2022": 1.25,
+            }
+        ])
+
+        parsed = parse_leap_format_inputs(df, base_year=2022)
+
+        assert parsed.loc[0, "variable"] == "stock"
+        assert parsed.loc[0, "value"] == pytest.approx(1_250_000.0)
+
+    def test_mileage_scale_thousands_is_converted_to_kilometres(self):
+        df = pd.DataFrame([
+            {
+                "Branch Path": "Demand\\Passenger road\\LPVs\\ICE small\\Motor gasoline",
+                "Variable": "Mileage",
+                "Scenario": "Current Accounts",
+                "Region": "20_USA",
+                "Scale": "Thousands",
+                "Units": "Kilometer",
+                "2022": 40.0,
+            },
+        ])
+
+        parsed = parse_leap_format_inputs(df, base_year=2022)
+
+        parsed_by_variable = parsed.set_index("variable")
+        assert parsed_by_variable.loc["mileage", "value"] == pytest.approx(40_000.0)
 
     def test_from_expression(self):
         expr = "Data(2022, 0.0, 2023, 100.5, 2024, 200.1)"
@@ -166,6 +217,57 @@ class TestModule1DefaultsSaturationUnits:
 
         assert get_passenger_saturation_reached(loaded, economy="20_USA") is True
 
+    def test_freight_elasticity_adjustment_parsed(self, tmp_path: Path):
+        df = pd.DataFrame([{
+            "Economy": "20_USA",
+            "Scenario": "Current Accounts",
+            "Branch Path": "Demand\\Freight road",
+            "Variable": "Freight GDP Elasticity Adjustment",
+            "Year": 2022,
+            "Value": 1.25,
+            "Units": "Multiplier",
+        }])
+        csv_path = tmp_path / "road_module1_values_20USA_vtest_20260603.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="test")
+
+        assert get_freight_gdp_elasticity_adjustment(loaded, economy="20_USA") == pytest.approx(1.25)
+
+    def test_passenger_stock_growth_rate_adjustment_parsed(self, tmp_path: Path):
+        df = pd.DataFrame([{
+            "Economy": "20_USA",
+            "Scenario": "Current Accounts",
+            "Branch Path": "Demand\\Passenger road",
+            "Variable": "Passenger Stock Growth Rate Adjustment",
+            "Year": 2022,
+            "Value": 1.35,
+            "Units": "Multiplier",
+        }])
+        csv_path = tmp_path / "road_module1_values_20USA_vtest_20260603.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="test")
+
+        assert get_passenger_stock_growth_rate_adjustment(loaded, economy="20_USA") == pytest.approx(1.35)
+
+    def test_passenger_stock_growth_rate_adjustment_defaults_to_1p2(self, tmp_path: Path):
+        df = pd.DataFrame([{
+            "Economy": "20_USA",
+            "Scenario": "Current Accounts",
+            "Branch Path": "Demand\\Passenger road",
+            "Variable": "Passenger Vehicle Saturation",
+            "Year": 2022,
+            "Value": 890.0,
+            "Units": "Device",
+        }])
+        csv_path = tmp_path / "road_module1_values_20USA_vtest_20260603.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="test")
+
+        assert get_passenger_stock_growth_rate_adjustment(loaded, economy="20_USA") == pytest.approx(1.2)
+
     def test_vehicle_equivalent_weight_bounds_parsed(self, tmp_path: Path):
         df = pd.DataFrame([
             {
@@ -253,6 +355,30 @@ class TestModule1DefaultsSaturationUnits:
         assert "2022" in loaded.columns
         assert loaded.loc[0, "Region"] == "20_USA"
         assert loaded.loc[0, "2022"] == pytest.approx(100.0)
+
+    def test_long_module1_scale_survives_loader_and_parses_to_devices(self, tmp_path: Path):
+        version_dir = tmp_path / "vtest"
+        economy_dir = version_dir / "20USA"
+        economy_dir.mkdir(parents=True)
+        df = pd.DataFrame([
+            {
+                "Economy": "20USA",
+                "Scenario": "Current Accounts",
+                "Branch Path": "Demand\\Passenger road\\LPVs\\ICE small\\Motor gasoline",
+                "Variable": "Stock",
+                "Year": 2022,
+                "Value": 1.25,
+                "Scale": "Millions",
+                "Units": "Vehicle",
+            }
+        ])
+        df.to_csv(economy_dir / "road_module1_values_20USA_vtest_20260603.csv", index=False)
+
+        loaded = load_module1_leap_df(tmp_path, economy="20_USA", version="vtest")
+        parsed = parse_leap_format_inputs(loaded, base_year=2022)
+
+        assert loaded.loc[0, "Scale"] == "Millions"
+        assert parsed.loc[0, "value"] == pytest.approx(1_250_000.0)
 
     def test_vehicle_type_stock_shares_use_only_exact_vehicle_branches(self):
         # Long-format defaults_df — mirrors what load_road_module1_defaults() produces.

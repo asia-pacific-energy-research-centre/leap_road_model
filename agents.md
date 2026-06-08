@@ -6,6 +6,40 @@ scenarios, LEAP import logic, Module 1 defaults, or the interface hand-off.
 
 ---
 
+## Background and glossary
+
+APERC is the Asia Pacific Energy Research Centre. APERC prepares the APEC Energy
+Demand and Supply Outlook, usually shortened to the Outlook. The road model in
+this repo supports the transport part of that Outlook by preparing road-transport
+inputs and LEAP import packages.
+
+ESTO is the APERC team and dataset that maintains the APEC energy balances used
+as historical energy inputs. In this model, ESTO road energy anchors base-year
+fuel reconciliation. Routine road runs use the repo-local snapshot
+`input_data/esto_transport_2000_2022.csv`.
+
+The 9th edition refers to the previous APERC Outlook cycle. Several current
+inputs are still seeded from 9th-edition macro, sales-share, and LEAP export
+materials while the 10th-edition workflow is being built. Treat those inputs as
+bridge assumptions unless a source doc says they have been reviewed for the 10th
+edition.
+
+The road model is separate from non-road transport because road has vehicle
+stock, turnover, drive-type, fuel-allocation, PHEV, and lifecycle-profile logic
+that needs more detail than the aggregate transport model. Non-road transport
+remains outside this repo.
+
+Glossary:
+
+| Term | Meaning |
+|------|---------|
+| `Module 1` | The road input/default package: stock, stock share, mileage, fuel economy, survival, vintage, sales-share, PHEV, and reconciliation assumptions. |
+| `Static bundle` | Generated long CSV package under `road_model_inputs_interface/front-end/road-module1-static/` that the browser loads. It is generated UI data, not source data. |
+| `Hand-off contract` | The canonical long Module 1 CSV columns and row keys passed from the interface to this model. |
+| `Source merge` | Interface-side generation step that combines processed source files, manually filled rows, and supplemental source files using documented priority rules. |
+| `T11` | Module 6 LEAP-ready long table used to write the LEAP import workbook. |
+| `Current Accounts` | LEAP base-year scenario convention. In this model it is derived from the base-year slice of `Target`, not run as its own projection. |
+
 ## Related docs to read
 
 Read these when the task touches the relevant area:
@@ -26,9 +60,9 @@ Read these when the task touches the relevant area:
 | Repo | Role |
 |------|------|
 | `leap_road_model` | Model engine. Runs modules 1-6, produces T11 (LEAP-ready table), writes the LEAP import workbook. |
-| `road_model_inputs_interface` | React front-end + FastAPI back-end. Researchers edit module 1 assumptions here. Writes the module1 CSV and launches `road_workflow.py` as a subprocess. |
-| `leap_transport` | Upstream source data - `9th_macro_data.csv`, ESTO energy CSVs. Treated as read-only by the model. |
-| `leap_utilities` | Miscellaneous LEAP tooling. Occasionally provides a fallback reference export. |
+| `road_model_inputs_interface` | Plain HTML/JS + Tailwind CSS front-end + FastAPI back-end. Researchers edit module 1 assumptions here. Writes the module1 CSV and launches `road_workflow.py` as a subprocess. |
+| `leap_transport` | Upstream source data, including `9th_macro_data.csv` and ESTO energy CSVs. It was originally written to translate 9th-edition energy projections and base-year data into the LEAP structure, including newer categories. This is useful for understanding transformations between 9th-edition data and LEAP. Treated as read-only by the model. Occasionally provides fallback reference exports and examples for structuring LEAP imports. |
+| `leap_utilities` | Miscellaneous LEAP tooling. Occasionally provides fallback reference exports and examples for structuring LEAP imports. |
 
 The interface and model repos are expected to be sibling directories:
 ```
@@ -76,7 +110,8 @@ boundaries, not as interchangeable codebases.
 | Purpose | Path |
 |---------|------|
 | Interface source data | `../road_model_inputs_interface/back-end/data/road_model/` |
-| Interface default workflow | `../road_model_inputs_interface/back-end/road_module1_defaults_workflow.py` |
+| Interface Module 1 static config | `../road_model_inputs_interface/back-end/data/road_model/config/` |
+| Interface default workflow | `../road_model_inputs_interface/back-end/build_road_model_static_defaults.py` |
 | Interface static bundle | `../road_model_inputs_interface/front-end/road-module1-static/` |
 | Interface local model runner | `../road_model_inputs_interface/back-end/api/run_model_router.py` |
 | Model Module 1 runtime inputs | `input_data/module1_defaults/` |
@@ -114,12 +149,25 @@ The interface runner normalizes compact codes in
 Canonical hand-off columns:
 
 ```text
-Economy, Scenario, Branch Path, Variable, Year, Value, Units, Source, Comment, Input Status
+Economy, Scenario, Branch Path, Variable, Year, Value, Scale, Units, Source, Comment, Input Status, Shown In Interface
 ```
 
 `Input Status` is the default/researcher provenance marker. The
 `leap_road_model` adapter still accepts older 9-column files without this field;
 when it is absent, rows are treated as `provided` for backward compatibility.
+`Shown In Interface` controls browser presentation only: `False` rows are hidden
+from the editable UI but must still be preserved through download/upload and
+sent to the model.
+
+`Scale` is a LEAP-style display/import scale. Generated Module 1 long CSVs can
+use compact values such as `Stock = 384.781, Scale = Millions` or
+`Mileage = 40, Scale = Thousands`; the model expands these back to raw devices
+or kilometres when loading inputs. Default scale labels are configured in
+`road_model_inputs_interface/back-end/data/road_model/road_module1_default_parameters.json`.
+`Scale` is optional for backward compatibility. When present, numeric LEAP-style
+scales such as `Thousand`, `Thousands`, `Million`, `Millions`, `Billion`, and
+`Billions` are applied as multipliers on input values before model calculations;
+`%` is preserved as a display/import scale and is not converted to a fraction.
 
 ### Generated versus source files
 
@@ -132,6 +180,56 @@ Do not treat these as equivalent:
 | Interface static bundle | `road_model_inputs_interface/front-end/road-module1-static/` | Usually no; regenerate from source. |
 | Model runtime Module 1 CSV | `leap_road_model/input_data/module1_defaults/` | Sometimes; the interface writes here during local model runs. |
 | Model results | `leap_road_model/results/` | No; these are run outputs. |
+
+### Static bundle is the model hand-off source
+
+For local interface-driven runs, the frontend static CSV is the authoritative
+Module 1 package that gets handed to the model. The model-side runtime CSV under
+`leap_road_model/input_data/module1_defaults/<version>/<economy>/` is just the
+last CSV written by the interface runner. Treat it as a cache/output, not as a
+separate source of truth.
+
+Once a row is present in the static CSV, the browser and local runner should
+preserve it losslessly through load, edit, download/upload, and run-model export.
+Do not drop rows merely because they are not prominent in the main editor. Some
+examples of less-visible rows that still must travel through the hand-off are:
+
+- `PHEV Electric Driving Share` (Module 6 PHEV electricity/liquid split)
+- `Survival Rate` (Module 4 turnover)
+- `Vintage Profile Share` (Module 4 base-year vintage distribution)
+- reconciliation weights/bounds, passenger saturation, and vehicle equivalent
+  weights
+
+The only row filtering should happen during static sync. The static contract is
+defined by the combination of:
+
+- `back-end/data/road_model/config/road_module1_static_contract.csv`
+  (operator-maintained `(Branch Path, Variable)` row contract with
+  `Current Accounts`, `Projected Scenario`, units, and interface visibility
+  flags)
+- `back-end/data/road_model/config/road_module1_static_fuel_branch_exclusions.csv`
+  (economy-specific missing fuel branch exceptions, allowed only with reason
+  `0 data for fuel in esto dataset`)
+- the fuel-level completeness rule in `build_road_model_static_defaults.py`
+  (fuel branches are globally required; every present fuel branch must have both
+  `Mileage` and `Fuel Economy`; missing fuel branches must be justified by the
+  ESTO-zero exclusion config)
+- branch parsing/normalisation logic in `back-end/core/road_module1_defaults.py`
+
+After static sync, all loaded static rows are part of the hand-off contract.
+
+If `road_workflow.py` fails because Module 1 rows are missing, first check the
+interface static CSV, for example:
+
+```text
+../road_model_inputs_interface/front-end/road-module1-static/<version>/20USA.csv
+```
+
+If the static CSV has the rows but the model runtime CSV does not, the runtime
+CSV is stale or the browser/API hand-off dropped rows. Reload/run from the
+interface, or overwrite the runtime CSV from the current static CSV for a
+manual smoke check. Do not fix this by adding model fallbacks or hand-editing
+`input_data/module1_defaults/` as if it were source.
 
 ---
 
@@ -146,6 +244,35 @@ cd C:\Users\Work\github\leap_road_model
 python codebase\road_workflow.py 20_USA --scenario Target --vis
 ```
 
+Runtime defaults for `road_workflow.py` live in:
+
+```text
+codebase/config/workflow_defaults.yaml
+```
+
+This file controls workflow switches and paths, including the default scenario,
+years, Module 1 package root/version, visualisations, CSV output, progress
+printing, LEAP row diagnostics, module run/skip switches, future sales-share
+auto-loading, Module 6 match tolerance, and LEAP import value scale export mode.
+It does not provide model assumption fallbacks; stock, mileage, efficiency,
+survival, PHEV, and reconciliation inputs still come from the generated Module 1
+package.
+
+CLI flags override the YAML for a single run. Useful examples:
+
+```powershell
+python codebase\road_workflow.py 15_PHL --no-vis --module1-defaults-dir ..\road_model_inputs_interface\back-end\outputs\road_module1_defaults --module1-defaults-version v2026_06_05_road_module1_sources
+python codebase\road_workflow.py 20_USA --no-save-csv-outputs --no-auto-future-sales-shares --module6-match-tolerance 0.02
+python codebase\road_workflow.py 20_USA --leap-import-raw-values
+python codebase\road_workflow.py 20_USA --skip-m7
+```
+
+By default, LEAP import workbooks preserve numeric `Scale` labels where available
+(`Stock = 384.781`, `Scale = Millions`). Use
+`leap_import.export_values_in_raw_units: true` or `--leap-import-raw-values` to
+write raw values instead (`Stock = 384781000`, blank numeric scale). `%` scale
+labels are preserved for share rows in both modes.
+
 Expected outputs:
 
 - `results/20_USA/module6/T11_leap_ready.csv`
@@ -154,6 +281,19 @@ Expected outputs:
 
 Do not run `--scenario "Current Accounts"`; Current Accounts is derived after
 Target runs.
+
+For notebook-style or offline checks, `scripts/offline_workflow.py` is the
+friendlier entry point. It runs the same workflow functions without requiring the
+website. By default it reads Module 1 defaults from the sibling interface repo:
+
+```text
+../road_model_inputs_interface/back-end/outputs/road_module1_defaults/
+```
+
+If that folder is unavailable, it falls back to this repo's legacy
+`input_data/module1_defaults/`. Edit the constants at the bottom of
+`scripts/offline_workflow.py` or call `run_offline()` / `run_offline_all()` from
+a notebook.
 
 ### Run the model from the interface
 
@@ -187,14 +327,20 @@ python leap_road_model/codebase/road_workflow.py <economy>
 
 The runner assumes the repos are siblings unless `LEAP_ROAD_MODEL_DIR` is set.
 
-### Regenerate Module 1 defaults/static bundle
+### Regenerate Module 1 build/static sync
 
 Use this when source files in the interface have changed:
 
 ```powershell
 cd C:\Users\Work\github\road_model_inputs_interface
-python back-end\road_module1_defaults_workflow.py
+python back-end\build_road_model_static_defaults.py
 ```
+
+`build_road_model_static_defaults.py` is intentionally treated as the static
+sync gate even though it still has many direct file references. If refactoring it,
+keep behavior unchanged first: move paths and source lists behind named config or
+small helper functions, then rerun the build and compare output row counts and
+contract failures before changing source logic.
 
 Then inspect:
 
@@ -203,7 +349,11 @@ Then inspect:
 - `front-end/road-module1-static/index.json`
 
 The static bundle is generated UI data, not the source of truth. Source methods
-belong in `back-end/data/road_model/UPDATE_METHOD.md`.
+belong in `back-end/data/road_model/UPDATE_METHOD.md`. If upstream
+`leap_import_workbooks/` changed, run the separate source prep step first:
+`back-end/scripts/prepare_road_source.py` reshapes the upstream workbook data
+into `back-end/data/road_model/processed_source/`. Source prep is not part of
+the regular build.
 
 ### Validate a cross-repo change
 
@@ -233,13 +383,15 @@ overlay on top of that package.
 | Stage | Name | Main files | Contract |
 |-------|------|------------|----------|
 | 1 | Source package | `back-end/data/road_model/` | Versioned, documented CSV/XLSX inputs. Missing required files should fail generation. |
-| 2 | Source loader/normalizer | `back-end/core/road_module1_defaults.py` | Read source rows, normalize labels, pick priority-ranked values, and convert to the internal wide schema. |
-| 3 | Source overlays | `overlay_*` functions in `road_module1_defaults.py` | Add or replace specific measures from supplemental sources with explicit provenance. |
-| 4 | Generated default package | `back-end/outputs/road_module1_defaults/<version>/<economy>/` | Per-economy generated Module 1 package. This is a build output, not hand-authored source. |
-| 5 | Frontend static bundle | `front-end/road-module1-static/<version>/<economy>.csv` | Filter to frontend-visible variables and write the canonical long CSV used by the browser. |
-| 6 | Browser load/view model | `front-end/app.js` | Fetch `index.json` and CSV, parse long rows, convert to UI-wide rows for editing only. |
-| 7 | Researcher overlay | `front-end/app.js` state maps and upload preview | Manual edits/uploads change values on existing row keys and mark `Input Status = researcher`. |
-| 8 | Export/model handoff | `convertRoadWideUiRowsToLongRows()` and `run_model_router.py` | Convert UI rows back to canonical long CSV and write to `leap_road_model/input_data/module1_defaults/`. |
+| 2 | Source prep | `back-end/scripts/prepare_road_source.py` | Separate upstream-update step: reshape `leap_import_workbooks/` into `processed_source/`. Not part of the regular build. |
+| 3 | Source merge | `back-end/core/road_module1_defaults.py` | Combine `processed_source/`, `manually_filled_rows/`, and `supplemental_source_files/` into one priority-ranked row pool. Missing required rows are a hard error. |
+| 4 | Stock share derivation | `back-end/core/road_module1_defaults.py` | Compute `Stock Share` percentages from base-year `Stock` rows in the merged data. This is the only legitimate derived-row step. |
+| 5 | Final override | `back-end/data/road_model/final_value_overrides/` | Optional final replacement of existing generated rows after source merge and stock share derivation. |
+| 6 | Build | `back-end/outputs/road_module1_defaults/<version>/<economy>/` | Per-economy generated Module 1 package. This is a build output, not hand-authored source. |
+| 7 | Static sync | `front-end/road-module1-static/<version>/<economy>.csv` | Filter to static-eligible variables, apply row-level interface visibility, and write the canonical long CSV used by the browser. |
+| 8 | Browser working copy | `front-end/app.js` | Fetch `index.json` and CSV, parse long rows, convert to UI-wide rows for editing only. |
+| 9 | Researcher overlay | `front-end/app.js` state maps and upload preview | Manual edits/uploads change existing row keys, validate values, and mark researcher-modified rows. |
+| 10 | Export/model handoff | `convertRoadWideUiRowsToLongRows()` and `run_model_router.py` | Convert UI rows back to canonical long CSV and write to `leap_road_model/input_data/module1_defaults/`. |
 
 ### The simple explanation
 
@@ -248,11 +400,14 @@ The interface has one real row format at its boundary: the canonical long Module
 temporary view model used so the browser can present the rows ergonomically.
 
 ```text
-source files
-  -> normalized internal wide rows
-  -> generated per-economy long CSV package
-  -> static bundle long CSV
-  -> browser UI-wide working copy
+source package
+  -> source prep (only when upstream LEAP import workbooks change)
+  -> source merge (processed_source + manually_filled_rows + supplemental_source_files)
+  -> stock share derivation
+  -> final override
+  -> build
+  -> static sync
+  -> browser working copy
   -> exported long CSV
   -> leap_road_model
 ```
@@ -267,17 +422,23 @@ or supplemental-source merging.
 1. Source files under `back-end/data/road_model/` are the only source of truth
    for generated defaults. If a value changes because of a data update, update
    source files and `UPDATE_METHOD.md`, then regenerate.
-2. `road_module1_defaults.py` owns source loading, normalization, source
-   priority, overlays, provenance, and package generation.
-3. `build_road_model_static_defaults.py` owns the frontend-visible measure
-   contract (`FRONTEND_MEASURES`) and hard completeness checks.
-4. `road_module1_defaults_workflow.py::write_frontend_static_bundle()` owns
-   conversion from generated backend outputs to static frontend CSVs.
-5. `front-end/app.js` owns only UI loading, display, upload/download, edit
+2. `prepare_road_source.py` owns source prep from `leap_import_workbooks/` to
+   `processed_source/`; run it only when the upstream export changes.
+3. `road_module1_defaults.py` owns source merge, source priority, provenance,
+   stock share derivation, final override application, and package generation.
+   Treat `processed_source/`, `manually_filled_rows/`, and
+   `supplemental_source_files/` as one ranked source pool, not as separate
+   overlay phases.
+4. `build_road_model_static_defaults.py` owns static sync and hard completeness
+   checks against
+   `back-end/data/road_model/config/road_module1_static_contract.csv`.
+5. `build_road_model_static_defaults.py::write_frontend_static_bundle()` owns
+   static sync from build outputs to static frontend CSVs.
+6. `front-end/app.js` owns only UI loading, display, upload/download, edit
    tracking, and model-run API calls.
-6. `run_model_router.py` is a bridge. It writes the browser's completed long
+7. `run_model_router.py` is a bridge. It writes the browser's completed long
    rows into `leap_road_model`; it should not reinterpret the values.
-7. `leap_road_model` owns all downstream modeling behavior after the Module 1
+8. `leap_road_model` owns all downstream modeling behavior after the Module 1
    CSV is written.
 
 ### Canonical versus internal formats
@@ -300,20 +461,33 @@ Changes to loading/processing should preserve these gates:
 - Required source files exist before generation starts.
 - Required source files have expected columns.
 - Source priority conflicts at the same row/year are detected before output.
+- Required rows absent from all source-merge folders fail the build. Do not
+  reintroduce silent row-completion fallbacks.
 - Placeholder defaults are rejected when strict source-backed generation is on.
-- Frontend output only includes variables in `FRONTEND_MEASURES`.
-- Every economy includes all fixed required `(Branch Path, Variable)` pairs from
-  `road_module1_required_rows.csv`.
-- Every fuel-level branch exposed to the frontend has both `Mileage` and
-  `Fuel Economy`.
+- Frontend output only includes `(Branch Path, Variable)` pairs in
+  `config/road_module1_static_contract.csv`.
+- Every generated static `(Branch Path, Variable)` pair is present in
+  `config/road_module1_static_contract.csv`.
+- Every contract row with `Current Accounts = True` is present in each
+  economy's Current Accounts output unless it is an allowed fuel-branch
+  exclusion.
+- Every contract row with `Projected Scenario = True` is present in each
+  non-Current Accounts scenario output unless it is an allowed fuel-branch
+  exclusion.
+- Fuel branches are globally required. A missing fuel branch is valid only when
+  ESTO road data in `leap_road_model/input_data/esto_transport_2000_2022.csv`
+  has zero data for that economy/fuel and the exclusion reason is exactly
+  `0 data for fuel in esto dataset`.
+- Every fuel-level branch that is present has both `Mileage` and `Fuel Economy`.
 - Uploaded researcher CSVs cannot introduce new row keys.
 
 ### Good change patterns
 
 - Adding a new source-backed measure:
-  update source files, add/adjust loader or overlay logic, add it to
-  `FRONTEND_MEASURES` if researchers should see it, update required rows if it
-  is structurally required, regenerate, then test one economy through the model.
+  update the appropriate source-merge folder or source prep logic, add the
+  relevant `(Branch Path, Variable)` rows to
+  `config/road_module1_static_contract.csv`, set scenario and visibility flags,
+  regenerate, then test one economy through the model.
 - Changing source priority:
   update `road_module1_source_priorities.csv` or the relevant priority logic,
   regenerate, and inspect the generated source/provenance fields.
@@ -333,40 +507,204 @@ Changes to loading/processing should preserve these gates:
 - Do not let uploads add rows; uploads fill existing template keys.
 - Do not add a second JSON package format for the same data unless there is a
   concrete performance or deployment reason.
-- Do not hide source priority or value replacement inside generic helper names;
-  loader/overlay functions should make the source and precedence obvious.
+- Do not describe supplemental files as a separate overlay phase in docs or new
+  code. They are part of source merge unless the code explicitly implements a
+  later replacement step.
+- Do not add row-completion helpers that silently invent required rows. Missing
+  required rows should fail the build unless they are covered by the documented
+  ESTO-zero fuel exclusion.
 
 ---
 
-## Module pipeline
+## ESTO road energy input
 
-<!-- TODO: translate the PNG flow diagrams here. One sentence per module:
-     what goes in, what comes out, what can go wrong.
-     Diagrams are in: [add path to diagrams folder]
--->
+The road model's default ESTO energy source is the repo-local deployment file:
+
+```text
+input_data/esto_transport_2000_2022.csv
+```
+
+`codebase/adapters/esto_inputs.py` owns all access to this file. The default path
+is `_DEFAULT_ESTO_CSV = leap_road_model/input_data/esto_transport_2000_2022.csv`.
+Explicit function arguments and `ROAD_MODEL_ESTO_CSV` can override it for a
+one-off run, but routine model runs should use the repo-local file so local,
+interface, and deployment behavior match. This file is a snapshot of the ESTO transport energy data as of the last update. It is not automatically updated from the upstream source; update it with the `prepare_esto_for_deployment.py` script when the upstream ESTO file changes. ESTO is the APERC team responsible for creating the energy balances which are inputs to the energy outlook.
+
+### Relationship to the upstream ESTO file
+
+The source-of-record upstream file is normally:
+
+```text
+../leap_transport/data/00APEC_2024_low_with_subtotals.csv
+../leap_utilities/data/00APEC_2025_low_with_subtotals.csv
+etc...
+```
+
+Treat `leap_transport` and `leap_utilities` as read-only. When the upstream ESTO file changes, refresh
+the road-model copy with:
+
+```powershell
+python scripts\prepare_esto_for_deployment.py
+```
+
+That script keeps detailed transport flows (`15.01`, `15.02`, etc.) and year
+columns from 2000 onward, and writes `input_data/esto_transport_2000_2022.csv`.
+It intentionally drops the top-level `15 Transport` aggregate because it is a
+sum of detailed transport flows.
+
+### Road-only filtering
+
+The road model should only use ESTO `15.02 Road` rows. Do not use `15 Transport`
+or other detailed transport flows such as air, rail, navigation, or pipeline for
+road reconciliation.
+
+Two adapter functions use the file:
+
+| Function | Used by | ESTO rows used | Purpose |
+|----------|---------|----------------|---------|
+| `load_esto_road_energy()` | Module 3 | `flows == "15.02 Road"` and `products == "19 Total"` | Historical total road energy. Split into passenger/freight with the configured passenger share because ESTO does not provide that split. |
+| `load_esto_fuel_totals()` | Module 6 | `flows == "15.02 Road"` and `is_subtotal == False` | Base-year road fuel totals by actual product/fuel for reconciliation. |
+
+### Fuel mapping
+
+Module 6 does not infer diesel from total road energy. It reads product-level
+`15.02 Road` rows and maps `products` to model fuel names using the latest
+`config/leap_mappings*.xlsx` workbook, sheet `fuel_product_final_proposed`. This may be updated from time to time using the file of the same name from `leap_utilities`.
+
+Examples:
+
+| ESTO product | Model fuel |
+|--------------|------------|
+| `07.01 Motor gasoline` | `Motor gasoline` |
+| `07.07 Gas/diesel oil` | `Gas and diesel oil` |
+| `16.06 Biodiesel` | `Biodiesel` |
+| `16.05 Biogasoline` | `Biogasoline` |
+| `17 Electricity` | `Electricity` |
+
+Alternative fuels follow the fossil fuel family they substitute for in Module 6
+fuel allocation:
+
+- `Biodiesel` can go into diesel-capable branches (`Gas and diesel oil` family).
+- `Biogasoline` can go into gasoline-capable branches (`Motor gasoline` family).
+- `Efuel` can go into ordinary liquid-fuel ICE-style branches unless a narrower
+  reviewed rule exists.
+
+Alternative fuels are spread so they make up a constant proportion of the
+corresponding original fuel family's use across eligible branches.
+
+PHEV and EREV are treated the same in Module 6: EREV is modeled like a more
+efficient PHEV. Their liquid side is gasoline-family only for both passenger and
+freight branches: `Motor gasoline`, `Biogasoline`, and `Efuel` are allowed;
+`Gas and diesel oil` and `Biodiesel` are not.
+
+After mapping, `load_esto_fuel_totals()` groups by model fuel and returns:
+
+```text
+fuel, energy_pj
+```
+
+Those per-fuel road totals are what Module 6 reconciles against. If diesel or
+gasoline results look wrong, first inspect this adapter output before changing
+Module 6 allocation logic.
+
+Quick inspection example:
+
+```powershell
+python - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("codebase").resolve()))
+from adapters.esto_inputs import load_esto_fuel_totals
+print(load_esto_fuel_totals("20_USA", base_year=2022).to_string(index=False))
+PY
+```
+
+### Common mistakes
+
+- Do not read `15 Transport` for road model reconciliation; it includes non-road
+  transport energy.
+- Do not use `products == "19 Total"` for Module 6 fuel reconciliation; that row
+  is useful for total road energy but cannot distinguish diesel from gasoline.
+- Do not bypass `load_esto_fuel_mapping()` with ad hoc string matching. Use the
+  mapping workbook so naming stays consistent with LEAP and the import writer.
+- Do not edit `input_data/esto_transport_2000_2022.csv` by hand. Regenerate it
+  from the upstream source with `scripts/prepare_esto_for_deployment.py`.
+- respect the subtotal flag. Only non-subtotal rows should be mapped to fuels and reconciled against. Subtotals are useful for diagnostics but should not be treated as reconciliation targets or we risk double-counting energy.
+---
+
+## Module pipeline
 
 Brief summary of each module's role:
 
 - **Module 1** — Loads base-year road assumptions (stock, mileage, efficiency, survival curves, PHEV utilisation rate, reconciliation bounds). Source: module1 CSV written by the interface.
 - **Module 2** — Builds the base-year branch table by cross-joining vehicle taxonomy with module 1 data. Produces T4.
-- **Module 3** — Projects stock targets to the final year using population/GDP saturation curves. Produces T3.
+- **Module 3** — Projects passenger stock with the motorisation envelope and freight stock with GDP elasticity, including Module 1 growth/elasticity adjustment controls. Produces T5.
 - **Module 4** — Derives sales, retirements, and vintage distributions from stock targets. Produces T6.
 - **Module 5** — Prepares vehicle sales shares (drive-type mix over time). Uses future sales share inputs if provided; otherwise falls back to a flat projection from base-year shares.
 - **Module 6** — Reconciles fuel energy against ESTO observed totals (base year only), computes device shares, and assembles T11 (the LEAP-ready table). See *Module 6 reconciliation* below.
+
+### T-table lineage and naming
+
+The `T*` names are workflow tables, not always one-to-one module numbers. Use
+these names when tracing outputs, diagnostics, and dashboard pages:
+
+| Table | Producer | Main CSV path | Meaning |
+|-------|----------|---------------|---------|
+| `T4_base_year_branches` | Module 2 | `results/<economy>/module2/T4_base_year_branches.csv` | Base-year technology/fuel branch table built from Module 1 assumptions and road taxonomy. Carries stock, mileage, efficiency, branch path, source flags, and dimensions. |
+| `T5_stock_targets` | Module 3 | `results/<economy>/module3/T5_stock_targets.csv` | Vehicle-type stock target paths by year. Includes passenger motorisation diagnostics and freight GDP-elasticity diagnostics. |
+| `T6_sales_turnover` | Module 4 | `results/<economy>/module4/T6_sales_turnover.csv` | Sales, surviving stock, retirements, target stock, and stock-flow diagnostics by vehicle type/year. |
+| `T6v_vintage_profiles` | Module 4 | `results/<economy>/module4/T6v_vintage_profiles.csv` | Base-year vintage/age distribution used by Module 4 turnover. |
+| `T7_sales_shares` | Module 5 | Usually in memory/diagnostics; may be saved when enabled | Base-year sales shares by vehicle/drive bucket. |
+| `T7f_future_shares` | Module 5 | Usually in memory/diagnostics; may be saved when enabled | Future sales-share trajectories from explicit inputs, Module 1 projected rows, or fallback logic. |
+| `T8_fuel_allocation` | Module 6 | `results/<economy>/module6/T8_fuel_allocation.csv` | Provisional allocation of ESTO fuel totals to eligible road branches before scalar reconciliation. |
+| `T9_reconciliation_scalars` | Module 6 | `results/<economy>/module6/T9_reconciliation_scalars.csv` | Branch/fuel reconciliation scalars and adjusted base-year stock, mileage, and efficiency. |
+| `T10_device_shares` | Module 6 | `results/<economy>/module6/T10_device_shares.csv` | LEAP Device Share rows derived after reconciliation. |
+| `T11_leap_ready` | Module 6 | `results/<economy>/module6/T11_leap_ready.csv` | LEAP-ready long table of variables, values, branch paths, years, scenarios, units, and source metadata. This is the source for the strict LEAP import workbook. |
+| `T12_reconciliation_diagnostics` | Module 6 | `results/<economy>/module6/T12_reconciliation_diagnostics.csv` | Fuel-level reconciliation status, residual gaps, ECFs, scalar-bound status, and validation flags. |
+| `T12_phev_utilisation_diagnostics` | Module 6 | `results/<economy>/module6/T12_phev_utilisation_diagnostics.csv` | PHEV electric/liquid split diagnostics and back-calculated utilisation checks. |
+| `T13_mirror_outputs` | Module 7 | `results/<economy>/module7/T13_mirror_outputs.csv` | Optional Python mirror of LEAP-side stock, vehicle-km, and energy calculations for QA. |
+| `T13_mirror_fuel_outputs` | Module 7 | `results/<economy>/module7/T13_mirror_fuel_outputs.csv` | Optional fuel-level mirror outputs and comparisons. |
+
+### Pre- and post-reconciliation T5/T6 naming
+
+Conceptually, `T5`, `T6`, and `T6v` are the pre-reconciliation stock and
+turnover outputs produced by Modules 3 and 4. During a full run, Module 6 may
+then re-anchor stock trajectories to reconciled base-year stock and rerun Module
+4. When that happens, `road_workflow.py` saves the original tables as:
+
+- `T5_pre_reconciliation`
+- `T6_pre_reconciliation`
+- `T6v_pre_reconciliation`
+
+and replaces the active workflow outputs with the adjusted tables:
+
+- `T5` / `T5_post_reconciliation`
+- `T6` / `T6_post_reconciliation`
+- `T6v` / `T6v_post_reconciliation`
+
+This naming is about runtime timing, not model concept. If no Module 6 stock
+re-anchoring happened, plain `T5`, `T6`, and `T6v` are already
+pre-reconciliation. Dashboard rule: `module3.html` should show the original
+pre-reconciliation stock/turnover view; `module3_post_reconciliation.html`
+should show only charts whose values changed after re-anchoring.
 
 ---
 
 ## Scenarios
 
-This is the most error-prone area. Read carefully.
+This is the most error-prone area. Read carefully. It may be updated from time to time as we add new scenarios or adjust the handling.
 
 ### Which scenarios exist
 
 | Label | Meaning | Run or derived? |
 |-------|---------|-----------------|
-| `Target` | Full projection 2022–2060 under policy assumptions. The primary model scenario. | **Run** |
-| `Current Accounts` | Base-year (2022) stock/sales values only. Scalar LEAP expressions. | **Derived** from Target — never run separately. |
-| `Reference` | Deprecated APEC 9th-edition macro scenario label. Still present in `9th_macro_data.csv` and old module1 CSVs. Not a LEAP scenario in the current model. | Dead — do not add back. |
+| `Target`/`TGT` | Current run scenario. At present this is seeded from the 9th-edition Target scenario and is a placeholder until the 10th-edition policy scenario is settled. | **Run** |
+| `Current Accounts`/`CA` | Base-year (2022) stock/sales values only. Scalar LEAP expressions. A LEAP convention; normally just called the base year. | **Derived** from the base-year slice of `Target`; never run separately. |
+| `Reference`/`REF` | 9th-edition macro/reference scenario label. Still present in `9th_macro_data.csv` and old Module 1 CSVs. Not currently present in the LEAP reference export used by the road model. | Not currently run. May be reintroduced later if the Outlook needs a no-policy-change counterfactual. |
+
+The base year is the same in 9th-edition `Target` and `Reference` source data.
+Do not describe `Reference` as permanently dead; it is simply outside the
+current model run/export contract.
 
 ### How Current Accounts is produced
 
@@ -390,6 +728,10 @@ and `load_gdp()` in `adapters/esto_inputs.py`.
 Extend it if a new scenario is added before dedicated macro data is available,
 e.g. `{"My New Scenario": "Target"}` to borrow Target macro data temporarily.
 
+Current macro data is still based on the 9th edition. When 10th-edition macro
+data is available, update the macro source and rerun scenario checks before
+treating 10th-edition scenario outputs as final.
+
 ### "Reference" in old module1 CSVs
 
 Pre-built module1 defaults files (in `road_model_inputs_interface/back-end/outputs/`)
@@ -411,6 +753,12 @@ The `build_leap_import_tables()` function in `adapters/leap_import_writer.py`
 merges T11 against this reference on `(Branch Path, Variable, Scenario)`.
 T11 must therefore use exactly these scenario labels — `"Target"` and
 `"Current Accounts"` — for the merge to succeed.
+
+If `Reference` or another scenario is added to the LEAP model, regenerate the
+`transport_leap_export_combined_*.xlsx` reference exports with matching scenario
+rows before expecting the import writer to preserve that scenario. The likely
+source is `leap_transport`, but that repo may need cleanup before it can be used
+as a repeatable export-generation tool.
 
 ---
 
@@ -439,6 +787,80 @@ write_leap_import_workbook()
 Researcher imports workbook into LEAP
 ```
 
+The workflow also writes user-facing follow-up files:
+
+- `results/<economy>/lifecycle_profiles/` contains LEAP-compatible lifecycle
+  profile workbooks, a manifest, and `<economy>_lifecycle_profiles.zip`.
+- `results/<economy>/module6/<economy>_module1_reimport_reconciled.csv` is a
+  canonical Module 1 CSV with reconciled base-year stock, stock share, mileage,
+  and fuel economy values. It is designed for upload back into the interface
+  using existing row keys.
+
+### LEAP import workbook structure
+
+The LEAP import workbook is not just a user-facing report. It is a strict import
+package that must match LEAP's expected export/import shape so LEAP can identify
+the correct branch, variable, scenario, and region for every expression.
+
+The strict writer lives in `codebase/adapters/leap_import_writer.py`. It loads a
+reference LEAP export, filters to road branches, and merges T11 on:
+
+```text
+Branch Path, Variable, Scenario
+```
+
+The reference export supplies LEAP's internal IDs and metadata. T11 supplies the
+new model values. The resulting workbook has metadata rows above the header,
+with the real column header on row index 2 when read with pandas.
+
+Required `LEAP` sheet columns, in order:
+
+```text
+BranchID, VariableID, ScenarioID, RegionID,
+Branch Path, Variable, Scenario, Region,
+Scale, Units, Per..., Expression,
+Level 1, Level 2, Level 3, Level 4, Level 5, Level 6, Level 7, Level 8...
+```
+
+Column meanings:
+
+| Column group | Purpose |
+|--------------|---------|
+| `BranchID`, `VariableID`, `ScenarioID`, `RegionID` | LEAP internal identifiers copied from the reference export. Do not invent or reorder these. |
+| `Branch Path`, `Variable`, `Scenario`, `Region` | Human-readable logical row key for the LEAP value being imported. |
+| `Scale`, `Units`, `Per...` | LEAP display/import metadata. `Scale` may be preserved for compact values such as `Millions` or blanked when exporting raw values. |
+| `Expression` | The value LEAP imports, either a scalar such as `384.781` or a time-series expression such as `Data(2022, ..., 2060, ...)`. |
+| `Level 1` to `Level 8...` | Branch hierarchy columns derived from `Branch Path` by splitting on `\`. Unused levels are blank. |
+
+The `FOR_VIEWING` sheet carries the same identifying columns, including the
+Level columns, but replaces `Expression` with individual year columns for easier
+inspection. It is diagnostic/human-readable; `LEAP` is the import sheet.
+
+Keep the Level columns synchronized with `Branch Path`. For example:
+
+```text
+Branch Path = Demand\Passenger road\LPVs\BEV\Electricity
+Level 1 = Demand
+Level 2 = Passenger road
+Level 3 = LPVs
+Level 4 = BEV
+Level 5 = Electricity
+Level 6..Level 8... = blank
+```
+
+Do not hand-edit these columns separately from `Branch Path`. If branch naming
+changes, regenerate them from the branch path in the writer. This mirrors the
+LEAP export convention used in `C:\Users\Work\github\leap_utilities\data\full model export.xlsx`.
+
+Update the reference export whenever the LEAP branch or variable structure
+changes. New branches and variables need valid `BranchID` and `VariableID`
+values from the target LEAP area; do not invent IDs in Python. For most economy
+areas, `RegionID` is expected to remain `1` because each area has one modeled
+region. Still verify the `Region` name from the reference export matches the
+economy being imported, because LEAP may use names such as `United States of
+America`, `Philippines`, or `The Philippines` differently from the model's
+canonical economy code.
+
 ### Interface scenario priority
 
 `TRANSPORT_LEAP_EXPORT_SCENARIO_PRIORITY` in
@@ -446,7 +868,10 @@ Researcher imports workbook into LEAP
 controls which scenario the interface prefers when overlaying LEAP transport
 export values into the module1 defaults. Currently `["Current Accounts", "Target"]`.
 The new LEAP export files do not have a `Reference` scenario, so `Reference`
-must not appear in this list.
+must not appear in this list unless regenerated reference exports actually
+include `Reference` rows. If `Reference` is reintroduced, add it here in the
+intended priority order and verify the source overlay still selects base-year
+values correctly.
 
 ---
 
@@ -490,9 +915,10 @@ These must always be true. Violations indicate a bug.
 
 ## Common mistakes to avoid
 
-- **Adding "Reference" back as a LEAP scenario.** It is a legacy APEC macro label.
-  The LEAP model uses `Current Accounts` and `Target`. The road model runs for
-  `Target`; CA is derived.
+- **Adding "Reference" back casually as a LEAP scenario.** `Reference` is not in
+  the current LEAP reference export contract. It is fine to reintroduce later,
+  but only with matching macro data, Module 1 scenario handling, LEAP reference
+  export rows, and scenario-priority updates.
 
 - **Running the model with `--scenario "Current Accounts"`.** CA is a post-processing
   step, not a model run. Running it as a scenario produces a full projection under CA
@@ -505,9 +931,11 @@ These must always be true. Violations indicate a bug.
   Old module1 CSVs with `Reference` rows rely on it. Without it, Target scenarios
   get no base-year data.
 
-- **Changing `TRANSPORT_LEAP_EXPORT_SCENARIO_PRIORITY` to include `"Reference"`.** The
-  current LEAP export files do not have a Reference scenario. The lookup would silently
-  find nothing and fall through to Target anyway, but it signals wrong intent.
+- **Changing `TRANSPORT_LEAP_EXPORT_SCENARIO_PRIORITY` to include `"Reference"`
+  before the reference exports include it.** The lookup would find nothing and
+  fall through to Target, which hides the fact that the export contract was not
+  updated. If `Reference` is added back, add it to the priority list as part of
+  that same scenario change.
 
 ---
 
@@ -569,3 +997,390 @@ already-generated CSV files that still carry `"provided"`.
 3. Confirm the LEAP reference export includes the new scenario name, otherwise
    `build_leap_import_tables()` will silently exclude all its rows.
 4. Add a row to the scenario table in this file.
+5. Update Module 1 generation in `road_model_inputs_interface`:
+   - add scenario rows to source data or source-prep outputs;
+   - update `road_module1_static_contract.csv` flags if the scenario changes
+     which variables must be present;
+   - check `TRANSPORT_LEAP_EXPORT_SCENARIO_PRIORITY` if LEAP export overlays are
+     used for the new scenario;
+   - regenerate `back-end/outputs/road_module1_defaults/` and
+     `front-end/road-module1-static/`.
+6. Update the browser/API hand-off only if the canonical long CSV contract
+   changes. Scenario additions should usually preserve the same columns.
+7. Run at least one direct model check and one interface-driven hand-off check:
+   `python codebase\road_workflow.py <economy> --scenario <scenario> --no-vis`,
+   then run the interface endpoint and confirm the runtime CSV and T11 carry the
+   expected scenario labels.
+8. Inspect `results/<economy>/module6/` for LEAP import merge warnings,
+   scenario row counts, and base-year consistency diagnostics.
+
+
+## Mermaid diagrams
+
+# Road Module 1 simplified workflow
+This diagram is intended for high-level documentation such as the README. It abstracts away the source prep and build steps, showing only the major data handoffs and the final output to Modules 2–7. This is intended for understanding only the Module 1 workflow, not the full model workflow, which is covered in a separate diagram.
+
+C:\Users\Work\github\road_model_inputs_interface\docs\new model\Road Module 1 workflow diagram.png
+
+flowchart LR
+  subgraph SRC["Source package<br/>road_model_inputs_interface/back-end/data/road_model"]
+    S1["Processed source<br/>processed_source/"]
+    S2["Supplemental files<br/>supplemental_source_files/"]
+    S3["Manual fills<br/>manually_filled_rows/"]
+    S4["Final overrides<br/>final_value_overrides/"]
+    S5["Config + contract<br/>static_contract · parameters · priorities"]
+  end
+
+  BUILD["Build Module 1 defaults<br/>build_road_model_static_defaults.py"]
+  OUT["Versioned Module 1 package<br/>back-end/outputs/road_module1_defaults/VERSION/economy/<br/>road_module1_values_ECONOMY.csv"]
+  STATIC["Static browser bundle<br/>front-end/road-module1-static/VERSION/economy.csv<br/>+ index.json"]
+
+  subgraph UI["Browser UI / static site"]
+    VIEW["View defaults<br/>filter · inspect sources · validate"]
+    EDIT["Researcher overlay<br/>edit Value · Comment · Source only"]
+    CSV["Download / reupload<br/>same canonical long CSV"]
+  end
+
+  HANDOFF["Model handoff<br/>canonical long CSV package"]
+  MODEL["leap_road_model<br/>Modules 2-7"]
+
+  SRC --> BUILD --> OUT --> STATIC --> VIEW --> EDIT --> CSV --> HANDOFF --> MODEL
+  OUT -. "optional backend can serve same rows" .-> VIEW
+  EDIT -. "Run Model button<br/>optional backend" .-> MODEL
+
+  classDef source fill:#D3455B,color:#ffffff,stroke:#D3455B;
+  classDef build fill:#BD34D1,color:#ffffff,stroke:#BD34D1;
+  classDef package fill:#2C88D9,color:#ffffff,stroke:#2C88D9;
+  classDef ui fill:#F7C325,color:#334155,stroke:#F7C325;
+  classDef model fill:#1AAE9F,color:#ffffff,stroke:#1AAE9F;
+
+  class S1,S2,S3,S4,S5 source;
+  class BUILD build;
+  class OUT,STATIC,HANDOFF package;
+  class VIEW,EDIT,CSV ui;
+  class MODEL model;
+
+# Road Module 1 defaults build workflow with derivation steps
+This diagram expands the source prep and build steps to show the derivation steps that produce the final module1 defaults from the various source folders. 
+
+C:\Users\Work\github\road_model_inputs_interface\docs\new model\Road Module 1-7 simplified interface workflow.png
+flowchart TD
+  A[Near term LEAP source workbook]
+  B[Optional source prep script]
+  C[Processed source files]
+  D[Supplemental source files]
+  E[Manual fill files]
+  F[Source priority file]
+  G[Final override files]
+  H[Default parameters]
+  I[Static contract CSV]
+  J[Fuel branch exclusion CSV]
+
+  K[Source merge]
+  L[Derive base year stock shares]
+  M[Apply final overrides]
+  N[Build canonical long rows]
+  O[Validate against static contract]
+  P[Write backend Module 1 package]
+  Q[Sync static browser bundle]
+  R[Browser fetches index and CSV]
+  S[Browser displays editable working copy]
+  T[Export canonical long CSV]
+
+  A --> B
+  B --> C
+
+  C --> K
+  D --> K
+  E --> K
+  F --> K
+
+  K --> L
+  L --> M
+  G --> M
+
+  M --> N
+  H --> N
+
+  N --> O
+  I --> O
+  J --> O
+
+  O --> P
+  P --> Q
+  Q --> R
+  R --> S
+  S --> T
+
+# Road Module 1 interface to Modules 2-7 workflow
+
+C:\Users\Work\github\leap_road_model\docs\new model\Road transport model — researcher detail.png
+
+This diagram is intended to be used within the leap_road_model repo for modules 2-7 to explain how Module 1 data flows into the rest of the model and produces the LEAP import workbook and dashboard outputs. It is not a full workflow diagram for Modules 2–7, which are covered in a separate diagram.
+flowchart LR
+  subgraph M1REPO["road_model_inputs_interface"]
+    SOURCES["Source/config files<br/>back-end/data/road_model/"]
+    BUILDER["Module 1 builder<br/>build_road_model_static_defaults.py"]
+    M1PKG["Generated Module 1 package<br/>back-end/outputs/road_module1_defaults/VERSION/economy/<br/>road_module1_values_ECONOMY.csv"]
+    STATIC["Static UI bundle<br/>front-end/road-module1-static/VERSION/economy.csv"]
+    UI["Browser UI<br/>review · edit · export · optional run"]
+  end
+
+  subgraph LRM["leap_road_model"]
+    WF["road_workflow.py<br/>loads Module 1 package"]
+    LEGACY["legacy input_data/module1_defaults/<br/>wide packages / backfill only"]
+    MACRO["Non-Module 1 inputs<br/>population · GDP · ESTO energy · configs"]
+    M2["Module 2<br/>T4 base-year branches"]
+    M3["Module 3<br/>T5 stock targets"]
+    M4["Module 4<br/>T6 sales + turnover<br/>T6v profiles"]
+    M5["Module 5<br/>T7/T7f sales shares"]
+    M6["Module 6<br/>T8-T12 reconciliation<br/>T11 LEAP-ready table"]
+    M7["Module 7<br/>T13 optional QA mirror"]
+    XLSX["LEAP import workbook<br/>+ lifecycle profile workbooks / ZIP"]
+    DASH["Diagnostics + dashboards<br/>results/economy/module*/"]
+  end
+
+  LEAP["LEAP desktop<br/>official projection platform"]
+  LEAPOUT["LEAP results export<br/>for QA / dashboard comparison"]
+
+  SOURCES --> BUILDER --> M1PKG --> STATIC --> UI
+  M1PKG -->|"preferred sibling-repo package"| WF
+  UI -. "optional backend run<br/>same long CSV rows" .-> WF
+  LEGACY -. "backward compatibility only" .-> WF
+  MACRO --> WF
+  WF --> M2 --> M3 --> M4 --> M6 --> XLSX --> LEAP --> LEAPOUT
+  M2 --> M5 --> M6
+  M1PKG -. "survival · vintage · stock share · sales share · PHEV · reconciliation settings" .-> WF
+  M6 --> DASH
+  M4 --> XLSX
+  LEAPOUT -.-> M7
+  M6 -.-> M7
+  M7 --> DASH
+
+  classDef repo fill:#788896,color:#ffffff,stroke:#788896;
+  classDef module fill:#2C88D9,color:#ffffff,stroke:#2C88D9;
+  classDef m6 fill:#1AAE9F,color:#ffffff,stroke:#1AAE9F;
+  classDef ui fill:#F7C325,color:#334155,stroke:#F7C325;
+  classDef ext fill:#BD34D1,color:#ffffff,stroke:#BD34D1;
+  classDef legacy fill:#ffffff,color:#334155,stroke:#788896,stroke-dasharray: 4 4;
+
+  class SOURCES,BUILDER,M1PKG,STATIC,MACRO,XLSX,DASH repo;
+  class M2,M3,M4,M5,M7 module;
+  class M6 m6;
+  class UI ui;
+  class LEAP,LEAPOUT ext;
+  class LEGACY legacy;
+
+# Road transport model — quick view
+This diagram is a high-level overview of the full road transport model workflow, from Module 1 data prep through Modules 2–7, LEAP import, and dashboard outputs. It is intended for quick orientation to the overall workflow and major data handoffs, not for detailed understanding of any particular step. For detailed workflows, see the separate diagrams for Module 1 and for the interface-to-LEAP workflow.
+
+C:\Users\Work\github\leap_road_model\docs\new model\Road transport model — quick view.png
+flowchart TB
+  subgraph SEQ["1. Main model sequence"]
+    direction LR
+    M1["Module 1 package<br/>canonical long CSV<br/>from interface repo"]
+    M2["M2<br/>Base-year branches<br/>T4"]
+    M3["M3<br/>Stock targets<br/>T5"]
+    M4["M4<br/>Sales and turnover<br/>T6/T6v"]
+    M5["M5<br/>Sales shares<br/>T7/T7f"]
+    M6["M6<br/>Reconciliation and LEAP package<br/>T8-T12 and T11"]
+    LEAP["LEAP<br/>official projection"]
+    M7["M7<br/>optional QA mirror<br/>T13"]
+
+    M1 --> M2 --> M3 --> M4 --> M6 --> LEAP
+    M2 --> M5 --> M6
+    M6 -. "base-year stock re-anchor<br/>post-reconciliation T5/T6" .-> M3
+    LEAP -. "results comparison" .-> M7
+    M6 -. "mirror inputs" .-> M7
+  end
+
+  subgraph RECON["2. Module 6 reconciliation in one line"]
+    direction LR
+    RIN["T4, T6, T7/T7f<br/>plus ESTO fuel totals<br/>plus Module 1 settings"]
+    INIT["Initial branch energy<br/>stock x mileage / efficiency"]
+    ELEC["BEV/PHEV electricity<br/>first"]
+    LIQ["PHEV liquid subtraction<br/>then fuel allocation"]
+    SCALE["Stock, mileage, efficiency scalars<br/>weighted and bounded"]
+    DEVICE["Device Shares"]
+    T11["T11 LEAP-ready output"]
+
+    RIN --> INIT --> ELEC --> LIQ --> SCALE --> DEVICE --> T11
+  end
+
+  NOTE["T4, T5, T6, T7, and T11 are stable handoff and diagnostic table names"]
+
+  classDef input fill:#788896,color:#ffffff,stroke:#788896;
+  classDef module fill:#2C88D9,color:#ffffff,stroke:#2C88D9;
+  classDef recon fill:#1AAE9F,color:#ffffff,stroke:#1AAE9F;
+  classDef leap fill:#BD34D1,color:#ffffff,stroke:#BD34D1;
+  classDef note fill:#F7C325,color:#334155,stroke:#F7C325;
+
+  class M1,RIN input;
+  class M2,M3,M4,M5,M7 module;
+  class M6,INIT,ELEC,LIQ,SCALE,DEVICE,T11 recon;
+  class LEAP leap;
+  class NOTE note;
+
+## Road transport model — researcher detail
+This diagram is an expanded version of the "quick view" diagram, showing more detail on the data handoffs, outputs, and scripts involved in each step of the workflow. It is intended for researchers who want to understand how the model works in more depth, including where to find outputs and how to run checks. For a high-level overview, see the separate "quick view" diagram.
+
+C:\Users\Work\github\leap_road_model\docs\new model\Road transport model — researcher detail.png
+flowchart TD
+  A[Module 1 package]
+  B[ESTO road fuel totals]
+  C[Population and GDP]
+  D[Road workflow config]
+
+  E[Module 2 builds base year branch table T4]
+
+  F[Module 3 passenger stock targets]
+  G[Module 3 freight stock targets]
+  H[Output T5 stock targets]
+
+  I[Module 4 survival and vintage profiles]
+  J[Module 4 sales retirements and turnover]
+  K[Output T6 sales turnover and T6v profiles]
+
+  L[Module 5 base year sales shares]
+  M[Module 5 future sales shares]
+  N[Output T7 and T7f sales shares]
+
+  O[Module 6 initial branch energy]
+  P[Reconcile BEV and PHEV electricity]
+  Q[Subtract PHEV liquid fuel]
+  R[Allocate remaining ESTO fuel]
+  S[Apply stock mileage and efficiency scalars]
+  T[Calculate Device Shares]
+  U[Validate fuel totals bounds shares and PHEV split]
+  V[Outputs T8 T9 T10 T11 T12 and T12 PHEV]
+
+  W[Optional post reconciliation re anchor]
+  X[LEAP import workbook and lifecycle profiles]
+  Y[LEAP official projection]
+  Z[LEAP results export]
+  AA[Module 7 optional QA mirror]
+  AB[Dashboards and diagnostics]
+
+  A --> E
+  D --> E
+
+  E --> F
+  C --> F
+  B --> F
+
+  E --> G
+  C --> G
+
+  F --> H
+  G --> H
+
+  A --> I
+  I --> J
+  H --> J
+  J --> K
+
+  E --> L
+  A --> L
+  L --> N
+
+  A --> M
+  M --> N
+
+  K --> O
+  N --> O
+  O --> P
+  P --> Q
+  Q --> R
+  B --> R
+  R --> S
+  A --> S
+  S --> T
+  T --> U
+  U --> V
+
+  V --> W
+  W --> J
+
+  V --> X
+  K --> X
+  X --> Y
+  Y --> Z
+  Z --> AA
+
+  V --> AA
+  V --> AB
+  AA --> AB
+
+## One large end-to-end diagram:
+flowchart LR
+  subgraph A["A. Source preparation<br/>road_model_inputs_interface"]
+    A1["Near-term source workbook<br/>leap_transport export"]
+    A2["Processed + supplemental + manual + override sources"]
+    A3["Contract/config<br/>static_contract · priorities · parameters · exclusions"]
+    A4["Build defaults<br/>source merge → stock share derivation → override → contract checks"]
+    A5["Versioned Module 1 package<br/>canonical long CSV per economy"]
+    A6["Static UI bundle<br/>same long-row format"]
+  end
+
+  subgraph B["B. Researcher review interface"]
+    B1["Browser loads static CSV"]
+    B2["Researcher edits allowed fields<br/>Value · Comment · Source"]
+    B3["Upload/download validation<br/>no new keys · no changed key columns"]
+    B4["Export/model-run long CSV"]
+  end
+
+  subgraph C["C. Python road workflow<br/>leap_road_model"]
+    C0["Load Module 1 package<br/>+ population/GDP/ESTO/config"]
+    C2["M2 T4<br/>base-year branches"]
+    C3["M3 T5<br/>passenger/freight stock targets"]
+    C4["M4 T6/T6v<br/>sales · retirements · lifecycle profiles"]
+    C5["M5 T7/T7f<br/>sales shares"]
+    C6["M6 T8-T12 + T11<br/>fuel allocation · reconciliation · Device Shares · LEAP-ready rows"]
+    C7["Post-reconciliation re-anchor<br/>optional T5/T6 pre/post outputs"]
+  end
+
+  subgraph D["D. LEAP handoff and official projection"]
+    D1["LEAP import workbook<br/>strict row structure + IDs where available"]
+    D2["Lifecycle profile workbooks/ZIP"]
+    D3["LEAP desktop import"]
+    D4["Researchers edit future scenario assumptions in LEAP"]
+    D5["LEAP official road results"]
+  end
+
+  subgraph E["E. QA and communication outputs"]
+    E1["Module CSV diagnostics<br/>results/economy/module*/"]
+    E2["Dashboard HTML<br/>pre/post reconciliation views"]
+    E3["M7 optional Python mirror<br/>T13 comparison outputs"]
+    E4["LEAP results export<br/>comparison input"]
+  end
+
+  A1 --> A2
+  A2 --> A4
+  A3 --> A4
+  A4 --> A5 --> A6 --> B1 --> B2 --> B3 --> B4
+  A5 --> C0
+  B4 -. "optional backend run" .-> C0
+  C0 --> C2 --> C3 --> C4 --> C6 --> D1 --> D3 --> D4 --> D5
+  C2 --> C5 --> C6
+  C6 --> C7
+  C7 -. "rerun turnover if enabled" .-> C4
+  C4 --> D2 --> D3
+  C6 --> E1
+  C7 --> E2
+  C6 --> E2
+  D5 --> E4 --> E3
+  C6 --> E3 --> E2
+
+  classDef source fill:#D3455B,color:#ffffff,stroke:#D3455B;
+  classDef ui fill:#F7C325,color:#334155,stroke:#F7C325;
+  classDef module fill:#2C88D9,color:#ffffff,stroke:#2C88D9;
+  classDef recon fill:#1AAE9F,color:#ffffff,stroke:#1AAE9F;
+  classDef leap fill:#BD34D1,color:#ffffff,stroke:#BD34D1;
+  classDef qa fill:#788896,color:#ffffff,stroke:#788896;
+
+  class A1,A2,A3,A4,A5,A6 source;
+  class B1,B2,B3,B4 ui;
+  class C0,C2,C3,C4,C5 module;
+  class C6,C7 recon;
+  class D1,D2,D3,D4,D5 leap;
+  class E1,E2,E3,E4 qa;

@@ -383,6 +383,8 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
     t9 = module6_outputs.get("T9", pd.DataFrame())
     t10 = module6_outputs.get("T10", pd.DataFrame())
     t12 = module6_outputs.get("T12", pd.DataFrame())
+    t5_pre = module6_outputs.get("T5_pre_reconciliation", pd.DataFrame())
+    t5_post = module6_outputs.get("T5_post_reconciliation", pd.DataFrame())
 
     if t12 is not None and not t12.empty and {"fuel", "remaining_esto_pj", "post_reconciliation_model_pj", "pre_reconciliation_model_pj"}.issubset(t12.columns):
         x = np.arange(len(t12))
@@ -448,6 +450,55 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
             ax.tick_params(axis="x", rotation=30)
             ax.grid(axis="y", alpha=0.3)
             saved.append(_save(fig, out / "module6_allocation_concentration.png"))
+
+    stock_cols = {"year", "vehicle_type", "target_stock"}
+    if (
+        t5_pre is not None
+        and t5_post is not None
+        and not t5_pre.empty
+        and not t5_post.empty
+        and stock_cols.issubset(t5_pre.columns)
+        and stock_cols.issubset(t5_post.columns)
+    ):
+        pre = t5_pre.copy()
+        post = t5_post.copy()
+        pre["target_stock"] = pd.to_numeric(pre["target_stock"], errors="coerce")
+        post["target_stock"] = pd.to_numeric(post["target_stock"], errors="coerce")
+        pre_series = pre.groupby(["year", "vehicle_type"])["target_stock"].sum().reset_index()
+        post_series = post.groupby(["year", "vehicle_type"])["target_stock"].sum().reset_index()
+        vehicle_types = sorted(set(pre_series["vehicle_type"]).union(post_series["vehicle_type"]))
+        if vehicle_types:
+            fig, ax = plt.subplots(figsize=(11, 5))
+            colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+            for idx, vt in enumerate(vehicle_types):
+                color = colors[idx % len(colors)] if colors else None
+                pre_vt = pre_series[pre_series["vehicle_type"] == vt].sort_values("year")
+                post_vt = post_series[post_series["vehicle_type"] == vt].sort_values("year")
+                if not pre_vt.empty:
+                    ax.plot(
+                        pre_vt["year"],
+                        pre_vt["target_stock"],
+                        linestyle="--",
+                        linewidth=1.4,
+                        color=color,
+                        alpha=0.65,
+                        label=f"{vt} pre",
+                    )
+                if not post_vt.empty:
+                    ax.plot(
+                        post_vt["year"],
+                        post_vt["target_stock"],
+                        linestyle="-",
+                        linewidth=2.0,
+                        color=color,
+                        label=f"{vt} post",
+                    )
+            ax.set_title("Module 6: Stock trajectory after base-year reconciliation")
+            ax.set_xlabel("Year")
+            ax.set_ylabel("Vehicles")
+            ax.legend(fontsize=8, ncol=2)
+            ax.grid(alpha=0.3)
+            saved.append(_save(fig, out / "module6_stock_trajectory_reconciliation.png"))
 
     return saved
 

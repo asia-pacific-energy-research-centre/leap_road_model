@@ -1,15 +1,14 @@
 """
 Generate Module 1 default inputs for all APEC economies.
 
-This script calls road_model_inputs_interface generation code directly —
-no website required. The outputs are written to:
+This script calls road_model_inputs_interface generation code directly; no
+website is required. The outputs are written to:
 
     leap_road_model/input_data/module1_defaults/{version}/{economy}/
-        road_module1_values_<ECONOMY>_<VERSION>_<YYYYMMDD>.csv
-        road_module1_default_filled_inputs_<ECONOMY>.csv  (legacy compatibility)
+        road_module1_values_<ECONOMY>.csv
 
-These files are consumed automatically by road_workflow.py when running
-the road model. Refresh them whenever Module 1 assumptions are updated.
+These files are consumed automatically by road_workflow.py when running the
+road model. Refresh them whenever Module 1 assumptions are updated.
 
 Usage
 -----
@@ -85,6 +84,7 @@ VALID_BASE_DRIVES_BY_VEHICLE_TYPE = {
     "Trucks": {"ICE", "BEV", "FCEV"},
     "LCVs": {"ICE", "PHEV", "BEV", "FCEV"},
 }
+MODULE1_LONG_KEY_COLUMNS = ["Economy", "Scenario", "Branch Path", "Variable", "Year"]
 
 
 def _profile_prefixed_branch_path(branch_path: object, variable: object) -> str:
@@ -138,6 +138,35 @@ def _filter_out_of_scope_model_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[~out_of_scope].copy()
 
 
+def _drop_exact_duplicate_long_rows(df: pd.DataFrame, source_path: Path) -> pd.DataFrame:
+    """Drop exact duplicate Module 1 long rows, but reject conflicting duplicate keys."""
+    if not set(MODULE1_LONG_KEY_COLUMNS).issubset(df.columns) or df.empty:
+        return df
+
+    duplicate_mask = df.duplicated(MODULE1_LONG_KEY_COLUMNS, keep=False)
+    if not duplicate_mask.any():
+        return df
+
+    duplicate_rows = df.loc[duplicate_mask].copy()
+    value_columns = [col for col in df.columns if col not in MODULE1_LONG_KEY_COLUMNS]
+    conflicting_keys: list[dict[str, object]] = []
+    for _, group in duplicate_rows.groupby(MODULE1_LONG_KEY_COLUMNS, dropna=False):
+        comparable = group[value_columns].fillna("<NA>").astype(str).drop_duplicates()
+        if len(comparable) > 1:
+            conflicting_keys.append(group.iloc[0][MODULE1_LONG_KEY_COLUMNS].to_dict())
+
+    if conflicting_keys:
+        sample = conflicting_keys[:5]
+        raise ValueError(
+            f"Conflicting duplicate Module 1 keys in {source_path}: {sample}"
+        )
+
+    dropped = int(len(df) - len(df.drop_duplicates(MODULE1_LONG_KEY_COLUMNS, keep="first")))
+    if dropped:
+        print(f"Removed {dropped} exact duplicate Module 1 row(s) from {source_path}")
+    return df.drop_duplicates(MODULE1_LONG_KEY_COLUMNS, keep="first").copy()
+
+
 def _legacy_wide_to_canonical_long(wide_df: pd.DataFrame, economy_code: str, version: str) -> pd.DataFrame:
     """Convert the legacy Module 1 wide CSV into the canonical long CSV contract."""
     year_cols = [col for col in wide_df.columns if YEAR_PATTERN.match(str(col))]
@@ -171,14 +200,25 @@ def _legacy_wide_to_canonical_long(wide_df: pd.DataFrame, economy_code: str, ver
     return long_df[[col for col in keep if col in long_df.columns]].copy()
 
 
-def _write_long_csv_copies(output_root: Path, version: str) -> list[Path]:
-    """Write canonical long CSV copies next to legacy generated economy files."""
+def _prepare_long_csvs(output_root: Path, version: str) -> list[Path]:
+    """Return current long CSVs, converting legacy wide files when needed."""
     version_root = output_root / version
     today = date.today().strftime("%Y%m%d")
-    written: list[Path] = []
+    long_paths: list[Path] = []
 
     for economy_dir in sorted(path for path in version_root.iterdir() if path.is_dir()):
         economy_code = economy_dir.name
+        current_long_candidates = sorted(economy_dir.glob(f"{LONG_PREFIX}*.csv"))
+        if current_long_candidates:
+            for long_path in current_long_candidates:
+                long_df = pd.read_csv(long_path, low_memory=False)
+                filtered_long_df = _filter_out_of_scope_model_rows(long_df)
+                cleaned_long_df = _drop_exact_duplicate_long_rows(filtered_long_df, source_path=long_path)
+                if len(cleaned_long_df) != len(long_df):
+                    cleaned_long_df.to_csv(long_path, index=False)
+                long_paths.append(long_path)
+            continue
+
         legacy_candidates = sorted(economy_dir.glob(f"{LEGACY_PREFIX}*.csv"))
         if not legacy_candidates:
             continue
@@ -189,6 +229,7 @@ def _write_long_csv_copies(output_root: Path, version: str) -> list[Path]:
             filtered_wide_df.to_csv(legacy_path, index=False)
         wide_df = filtered_wide_df
         long_df = _legacy_wide_to_canonical_long(wide_df, economy_code=economy_code, version=version)
+        long_df = _drop_exact_duplicate_long_rows(long_df, source_path=legacy_path)
         long_path = economy_dir / f"{LONG_PREFIX}{economy_code}_{version}_{today}.csv"
 
         for old_long_path in economy_dir.glob(f"{LONG_PREFIX}*.csv"):
@@ -196,22 +237,22 @@ def _write_long_csv_copies(output_root: Path, version: str) -> list[Path]:
                 old_long_path.unlink(missing_ok=True)
 
         long_df.to_csv(long_path, index=False)
-        written.append(long_path)
+        long_paths.append(long_path)
 
-    return written
+    return long_paths
 
 
 def _write_local_manifest(output_root: Path, version: str, long_paths: list[Path]) -> Path:
     """Write a package manifest using local package paths."""
     version_root = output_root / version
     manifest_path = version_root / "road_module1_manifest.csv"
-    rows = []
+    rows: list[dict[str, str]] = []
     for path in sorted(long_paths):
         economy_code = path.parent.name
         rows.append({
             "default_version": version,
             "economy": economy_code,
-            "file_type": "canonical_long_values",
+            "file_type": "default_filled_inputs",
             "path": str(path),
         })
         legacy_candidates = sorted(path.parent.glob(f"{LEGACY_PREFIX}*.csv"))
@@ -223,7 +264,8 @@ def _write_local_manifest(output_root: Path, version: str, long_paths: list[Path
                 "path": str(legacy_path),
             })
 
-    pd.DataFrame(rows).to_csv(manifest_path, index=False)
+    columns = ["default_version", "economy", "file_type", "path"]
+    pd.DataFrame(rows, columns=columns).to_csv(manifest_path, index=False)
     return manifest_path
 
 
@@ -268,17 +310,17 @@ def generate_defaults(version: str = DEFAULT_VERSION, no_enforce: bool = False) 
         years=DEFAULT_YEARS,
         enforce_source_backed_values=not no_enforce,
     )
-    long_paths = _write_long_csv_copies(output_root=output_root, version=DEFAULT_VERSION)
+    long_paths = _prepare_long_csvs(output_root=output_root, version=DEFAULT_VERSION)
     support_paths = _filter_package_support_csvs(output_root=output_root, version=DEFAULT_VERSION)
     manifest_path = _write_local_manifest(output_root=output_root, version=DEFAULT_VERSION, long_paths=long_paths)
 
     print(f"\nDone. Generated defaults for {len(paths)} economies.")
-    print(f"Long CSV files written              : {len(long_paths)}")
+    print(f"Long CSV files available            : {len(long_paths)}")
     print(f"Support CSV files cleaned           : {len(support_paths)}")
     print(f"Manifest                            : {manifest_path}")
     print(f"Location: {output_root / DEFAULT_VERSION}")
     print(
-        "\nNext step: run the road model via run_with_config() — it will automatically\n"
+        "\nNext step: run the road model via run_with_config(); it will automatically\n"
         f"load defaults from {output_root}."
     )
 

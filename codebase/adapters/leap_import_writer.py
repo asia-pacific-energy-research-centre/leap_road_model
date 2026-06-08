@@ -31,6 +31,18 @@ LEAP_IMPORT_COLUMNS = [
     "Per...",
     "Expression",
 ]
+LEVEL_COLUMNS = [
+    "Level 1",
+    "Level 2",
+    "Level 3",
+    "Level 4",
+    "Level 5",
+    "Level 6",
+    "Level 7",
+    "Level 8...",
+]
+LEAP_LEVEL_SPACER_COLUMN = ""
+LEAP_OUTPUT_COLUMNS = [*LEAP_IMPORT_COLUMNS, LEAP_LEVEL_SPACER_COLUMN, *LEVEL_COLUMNS]
 NOT_NEEDED_COLUMNS = [
     "side",
     "reason",
@@ -127,6 +139,58 @@ VALID_FUELS_BY_DRIVE = {
     "FCEV": {"Hydrogen"},
 }
 
+SCALE_MULTIPLIERS = {
+    "": 1.0,
+    "%": 1.0,
+    "thousand": 1_000.0,
+    "thousands": 1_000.0,
+    "million": 1_000_000.0,
+    "millions": 1_000_000.0,
+    "billion": 1_000_000_000.0,
+    "billions": 1_000_000_000.0,
+}
+
+
+def _scale_multiplier(scale: object) -> float:
+    if pd.isna(scale):
+        return 1.0
+    return SCALE_MULTIPLIERS.get(str(scale).strip().lower(), 1.0)
+
+
+def _scale_label_for_export(scale: object, export_values_in_raw_units: bool) -> str:
+    scale_text = "" if pd.isna(scale) else str(scale).strip()
+    if not export_values_in_raw_units:
+        return scale_text
+    return "%" if scale_text == "%" else ""
+
+
+def _pair_key(df: pd.DataFrame) -> pd.Series:
+    return df["Branch Path"].fillna("").astype(str) + "\u241f" + df["Variable"].fillna("").astype(str)
+
+
+def _first_text(df: pd.DataFrame, column: str) -> str:
+    if column not in df.columns:
+        return ""
+    values = df[column].fillna("").astype(str).str.strip()
+    values = values[values.ne("")]
+    return values.iloc[0] if not values.empty else ""
+
+
+def _branch_level_values(branch_path: object, level_count: int = len(LEVEL_COLUMNS)) -> list[str]:
+    parts = [part.strip() for part in str(branch_path or "").split("\\") if part.strip()]
+    values = parts[:level_count]
+    return values + [""] * (level_count - len(values))
+
+
+def _add_level_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out[LEAP_LEVEL_SPACER_COLUMN] = ""
+    level_rows = out["Branch Path"].map(_branch_level_values).tolist()
+    levels = pd.DataFrame(level_rows, columns=LEVEL_COLUMNS, index=out.index)
+    for column in LEVEL_COLUMNS:
+        out[column] = levels[column]
+    return out
+
 
 def load_reference_id_table(
     reference_path: str | Path,
@@ -165,6 +229,7 @@ def _normalise_t11(leap_ready: pd.DataFrame) -> pd.DataFrame:
         "variable": "Variable",
         "scenario": "Scenario",
         "unit": "Units",
+        "scale": "Scale",
     }
     df = leap_ready.rename(columns={k: v for k, v in rename.items() if k in leap_ready.columns}).copy()
     required = ["Branch Path", "Variable", "Scenario", "year", "value"]
@@ -177,6 +242,8 @@ def _normalise_t11(leap_ready: pd.DataFrame) -> pd.DataFrame:
     df["year"] = df["year"].astype(int)
     if "Units" not in df.columns:
         df["Units"] = ""
+    if "Scale" not in df.columns:
+        df["Scale"] = ""
     return df
 
 
@@ -365,6 +432,7 @@ def build_leap_import_tables(
     reference_ids: pd.DataFrame,
     economy_long_name: str,
     region_id: int | None = None,
+    export_values_in_raw_units: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, object]], pd.DataFrame]:
     """Build LEAP/FOR_VIEWING sheets plus coverage warnings and suppressed rows."""
     df = _expand_metric_rows_to_reference_fuels(_normalise_t11(leap_ready), reference_ids)
@@ -378,7 +446,8 @@ def build_leap_import_tables(
                 "Branch Path": branch_path,
                 "Variable": variable,
                 "Scenario": scenario,
-                "Units": group["Units"].dropna().astype(str).iloc[0] if "Units" in group else "",
+                "Units": _first_text(group, "Units"),
+                "Scale": _first_text(group, "Scale"),
                 "Expression": to_leap_expression(series),
             }
         )
@@ -394,14 +463,10 @@ def build_leap_import_tables(
 
     warnings: list[dict[str, object]] = []
     not_needed_rows: list[dict[str, object]] = []
-    reference_pairs = set(
-        reference_ids[["Branch Path", "Variable"]]
-        .astype(str)
-        .agg("\u241f".join, axis=1)
-    )
+    reference_pairs = set(_pair_key(reference_ids))
     reference_branches = set(reference_ids["Branch Path"].fillna("").astype(str))
     extra_candidates = merged[merged["_merge"].eq("left_only")].copy()
-    extra_candidates["_pair_key"] = extra_candidates[["Branch Path", "Variable"]].astype(str).agg("\u241f".join, axis=1)
+    extra_candidates["_pair_key"] = _pair_key(extra_candidates)
     for _, row in extra_candidates.iterrows():
         if not _is_active_scope_row(row):
             not_needed_rows.append(_not_needed_row(row, "model", "outside_active_scope", "Model row is outside the active LEAP road import scope."))
@@ -423,15 +488,11 @@ def build_leap_import_tables(
             }
         )
 
-    model_pairs = set(
-        model_rows[["Branch Path", "Variable"]]
-        .astype(str)
-        .agg("\u241f".join, axis=1)
-    )
+    model_pairs = set(_pair_key(model_rows))
     model_branches = set(model_rows["Branch Path"].fillna("").astype(str))
     missing_rows = reference_ids.merge(model_rows[key_columns], on=key_columns, how="left", indicator=True)
     missing_rows = missing_rows[missing_rows["_merge"].eq("left_only")].copy()
-    missing_rows["_pair_key"] = missing_rows[["Branch Path", "Variable"]].astype(str).agg("\u241f".join, axis=1)
+    missing_rows["_pair_key"] = _pair_key(missing_rows)
     for _, row in missing_rows.iterrows():
         is_not_needed, reason, message = _is_not_needed_reference_row(row)
         if is_not_needed:
@@ -464,10 +525,35 @@ def build_leap_import_tables(
     for column in ["Scale", "Units", "Per..."]:
         ref_col = f"{column}_reference"
         if ref_col in matched.columns:
-            matched[column] = matched[ref_col].fillna(matched.get(column, ""))
+            model_values = matched[column] if column in matched.columns else ""
+            matched[column] = model_values.where(model_values.fillna("").astype(str).str.strip().ne(""), matched[ref_col])
         elif column not in matched.columns:
             matched[column] = ""
         matched[column] = matched[column].fillna("")
+
+    matched["Scale"] = matched["Scale"].map(
+        lambda scale: _scale_label_for_export(scale, export_values_in_raw_units)
+    )
+    scale_by_key = matched[key_columns + ["Scale"]].drop_duplicates(subset=key_columns)
+    df_for_values = df.merge(scale_by_key, on=key_columns, how="left", suffixes=("", "_matched"))
+    df_for_values["Scale"] = df_for_values["Scale_matched"].fillna(df_for_values.get("Scale", ""))
+    if not export_values_in_raw_units:
+        df_for_values["value"] = df_for_values["value"] / df_for_values["Scale"].map(_scale_multiplier)
+
+    expression_rows = []
+    for key, group in df_for_values.groupby(key_columns, dropna=False):
+        branch_path, variable, scenario = key
+        series = group.set_index("year")["value"].sort_index()
+        expression_rows.append(
+            {
+                "Branch Path": branch_path,
+                "Variable": variable,
+                "Scenario": scenario,
+                "Expression": to_leap_expression(series),
+            }
+        )
+    expression_df = pd.DataFrame(expression_rows)
+    matched = matched.drop(columns=["Expression"], errors="ignore").merge(expression_df, on=key_columns, how="left")
 
     matched["Region"] = economy_long_name
     if region_id is not None:
@@ -481,20 +567,20 @@ def build_leap_import_tables(
             }
         )
 
-    leap_sheet = matched[LEAP_IMPORT_COLUMNS].copy()
+    leap_sheet = _add_level_columns(matched[LEAP_IMPORT_COLUMNS])
     id_columns = ["BranchID", "VariableID", "ScenarioID", "RegionID"]
     for column in id_columns:
         leap_sheet[column] = pd.to_numeric(leap_sheet[column], errors="coerce").astype("Int64")
     leap_sheet = leap_sheet.sort_values(["BranchID", "VariableID", "ScenarioID"]).reset_index(drop=True)
 
-    viewing_values = df[key_columns + ["year", "value"]].merge(
+    viewing_values = df_for_values[key_columns + ["year", "value"]].merge(
         leap_sheet.drop(columns=["Expression"]),
         on=key_columns,
         how="inner",
     )
     viewing = (
         viewing_values.pivot_table(
-            index=[column for column in LEAP_IMPORT_COLUMNS if column != "Expression"],
+            index=[column for column in LEAP_OUTPUT_COLUMNS if column != "Expression"],
             columns="year",
             values="value",
             aggfunc="first",
@@ -503,7 +589,9 @@ def build_leap_import_tables(
         .rename_axis(columns=None)
     )
     year_columns = sorted([column for column in viewing.columns if isinstance(column, int)])
-    viewing_sheet = viewing[[column for column in LEAP_IMPORT_COLUMNS if column != "Expression"] + year_columns]
+    viewing_sheet = viewing[
+        [column for column in LEAP_OUTPUT_COLUMNS if column != "Expression"] + year_columns
+    ]
     not_needed_sheet = pd.DataFrame(not_needed_rows, columns=NOT_NEEDED_COLUMNS)
     return leap_sheet, viewing_sheet, warnings, not_needed_sheet
 
@@ -652,6 +740,7 @@ def write_leap_import_workbook(
     coverage_diagnostics_path: str | Path | None = None,
     manual_missing_rows_path: str | Path | None = DEFAULT_MANUAL_MISSING_ROWS_PATH,
     economy_code: str | None = None,
+    export_values_in_raw_units: bool = False,
 ) -> list[dict[str, object]]:
     """Write a strict LEAP import workbook and return structured warnings."""
     reference_ids = load_reference_id_table(reference_path)
@@ -660,6 +749,7 @@ def write_leap_import_workbook(
         reference_ids=reference_ids,
         economy_long_name=economy_long_name,
         region_id=region_id,
+        export_values_in_raw_units=export_values_in_raw_units,
     )
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

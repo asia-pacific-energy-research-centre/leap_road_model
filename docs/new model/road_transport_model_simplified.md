@@ -1,23 +1,22 @@
-# Road transport model detailed description
+﻿# Road transport model conceptual summary
 
 > **Purpose note**
-> This document is the compact conceptual description of the road transport model in `leap_road_model`. For module sequencing, implementation details, and table outputs, use `road_transport_model_detailed.md`.
+> This document is the compact conceptual description of the road transport model in `leap_road_model`. For module sequencing, implementation details, and table outputs, use `road_transport_model_detailed.md`. For Module 1 data sourcing, the CSV contract, researcher UI workflow, and the static row contract, use `multinode_road_module1_repo_guide.md` in `road_model_inputs_interface/docs/new model/`.
 
 ## Contents
 
-| Section | Description |
-| --- | --- |
-| [1. Scope](#1-scope) | What transport types, vehicle types, and drive types the model covers. |
-| [2. Model Logic](#2-model-logic) | High-level workflow from input preparation through to LEAP export. |
-| [3. Inputs Needed Before LEAP](#3-inputs-needed-before-leap) | Base-year and projection inputs required before the workflow can run. |
-| [4. Passenger Stock](#4-passenger-stock) | How passenger stock is projected using a vehicle-equivalent motorisation envelope and an S-curve saturation approach. |
-| [5. Freight Stock](#5-freight-stock) | How freight stock is projected using a GDP-elasticity method. Includes a detailed worked example of a potential future design change (the weighted-index approach) as a template for how model additions and code changes are made in this codebase. |
-| [6. Sales, Survival, and Turnover](#6-sales-survival-and-turnover) | Stock-flow accounting: how annual sales are derived from stock targets and survival curves. |
-| [7. Sales Shares](#7-sales-shares) | How base-year and projected sales shares are constructed and seeded. |
-| [8. Base-Year Energy and Reconciliation](#8-base-year-energy-and-reconciliation) | Energy calibration against ESTO and the reconciliation factor approach. |
-| [9. LEAP Export Package](#9-leap-export-package) | What the model hands to LEAP and how the export workbook is structured. |
-| [10. Validation Checks](#10-validation-checks) | Python-side sanity checks run before and after LEAP export. |
-| [11. Current Reference Files](#11-current-reference-files) | Key source files, config files, and supplemental data files used by the workflow. |
+1. [Scope](#1-scope)
+2. [Model Logic](#2-model-logic)
+3. [Inputs Needed Before LEAP](#3-inputs-needed-before-leap)
+4. [Passenger Stock](#4-passenger-stock)
+5. [Freight Stock](#5-freight-stock)
+6. [Sales, Survival, and Turnover](#6-sales-survival-and-turnover)
+7. [Sales Shares](#7-sales-shares)
+8. [Base-Year Energy and Reconciliation](#8-base-year-energy-and-reconciliation)
+9. [LEAP Export Package](#9-leap-export-package)
+10. [How to Read the T Tables](#10-how-to-read-the-t-tables)
+11. [Validation Checks](#11-validation-checks)
+12. [Current Reference Files](#12-current-reference-files)
 
 ![Road transport model — quick view](Road%20transport%20model%20%E2%80%94%20quick%20view.png)
 
@@ -25,33 +24,69 @@
 
 The road transport model is a Python-prepared, LEAP-executed stock-flow model. Python prepares calibrated base-year inputs and scenario assumptions; LEAP remains the official projection platform.
 
-The model covers:
+The road branch hierarchy runs `transport type → vehicle type → drive type + size where relevant → fuel type`. Each leaf in the tree below is a LEAP branch:
 
 ```text
-Transport road
-  Freight road
-    Trucks
-    LCVs
+Demand
   Passenger road
+    LPVs                                 [sizes: small, medium, large]
+      ICE <size>
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      HEV <size>
+        Motor gasoline, Gas and diesel oil, Biogasoline, Biodiesel, Efuel
+      EREV <size>
+        Electricity, Motor gasoline, Biogasoline, Efuel
+      PHEV <size>
+        Electricity, Motor gasoline, Biogasoline, Efuel
+      BEV <size>
+        Electricity
+      FCEV <size>
+        Hydrogen
     Motorcycles
+      ICE
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      BEV
+        Electricity
+      FCEV
+        Hydrogen
     Buses
-    LPVs
+      ICE
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      BEV
+        Electricity
+      FCEV
+        Hydrogen
+  Freight road
+    Trucks                               [sizes: medium, heavy]
+      ICE <size>
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      BEV <size>
+        Electricity
+      FCEV <size>
+        Hydrogen
+    LCVs
+      ICE
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      PHEV
+        Electricity, Motor gasoline, Biogasoline, Efuel
+      BEV
+        Electricity
+      FCEV
+        Hydrogen
 ```
 
-The working hierarchy is:
-
-```text
-transport type -> vehicle type -> drive type + size where relevant -> fuel type
-```
-
-Current scope rules (useful when comparing to the 9th edition and earlier 10th edition LEAP models):
+Scope notes (useful when comparing to the 9th edition and earlier 10th edition LEAP models):
 
 - `HEV` and `EREV` are LPV-only.
 - Truck `PHEV` is out of scope.
-- LPVs can use `small`, `medium`, and `large` size labels.
-- Trucks can use `medium` and `heavy` size labels.
-- LCVs and LPVs can use PHEV; Buses and Motorcycles do not use PHEV in the current
-  branch matrix.
+- LCVs and LPVs can use PHEV; Buses and Motorcycles do not.
+- HEV excludes gaseous fuels (LPG, Natural gas, LNG, Biogas) — those are ICE-only.
+- Size labels appear as a suffix on the drive type in LEAP branch paths, e.g. `ICE medium`, `BEV heavy`.
 
 ## 2. Model Logic
 
@@ -71,6 +106,11 @@ optional Python mirror validation
 ```
 
 ![Road model interface and LEAP pipeline workflow](Road%20model%20interface%20and%20LEAP%20pipeline%20workflow.png)
+
+The pipeline is now two linked repositories: `road_model_inputs_interface`
+generates and preserves the Module 1 long CSV package, while `leap_road_model`
+loads that package, runs Modules 2 to 6, and writes diagnostics and the LEAP
+import workbook.
 
 The goal is a calibrated base-year road model that matches ESTO road energy by fuel while producing the stock, sales, mileage, fuel economy, Device Share, survival, and projection inputs needed by LEAP.
 
@@ -93,10 +133,12 @@ Projection inputs:
 - population and GDP projections;
 - passenger saturation assumptions;
 - vehicle-equivalent weights;
+- passenger stock growth-rate adjustment;
+- freight GDP-elasticity adjustment;
 - vehicle-type `Stock Share` assumptions for LPVs, motorcycles, buses, trucks,
   and LCVs;
-- freight stock or activity growth proxies;
-- sales-share paths or seeded trajectories;
+- freight road energy and GDP history for elasticity estimation;
+- base-year and future `Sales Share` rows;
 - mileage, efficiency, and scrappage assumptions for LEAP scenarios.
 
 Module 1 defaults are the primary upstream source for base-year road assumptions
@@ -121,10 +163,17 @@ The passenger method:
 1. Calculates base-year vehicle-equivalent ownership per capita.
 2. Projects ownership toward a saturation level.
 3. Uses configurable vehicle-equivalent weights.
-4. Applies bounds to the growth parameter.
-5. Flags already saturated economies and bound hits for review.
+4. Applies the Module 1 `Passenger Stock Growth Rate Adjustment` multiplier to
+   the estimated S-curve growth parameter before bounds are applied.
+5. Applies bounds to the final growth parameter.
+6. Flags already saturated economies and bound hits for review.
 
 For saturated economies, ownership should remain broadly stable unless a reviewed economy-specific assumption says otherwise.
+
+After Module 6 reconciliation, passenger stock targets can be re-anchored to
+the reconciled base-year stock. The model preserves the original final-year
+physical stock target and fades the base-year reconciliation adjustment to zero
+by the final projection year.
 
 ## 5. Freight Stock
 
@@ -132,13 +181,17 @@ Freight stock is projected with a bounded GDP-elasticity method. The method uses
 
 The truck/LCV split is held flat at base-year proportions and is not researcher-adjustable. There are no strong projected trends in the truck/LCV mix across APEC economies, so the base-year split is treated as a fixed structural parameter. Researchers should not edit freight `Stock Share` values in Module 1; the 2040 and 2060 anchor values are seeded equal to the base year as a deliberate default.
 
-This part of the model should remain highly diagnostic. Missing historical data, weak trends, and bounded elasticities should be visible in review outputs. The current implementation carries diagnostics through Module 3 outputs: raw elasticity, final elasticity, whether it was clamped, freight energy growth, GDP growth, data source, and a short note.
+Module 1 also exposes a `Freight GDP Elasticity Adjustment` multiplier. A value
+of `1.0` keeps the estimated elasticity unchanged; values above or below `1.0`
+scale the estimated elasticity before it is clamped to bounds.
+
+This part of the model should remain highly diagnostic. Missing historical data, weak trends, adjustments, and bounded elasticities should be visible in review outputs. The current implementation carries diagnostics through Module 3 outputs: raw elasticity, final elasticity, whether it was clamped, freight energy growth, GDP growth, adjustment value, data source, and a short note.
 
 ### How the current projection works
 
 `project_freight_stocks` (`codebase/modules/module3_stock_targets.py`) operates in three steps:
 
-1. **Estimate one GDP elasticity** from historical freight road energy growth vs GDP growth over the preceding 10 years (COVID years excluded). The elasticity is clamped to [0.0, 2.0] and defaults to 0.8 if data are insufficient.
+1. **Estimate one GDP elasticity** from historical freight road energy growth vs GDP growth over the preceding 10 years (COVID years excluded). The elasticity is multiplied by the Module 1 adjustment, clamped to [0.0, 2.0], and defaults to 0.8 if data are insufficient.
 
 2. **Project a single physical-count total** from the sum of base-year Truck and LCV stocks:
 
@@ -156,6 +209,11 @@ This part of the model should remain highly diagnostic. Missing historical data,
    where `share_physical(vt) = base_stock(vt) / total_physical_base`.
 
 Because the shares are held flat, this is identical to applying the same elasticity factor to each vehicle type independently — the total-first architecture is already in place but currently uses a plain physical count rather than a weighted aggregate.
+
+After Module 6 reconciliation, freight stock targets can be re-anchored to the
+reconciled base-year stock. Freight preserves the original GDP-elasticity growth
+index from the reconciled base, so the growth shape stays the same while the
+physical stock level moves with the reconciled starting point.
 
 ### Relationship to the passenger approach
 
@@ -190,95 +248,16 @@ target(vt, y)       = total_physical(y) × physical_share(vt)
                     = base_stock(vt) × GDP_ratio^e   ✓ same result
 ```
 
-The two methods diverge only if the researcher can supply time-varying shares that shift the truck/LCV mix. Since that input is deliberately not exposed, the weighted approach adds no new information to the projection. The main benefit it would bring is a meaningful single-number diagnostic — a `freight_stock_index` analogous to the `M_envelope` for passenger — which is currently not needed.
+The two methods diverge only if the researcher can supply time-varying shares
+that shift the truck/LCV mix. Since that input is deliberately not exposed, the
+weighted approach adds no new information to the projection. The main benefit it
+would bring is a meaningful single-number diagnostic — a `freight_stock_index`
+analogous to the `M_envelope` for passenger — which is currently not needed.
 
-### How to implement the weighted-index approach if needed later
-
-Note this section was written using ai and the implementation details may not be fully accurate. The main point is that the change is straightforward and contained, and the projection results SHOULD BE identical with fixed shares.
-
-The change is self-contained to `project_freight_stocks` and a schema addition:
-
-**1. Add `vehicle_equivalent_weights` parameter** (already available for all five vehicle types from `apec_vehicle_equivalent_weights.csv` and the `get_vehicle_equivalent_weights()` loader in `road_module1_defaults.py`):
-
-```python
-def project_freight_stocks(
-    years, gdp, energy_series, base_stocks,
-    vehicle_type_shares=None,
-    elasticity_overrides=None,
-    vehicle_equivalent_weights=None,   # ← add this
-    cfg=None,
-):
-```
-
-**2. Switch the aggregate from physical to weighted:**
-
-```python
-weights = vehicle_equivalent_weights or {"Trucks": 5.0, "LCVs": 1.5}
-total_weighted_base = sum(
-    float(base_stocks.get(vt, 0.0)) * weights.get(vt, 1.0)
-    for vt in freight_types
-)
-total_weighted = pd.Series(
-    total_weighted_base * (gdp_ratio ** e),
-    index=gdp_ratio.index,
-).reindex(years)
-freight_stock_index = total_weighted / total_weighted_base  # ← new diagnostic
-```
-
-**3. Derive capacity shares from base-year stocks and weights** (instead of plain physical shares):
-
-```python
-vehicle_type_shares = {
-    vt: pd.Series(
-        float(base_stocks.get(vt, 0.0)) * weights.get(vt, 1.0) / total_weighted_base,
-        index=years,
-    )
-    for vt in freight_types
-}
-```
-
-**4. Back-calculate physical counts by dividing by weight:**
-
-```python
-target_stocks[vt] = (total_weighted * shares) / weights.get(vt, 1.0)
-```
-
-**5. Add `freight_stock_index` to the T5 schema** in `codebase/schemas/tables.py` (one column, same pattern as `motorisation_level` on passenger rows).
-
-**6. Pass `vehicle_equivalent_weights` from `road_workflow.py`** — the workflow already calls `get_vehicle_equivalent_weights()` and passes the result to `run_module3`; `run_module3` would need to forward it to `project_freight_stocks` rather than only to `project_passenger_stocks`.
-
-No Module 1 input changes, no interface changes, no LEAP output changes. Results are unchanged with fixed shares.
-
-**If the weighted-index approach is implemented, researcher control over the freight split should be enabled at the same time.** Allowing the split to vary only makes sense once the projection is working in capacity-share terms; doing it on physical shares with a physical-count total produces a different aggregate trajectory depending on which vehicle type grows faster. The two changes are coupled and should be shipped together.
-
-### Enabling researcher control over the freight split (Module 1 interface)
-
-The passenger split is already a worked example. The freight side would follow the same pattern:
-
-**`road_model_inputs_interface` back-end (`road_module1_defaults.py`):**
-
-- `_ensure_vehicle_type_stock_share_rows()` already seeds 2040 and 2060 `Stock Share` anchor values for `Demand\Freight road\Trucks` and `Demand\Freight road\LCVs` equal to the base-year share. Currently this is a deliberate no-op (base year = 2040 = 2060). To enable editing, no code change is needed here — the rows are already generated. The only change is to stop treating the freight anchor values as read-only in documentation and tooling.
-
-**`road_workflow.py`:**
-
-- `_interpolate_vehicle_type_stock_shares()` already reads both passenger and freight `Stock Share` rows from Module 1 and interpolates them. No change needed.
-- `_convert_passenger_physical_to_capacity_shares()` converts passenger physical shares to capacity shares using vehicle-equivalent weights. A parallel `_convert_freight_physical_to_capacity_shares()` function would be needed to do the same for freight before passing shares to `project_freight_stocks`. The logic is identical: `capacity_share(vt) = physical_share(vt) × weight(vt) / sum(physical_share × weight)`.
-
-**`road_model_inputs_interface` front-end (`app.js`):**
-
-- The existing stock-share UI section renders a "sums to 100" validation for passenger groups (`buildRoadStockShareValidationSummary`). Extend this to also validate the freight group (Trucks + LCVs sum to 100) at the same 2040 and 2060 anchor years.
-- The passenger anchor cells are already editable in the standard year-column table. Freight anchor cells are also in the table by the same mechanism — they will become naturally editable once the documentation no longer says "do not edit". No UI code change is strictly required, but adding freight to the stock-share validation summary is worthwhile.
-
-**Summary of coupled changes:**
-
-| Component | Change |
-| --- | --- |
-| `project_freight_stocks` | switch to weighted total + capacity shares (steps 1–4 above) |
-| `road_workflow.py` | add `_convert_freight_physical_to_capacity_shares()`, pass result to Module 3 |
-| `road_module1_defaults.py` | no change; freight anchor rows already seeded |
-| `app.js` | extend `buildRoadStockShareValidationSummary` to include freight group |
-| `schemas/tables.py` | add `freight_stock_index` column to T5 |
-| Documentation | update this section and the workflow guide to say freight split is researcher-adjustable |
+If the model later allows a researcher-adjustable truck/LCV split, that change
+should be paired with a weighted freight capacity index. Using time-varying
+physical-count shares with a physical-count total would make the aggregate
+freight trajectory depend on which vehicle type grows faster.
 
 ## 6. Sales, Survival, and Turnover
 
@@ -299,9 +278,14 @@ These are needed in LEAP as separate inputs to the usual import workbook structu
 
 ## 7. Sales Shares
 
-Base-year sales shares use observed EV sales data first where available. Any remaining share is allocated using the stock structure or documented defaults.
+Base-year `Sales Share` rows are loaded from Module 1 and can override the
+model-computed base-year shares. Where those rows are absent, Module 5 computes
+base-year shares from the base-year stock structure and optional observed EV
+sales data.
 
-The workflow can seed future sales-share trajectories by scaling 9th edition trajectories to the new base year. These seeded paths are starting assumptions for researcher review, not fixed policy scenarios.
+Future `Sales Share` rows are part of the Module 1 package contract for projected scenarios. They are seeded from 9th edition trajectories re-anchored to the new base year and are the main starting point for the LEAP sales-share scenario. The Module 1 interface does not currently expose researcher editing of future sales shares; the expectation is that researchers will edit them directly in LEAP after the base-year handoff.
+
+If no future rows are received from Module 1, Module 5 falls back to a flat projection from base-year shares. When future rows are available but need re-anchoring, the module preserves the provided non-ICE trajectory shape where possible and keeps ICE as the residual; if that would make ICE negative, it switches to a linear interpolation fallback and flags the case.
 
 ## 8. Base-Year Energy and Reconciliation
 
@@ -316,10 +300,22 @@ The reconciliation sequence is:
 5. Split each branch correction across stock, mileage, and fuel economy using configurable weights and bounds.
 6. Recalculate final energy and Device Shares.
 
-Fuel eligibility comes from configuration. Electricity is handled through the BEV/PHEV process, hydrogen through FCEV branches, and emerging fuels only through explicit reviewed rules.
+Fuel eligibility comes from configuration. Electricity is handled through the BEV/PHEV process. PHEV and EREV are treated alike; EREV is modeled like a more efficient PHEV. Their liquid fuel is gasoline-family only for passenger and freight branches: Motor gasoline, Biogasoline, and Efuel are allowed, while diesel and biodiesel are not. Alternative fuels are spread as a constant proportion of the corresponding original fuel family's use across eligible branches.
+
+Conventional liquid fuels use reviewed priority rules before ordinary stock-share
+allocation. Diesel and biodiesel are allocated to trucks first, then LCVs, then
+passenger vehicles if freight demand has already been saturated. Gasoline and
+biogasoline are allocated to passenger vehicles first, then LCVs; they are not
+allocated to trucks under the road priority rule. Within a priority tier,
+allocation is proportional to branch stock.
+
+Known modeling risk: `Biodiesel` and `Biogasoline` are currently allocated as
+separate observed ESTO fuel streams. When ESTO biofuel energy is large relative
+to eligible modeled demand, this can create high biofuel Device Shares and make
+LEAP/dashboard outputs look like dedicated biofuel vehicle penetration rather
+than blended fuel use. The behavior is left unchanged for now.
 
 ## 9. LEAP Export Package
-
 The LEAP-ready package contains:
 
 - calibrated base-year stock, mileage, fuel economy, and Device Share values;
@@ -331,11 +327,64 @@ T11 follows LEAP branch levels: transport/vehicle stock rows, transport sales
 rows, fuel-level mileage/fuel-economy/device-share rows, and share-control rows
 for `Sales Share` and `Stock Share`. `Activity Level` is excluded. The strict
 Excel writer merges LEAP ID columns from a reference export and returns warnings
-for unmatched rows before writing the `LEAP` and `FOR_VIEWING` sheets.
+for unmatched rows before writing the `LEAP` and `FOR_VIEWING` sheets. The
+`LEAP` sheet preserves the import structure used by LEAP exports: ID columns,
+logical row-key columns, metadata columns, `Expression`, a blank spacer column,
+and `Level 1` through `Level 8...`. The Level columns are generated from
+`Branch Path` by splitting on `\`; blank hierarchy levels remain blank. The
+repo-local reference template is
+`input_data/leap_import_templates/DEFAULT_transport_leap_import_TGT_REF_CA.xlsx`.
 
 The package should preserve enough metadata to trace whether values came from researcher input, defaults, scaling, reconciliation, or fallback logic.
 
-## 10. Validation Checks
+## 10. How to Read the T Tables
+
+The workflow uses `T*` table names as stable output and diagnostic labels. They
+are lineage names, not module numbers.
+
+| Table | Plain-English meaning |
+| --- | --- |
+| `T4` | Base-year branch table from Module 2: stock, mileage, fuel economy, dimensions, and branch paths by road technology/fuel branch. |
+| `T5` | Module 3 stock targets by year and vehicle type, including passenger saturation diagnostics and freight GDP-elasticity diagnostics. |
+| `T6` | Module 4 sales and turnover table: target stock, surviving stock, sales, retirements, and stock-flow diagnostics. |
+| `T6v` | Module 4 vintage profile table: base-year age distribution used by turnover. |
+| `T7` | Module 5 base-year sales shares by vehicle and drive type. |
+| `T7f` | Module 5 future sales-share trajectories, either from explicit inputs, Module 1 projected rows, scaling, or fallback logic. |
+| `T8` | Module 6 provisional fuel allocation from ESTO totals to eligible road branches. |
+| `T9` | Module 6 reconciliation scalars and adjusted base-year stock, mileage, and fuel economy. |
+| `T10` | Module 6 Device Shares after reconciliation. |
+| `T11` | LEAP-ready long table used to write the import workbook. |
+| `T12` | Module 6 fuel reconciliation diagnostics and validation status. |
+| `T12_phev` | PHEV electric/liquid utilisation diagnostics. |
+| `T13` | Optional Module 7 Python mirror outputs for QA. |
+
+### Pre- and post-reconciliation naming
+
+Before Module 6 re-anchors stock trajectories, the active Module 3 and 4 tables
+are simply `T5`, `T6`, and `T6v`. If re-anchoring happens, the workflow saves
+those original tables as `T5_pre_reconciliation`, `T6_pre_reconciliation`, and
+`T6v_pre_reconciliation`, then replaces the active downstream tables with
+post-reconciliation versions.
+
+This means:
+
+- if re-anchoring did not run, plain `T5`, `T6`, and `T6v` are already
+  pre-reconciliation;
+- if re-anchoring did run, `T5`, `T6`, and `T6v` are the active
+  post-reconciliation tables, and the original Module 3/4 outputs live under
+  the `*_pre_reconciliation` names;
+- `module3.html` should show the original pre-reconciliation stock, sales, and
+  turnover view;
+- `module3_post_reconciliation.html` should show only charts whose values
+  changed after stock re-anchoring.
+
+Passenger and freight stock re-anchoring behave differently. Passenger keeps
+the original final-year physical stock target and fades the base-year adjustment
+to zero. Freight keeps the original growth index from the reconciled base-year
+stock, so its index chart keeps the same shape while physical stock levels move
+with the reconciled base.
+
+## 11. Validation Checks
 
 Core validation checks are:
 
@@ -347,7 +396,7 @@ Core validation checks are:
 - PHEV utilisation diagnostics remain within tolerance;
 - large reconciliation scalars and fallback assumptions are flagged.
 
-## 11. Current Reference Files
+## 12. Current Reference Files
 
 Use these files for the current implementation:
 
@@ -358,6 +407,8 @@ Use these files for the current implementation:
 - `codebase/modules/module3_stock_targets.py`
 - `codebase/modules/module4_sales_turnover.py`
 - `codebase/modules/module5_sales_shares.py`
-- `codebase/modules/module6_leap_handoff.py`
+- `codebase/modules/module6_reconciliation_and_leap_handoff.py`
 - `codebase/modules/module7_mirror.py`
-- `scripts/generate_module1_defaults.py`
+- `scripts/generate_module1_defaults.py` (legacy/backfill helper for `input_data/module1_defaults/`, not the preferred source update path)
+- `codebase/config/workflow_defaults.yaml` (runtime workflow switches and paths)
+- `codebase/config/model_defaults.yaml` (guidance-only calibration reference)

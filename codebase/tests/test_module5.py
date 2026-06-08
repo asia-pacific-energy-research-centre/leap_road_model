@@ -13,6 +13,7 @@ import pathlib
 import sys
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
@@ -91,3 +92,31 @@ class TestRunModule5AliasesAndScaling:
         future_only = t7f[t7f["year"] > 2022]
         assert (future_only["scaling_method"] == "shape_preserve_ice_residual").any()
         assert not (future_only["scaling_method"] == "flat_base_fallback").any()
+
+    def test_module1_ice_override_drops_unprovided_stock_fallback_drives(self):
+        base_year_branches = pd.DataFrame(
+            [
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "ICE", "stock": 880.0},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "BEV", "stock": 50.0},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "PHEV", "stock": 60.0},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "FCEV", "stock": 55.0},
+            ]
+        )
+        module1_sales_shares = pd.DataFrame(
+            [
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "ICE", "sales_share": 0.88, "source_flag": "module1_input"},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "BEV", "sales_share": 0.05, "source_flag": "module1_input"},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LCVs", "drive_type": "PHEV", "sales_share": 0.06, "source_flag": "module1_input"},
+            ]
+        )
+
+        t7, _ = run_module5(
+            base_year_branches=base_year_branches,
+            economy="01_AUS",
+            scenarios=["Target"],
+            researcher_sales_shares=module1_sales_shares,
+        )
+
+        lcv = t7[t7["vehicle_type"].eq("LCVs")]
+        assert set(lcv["drive_type"]) == {"ICE", "BEV", "PHEV"}
+        assert lcv["sales_share"].sum() == pytest.approx(1.0)

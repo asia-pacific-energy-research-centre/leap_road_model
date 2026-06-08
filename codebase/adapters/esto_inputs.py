@@ -13,8 +13,9 @@ Fuel name mappings are read from leap_road_model/config/leap_mappings*.xlsx
 
 Data file locations are resolved in priority order:
   1. Explicit argument
-  2. Environment variable  (ROAD_MODEL_ESTO_CSV / ROAD_MODEL_MACRO_CSV / ROAD_MODEL_FUEL_MAPPINGS)
-  3. Default convention    (leap_road_model/config/ for mappings; sibling leap_transport/data/ for data)
+  2. Environment variable  (ROAD_MODEL_ESTO_CSV / ROAD_MODEL_MACRO_CSV /
+                            ROAD_MODEL_HISTORICAL_GDP_CSV / ROAD_MODEL_FUEL_MAPPINGS)
+  3. Default convention    (leap_road_model/config/ for mappings; leap_road_model/input_data/ for ESTO data)
 """
 
 from __future__ import annotations
@@ -35,8 +36,9 @@ log = logging.getLogger(__name__)
 _REPO_ROOT      = Path(__file__).resolve().parents[2]   # leap_road_model/
 _LEAP_TRANSPORT = _REPO_ROOT.parent / "leap_transport"
 
-_DEFAULT_ESTO_CSV  = _LEAP_TRANSPORT / "data" / "00APEC_2024_low_with_subtotals.csv"
+_DEFAULT_ESTO_CSV  = _REPO_ROOT / "input_data" / "esto_transport_2000_2022.csv"
 _DEFAULT_MACRO_CSV = _LEAP_TRANSPORT / "data" / "9th_macro_data.csv"
+_DEFAULT_HISTORICAL_GDP_CSV = _REPO_ROOT / "input_data" / "historical_gdp_data.csv"
 
 # Glob for dated leap_mappings xlsx files in leap_road_model/config/.
 # Alphabetic sort of "leap_mappings DDMMYYYY.xlsx" gives the newest last.
@@ -193,18 +195,52 @@ def load_population(
 def load_gdp(
     economy: str,
     macro_csv: str | Path | None = None,
+    historical_gdp_csv: str | Path | None = None,
     scenario: str = "Target",
 ) -> pd.Series:
     """
-    GDP Series indexed by year (billions USD, 2017 PPP).
+    GDP Series indexed by year (millions USD, 2017 PPP).
 
     If the scenario is absent from the macro CSV, MACRO_SCENARIO_FALLBACK is tried.
+    Historical years before the projection macro start are prepended from
+    input_data/historical_gdp_data.csv when available.
     """
     csv = _resolve_path(macro_csv, "ROAD_MODEL_MACRO_CSV", _DEFAULT_MACRO_CSV)
     if not csv.exists():
         raise FileNotFoundError(f"Macro CSV not found: {csv}. Set ROAD_MODEL_MACRO_CSV.")
     df = pd.read_csv(csv)
     sub = _load_macro_series(df, economy, scenario, "Gdp", csv)
+
+    hist_csv = _resolve_path(
+        historical_gdp_csv,
+        "ROAD_MODEL_HISTORICAL_GDP_CSV",
+        _DEFAULT_HISTORICAL_GDP_CSV,
+    )
+    if hist_csv.exists() and not sub.empty:
+        hist_df = pd.read_csv(hist_csv)
+        required = {"Economy", "Date", "Gdp"}
+        missing = required - set(hist_df.columns)
+        if missing:
+            raise ValueError(
+                f"Historical GDP CSV is missing required columns: {sorted(missing)}. "
+                f"Found columns: {sorted(hist_df.columns)}"
+            )
+        hist_sub = hist_df[hist_df["Economy"].eq(economy)].copy()
+        if not hist_sub.empty:
+            hist_sub["Date"] = pd.to_numeric(hist_sub["Date"], errors="coerce")
+            hist_sub["Gdp"] = pd.to_numeric(hist_sub["Gdp"], errors="coerce")
+            hist_sub = hist_sub.dropna(subset=["Date", "Gdp"])
+            if not hist_sub.empty:
+                first_projection_year = int(sub.index.min())
+                hist_series = (
+                    hist_sub[hist_sub["Date"] < first_projection_year]
+                    .assign(Date=lambda x: x["Date"].astype(int))
+                    .set_index("Date")["Gdp"]
+                    .sort_index()
+                )
+                if not hist_series.empty:
+                    sub = pd.concat([hist_series, sub]).sort_index()
+
     return sub.rename("gdp")
 
 
@@ -245,7 +281,7 @@ def load_esto_road_energy(
     econ_esto = _esto_economy_code(economy)
     if pax_share is None:
         pax_share = _DEFAULT_PAX_SHARE
-        log.warning(
+        log.info(
             "No passenger/freight energy split provided for %s; "
             "using default %.0f%% / %.0f%% approximation.",
             economy, pax_share * 100, (1 - pax_share) * 100,

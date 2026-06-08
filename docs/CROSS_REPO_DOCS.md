@@ -2,6 +2,11 @@
 
 This repository is designed to be worked on alongside `../road_model_inputs_interface`.
 
+## Contents
+
+1. [Key docs in `road_model_inputs_interface`](#key-docs-in-road_model_inputs_interface)
+2. [Working convention](#working-convention)
+
 ## Key docs in `road_model_inputs_interface`
 
 - `..\..\road_model_inputs_interface\docs\new model\multinode_road_module1_repo_guide.md`

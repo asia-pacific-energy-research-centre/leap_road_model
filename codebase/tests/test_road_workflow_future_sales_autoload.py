@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from road_workflow import _autodiscover_future_sales_shares, _candidate_future_sales_paths
+from road_workflow import (
+    _autodiscover_future_sales_shares,
+    _candidate_future_sales_paths,
+    _module1_future_sales_share_rows,
+)
 
 
 def _future_sales_row(year_col: str = "2025") -> dict[str, object]:
@@ -100,3 +104,42 @@ def test_candidate_paths_prioritise_leap_transport_domestic_export(tmp_path: Pat
         / "20_USA_transport_leap_export_Target.xlsx"
     )
     assert candidates[0] == expected
+
+
+def test_module1_long_rows_feed_future_sales_share_projection() -> None:
+    raw_leap_df = pd.DataFrame(
+        [
+            {
+                "Branch Path": "Demand\\Passenger road\\LPVs\\ICE",
+                "Variable": "Sales Share",
+                "Scenario": "Target",
+                "Region": "20_USA",
+                "Scale": "%",
+                "Units": "Share",
+                "2022": 80.0,
+                "2023": 75.0,
+                "2060": 20.0,
+            },
+            {
+                "Branch Path": "Demand\\Passenger road\\LPVs\\BEV",
+                "Variable": "Sales Share",
+                "Scenario": "Target",
+                "Region": "20_USA",
+                "Scale": "%",
+                "Units": "Share",
+                "2022": 20.0,
+                "2023": 25.0,
+                "2060": 80.0,
+            },
+        ]
+    )
+
+    future_sales = _module1_future_sales_share_rows(raw_leap_df, base_year=2022)
+
+    assert not future_sales.empty
+    assert set(future_sales["year"]) == {2023, 2060}
+    assert not future_sales["drive_type"].isna().any()
+    assert future_sales.loc[
+        future_sales["drive_type"].eq("BEV") & future_sales["year"].eq(2060),
+        "sales_share",
+    ].iloc[0] == 80.0

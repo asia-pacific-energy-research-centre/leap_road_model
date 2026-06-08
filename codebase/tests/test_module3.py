@@ -237,6 +237,40 @@ class TestProjectFreightStocks:
         ) == pytest.approx(total_2024)
         assert result["elasticity_diagnostics"]["data_source"] == "override"
 
+    def test_applies_elasticity_adjustment_after_estimation(self):
+        years = [2022, 2023, 2024]
+        gdp = pd.Series(
+            [100.0, 110.0, 121.0, 133.1, 146.41],
+            index=[2020, 2021, 2022, 2023, 2024],
+        )
+        energy = pd.Series(
+            [50.0, 55.0, 60.5, 66.55, 73.205],
+            index=[2020, 2021, 2022, 2023, 2024],
+        )
+
+        result = project_freight_stocks(
+            years=years,
+            gdp=gdp,
+            energy_series=energy,
+            base_stocks={"Trucks": 300.0, "LCVs": 700.0},
+            elasticity_adjustments={"freight_total": 0.5},
+            cfg={
+                "lookback_window_years": 2,
+                "covid_exclude_years": [],
+                "elasticity_min": 0.0,
+                "elasticity_max": 2.0,
+                "default_elasticity": 0.8,
+            },
+        )
+
+        total_2024 = (
+            result["target_stocks"]["Trucks"].loc[2024]
+            + result["target_stocks"]["LCVs"].loc[2024]
+        )
+        assert total_2024 == pytest.approx(1000.0 * ((146.41 / 121.0) ** 0.5))
+        assert result["elasticity_diagnostics"]["elasticity_adjustment"] == pytest.approx(0.5)
+        assert result["elasticity_diagnostics"]["data_source"] == "estimated_adjusted"
+
 
 # ===========================================================================
 # Integration: project_passenger_stocks
@@ -280,6 +314,34 @@ class TestProjectPassengerStocks:
 
         for vt, series in result["target_stocks"].items():
             assert (series >= 0).all(), f"Negative stock for {vt}"
+
+    def test_growth_rate_adjustment_speeds_passenger_stock_growth(self, population_series, passenger_energy_series):
+        years = list(range(2022, 2061))
+        base_stocks = {"LPVs": 3_000_000, "Motorcycles": 150_000, "Buses": 8_000}
+        weights = {"LPVs": 1.0, "Motorcycles": 0.8, "Buses": 20.0}
+
+        baseline = project_passenger_stocks(
+            years=years,
+            population=population_series,
+            energy_series=passenger_energy_series,
+            base_stocks=base_stocks,
+            weights=weights,
+            growth_rate_adjustment=1.0,
+        )
+        faster = project_passenger_stocks(
+            years=years,
+            population=population_series,
+            energy_series=passenger_energy_series,
+            base_stocks=base_stocks,
+            weights=weights,
+            growth_rate_adjustment=1.5,
+        )
+
+        assert faster["target_stocks"]["LPVs"].loc[2022] == pytest.approx(
+            baseline["target_stocks"]["LPVs"].loc[2022]
+        )
+        assert faster["target_stocks"]["LPVs"].loc[2040] > baseline["target_stocks"]["LPVs"].loc[2040]
+        assert faster["growth_rate_adjustment"] == pytest.approx(1.5)
 
     def test_saturation_flag_calibrates_base_year_to_saturation(self, passenger_energy_series):
         years = list(range(2022, 2061))

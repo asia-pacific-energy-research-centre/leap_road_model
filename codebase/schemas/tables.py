@@ -194,6 +194,7 @@ SCHEMAS: dict[str, dict] = {
             "vehicle_type":     _col("str",   True),
             "target_stock":     _col("float", True,  "Target vehicle count"),
             # Diagnostic columns (optional but recommended)
+            "gdp_index":              _col("float", False, "GDP indexed to base year = 100"),
             "motorisation_level":     _col("float", False, "Car-equiv per capita (passenger only)"),
             "saturation_level":       _col("float", False, "Saturation car-equiv per capita"),
             "k_used":                 _col("float", False, "S-curve steepness parameter"),
@@ -202,6 +203,7 @@ SCHEMAS: dict[str, dict] = {
             "freight_elasticity_clamped": _col("bool", False, "True if freight elasticity was clamped to bounds"),
             "freight_energy_growth_rate": _col("float", False, "Annualised freight energy growth rate used for elasticity"),
             "freight_gdp_growth_rate":    _col("float", False, "Annualised GDP growth rate used for freight elasticity"),
+            "freight_elasticity_adjustment": _col("float", False, "Researcher multiplier applied to estimated freight elasticity"),
             "freight_elasticity_data_source": _col("str", False, "estimated | override (freight only)"),
             "saturation_source_flag": _col("str",   False, "Source of saturation assumption"),
             "k_clamped":              _col("bool",  False, "True if k was clamped to bounds"),

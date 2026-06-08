@@ -64,13 +64,13 @@ drive_fuel_eligibility:
     efuels:    []
   PHEV:
     electric:  [Electricity]
-    liquid:    [Motor gasoline, Gas and diesel oil]
-    biofuels:  [Biogasoline, Biodiesel]
+    liquid:    [Motor gasoline]
+    biofuels:  [Biogasoline]
     efuels:    [Efuel]
   EREV:
     electric:  [Electricity]
-    liquid:    [Motor gasoline, Gas and diesel oil]
-    biofuels:  [Biogasoline, Biodiesel]
+    liquid:    [Motor gasoline]
+    biofuels:  [Biogasoline]
     efuels:    [Efuel]
   FCEV:
     primary:   [Hydrogen]
@@ -81,13 +81,13 @@ drive_fuel_eligibility:
 # Lists the drive types that a fuel is primarily allocated to.
 fuel_preferred_drives:
   Motor gasoline:    [ICE, HEV, PHEV, EREV]
-  Gas and diesel oil: [ICE, HEV, PHEV, EREV]
+  Gas and diesel oil: [ICE, HEV]
   LPG:               [ICE]
   Natural gas:       [ICE]
   LNG:               [ICE]
   Electricity:       [BEV, PHEV, EREV]
   Hydrogen:          [FCEV]
-  Biodiesel:         [ICE, HEV, PHEV, EREV]
+  Biodiesel:         [ICE, HEV]
   Biogasoline:       [ICE, HEV, PHEV, EREV]
   Biogas:            [ICE]
   Efuel:             [ICE, HEV, PHEV, EREV]

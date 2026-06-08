@@ -773,57 +773,7 @@ def module2_figures(t4: pd.DataFrame) -> list[tuple[str, Any]]:
             "Lists branch rows missing required dimensions or base-year stock, mileage, or efficiency values.",
         ))
 
-    # 2) Source provenance (Module 1 defaults vs researcher-provided rows)
-    flag_cols = [c for c in ["stock_source_flag", "mileage_source_flag", "efficiency_source_flag"]
-                 if c in t4.columns]
-    if flag_cols:
-        rows = []
-        for col in flag_cols:
-            vc = t4[col].fillna("missing").value_counts()
-            for flag, count in vc.items():
-                rows.append({"metric": col.replace("_source_flag", ""), "source_flag": str(flag), "count": int(count)})
-        ff = pd.DataFrame(rows)
-        if not ff.empty:
-            p = ff.pivot_table(index="metric", columns="source_flag", values="count", aggfunc="sum", fill_value=0)
-            fig = go.Figure()
-            for flag in p.columns:
-                fig.add_trace(go.Bar(name=str(flag), x=p.index.tolist(), y=p[flag].tolist()))
-            fig.update_layout(
-                **_layout("Module 2 - Value source by metric"),
-                barmode="stack", xaxis_title="Metric", yaxis_title="Row count",
-            )
-            figs.append((
-                "Value source by metric",
-                fig,
-                "Shows the original source category for each metric. Branch-level transformations such as size splitting or vehicle-type broadcasts are shown separately below.",
-            ))
-
-    granularity_cols = [c for c in ["stock_granularity", "mileage_granularity", "efficiency_granularity"]
-                        if c in t4.columns]
-    if granularity_cols:
-        rows = []
-        for col in granularity_cols:
-            metric = col.replace("_granularity", "")
-            vc = t4[col].fillna("unknown").value_counts()
-            for method, count in vc.items():
-                rows.append({"metric": metric, "fill_method": str(method), "count": int(count)})
-        gf = pd.DataFrame(rows)
-        if not gf.empty:
-            p = gf.pivot_table(index="metric", columns="fill_method", values="count", aggfunc="sum", fill_value=0)
-            fig = go.Figure()
-            for method in p.columns:
-                fig.add_trace(go.Bar(name=str(method), x=p.index.tolist(), y=p[method].tolist()))
-            fig.update_layout(
-                **_layout("Module 2 - Value fill method by metric"),
-                barmode="stack", xaxis_title="Metric", yaxis_title="Row count",
-            )
-            figs.append((
-                "Value fill method by metric",
-                fig,
-                "Shows whether values matched a branch directly, were split across size classes, or were broadcast from a vehicle-type-level input. This is transformation detail, not source provenance.",
-            ))
-
-    # 3) Spread of key values, grouped and sorted by vehicle type median
+    # 2) Spread of key values, grouped and sorted by vehicle type median
     num_cols = [c for c in ["stock", "mileage_km_per_year", "efficiency_km_per_gj"] if c in t4.columns]
     if num_cols and "vehicle_type" in t4.columns:
         fig = make_subplots(
@@ -881,7 +831,7 @@ def module2_figures(t4: pd.DataFrame) -> list[tuple[str, Any]]:
 # Module 3 — stock targets
 # ---------------------------------------------------------------------------
 
-def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
+def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> list[tuple[str, Any]]:
     """Interactive QA figures for Module 3 stock targets (T5)."""
     if not _can_plot() or t5 is None or t5.empty:
         return []
@@ -902,7 +852,7 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                         x=series.index.tolist(), y=series.values.tolist(),
                         name=str(vt), mode="lines",
                         line=dict(color=_vehicle_type_colour(str(vt), i)),
-                        legendgroup=str(vt), showlegend=(col_idx == 1),
+                        legendgroup=str(vt), showlegend=True,
                     ),
                     row=1, col=col_idx,
                 )
@@ -940,6 +890,31 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                 "Passenger X-LPV-equivalent vehicles vs saturation",
                 fig,
                 "Projected passenger stock converted to X-LPV-equivalent vehicles per 1,000 people, compared with the saturation level.",
+            ))
+
+    if population is not None and not population.empty:
+        population_series = pd.to_numeric(population, errors="coerce").dropna().sort_index()
+        population_series.index = pd.to_numeric(population_series.index, errors="coerce")
+        population_series = population_series[population_series.index.notna()]
+        if not population_series.empty:
+            population_series.index = population_series.index.astype(int)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=population_series.index.tolist(),
+                y=(population_series / 1_000_000.0).tolist(),
+                name="Population",
+                mode="lines+markers",
+                line=dict(color="#1565C0", width=3),
+            ))
+            fig.update_layout(
+                **_layout("Module 3 - Population"),
+                xaxis_title="Year",
+                yaxis_title="Population (million people)",
+            )
+            figs.append((
+                "Population",
+                fig,
+                "Macro population input used by Module 3 when converting ownership into total passenger stock.",
             ))
 
     weight_cols = {
@@ -1013,6 +988,49 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                 .set_index("vehicle_type")["gdp_elasticity_used"]
             )
             fig = go.Figure()
+            if "gdp_index" in freight_sub.columns:
+                gdp_index = (
+                    freight_sub.groupby("year")["gdp_index"]
+                    .mean()
+                    .dropna()
+                    .sort_index()
+                )
+                if not gdp_index.empty:
+                    selected_elasticities = pd.to_numeric(el_map, errors="coerce").dropna()
+                    selected_elasticity = (
+                        float(selected_elasticities.mean())
+                        if not selected_elasticities.empty
+                        else None
+                    )
+                    fig.add_trace(go.Scatter(
+                        x=gdp_index.index.tolist(),
+                        y=gdp_index.tolist(),
+                        mode="lines",
+                        name="GDP index",
+                        line=dict(color="#263238", width=3),
+                    ))
+                    if selected_elasticity is not None:
+                        sensitivity_specs = [
+                            ("-50% sensitivity", 0.50, "dot", 0.45),
+                            ("-25% sensitivity", 0.75, "dashdot", 0.65),
+                            ("+25% sensitivity", 1.25, "dashdot", 0.65),
+                            ("+50% sensitivity", 1.50, "dot", 0.45),
+                        ]
+                        seen_elasticities: set[float] = set()
+                        for label, multiplier, dash_style, opacity in sensitivity_specs:
+                            e_val = float(max(0.0, min(2.0, selected_elasticity * multiplier)))
+                            rounded_e = round(e_val, 6)
+                            if rounded_e in seen_elasticities:
+                                continue
+                            seen_elasticities.add(rounded_e)
+                            fig.add_trace(go.Scatter(
+                                x=gdp_index.index.tolist(),
+                                y=(100 * ((gdp_index / 100) ** e_val)).tolist(),
+                                mode="lines",
+                                name=f"{label} (ε={e_val:.2f})",
+                                line=dict(color="#00897B", dash=dash_style, width=1.5),
+                                opacity=opacity,
+                            ))
             for i, (vt, grp) in enumerate(freight_sub.groupby("vehicle_type")):
                 series = grp.groupby("year")["target_stock"].sum().sort_index()
                 base = base_stocks.get(vt)
@@ -1033,7 +1051,7 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
             figs.append((
                 "Freight stock growth index",
                 fig,
-                f"Freight stock indexed to {base_year} = 100. Elasticity (ε) in the legend shows GDP sensitivity — higher ε means faster stock growth per unit of GDP growth.",
+                f"Freight stock indexed to {base_year} = 100. Elasticity (ε) in the legend shows GDP sensitivity. Dotted sensitivity lines show ±25% and ±50% elasticity multipliers around the selected value, clamped to the model bounds.",
             ))
 
     diag_cols = {
@@ -1047,12 +1065,17 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
         "freight_elasticity_note",
     }
     if diag_cols.issubset(t5.columns):
+        diag_select_cols = [*diag_cols]
+        if "freight_elasticity_adjustment" in t5.columns:
+            diag_select_cols.append("freight_elasticity_adjustment")
         diag = (
             t5[t5["transport_type"] == "freight"]
-            [[*diag_cols]]
+            [diag_select_cols]
             .drop_duplicates("vehicle_type")
             .sort_values("vehicle_type")
         )
+        if "freight_elasticity_adjustment" not in diag.columns:
+            diag["freight_elasticity_adjustment"] = 1.0
         if not diag.empty:
             fig = go.Figure()
             fig.add_trace(go.Bar(
@@ -1092,6 +1115,7 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                         "Clamped",
                         "Energy growth %/yr",
                         "GDP growth %/yr",
+                        "Elasticity adjustment",
                         "Implied freight growth %/yr",
                         "Source",
                         "Note",
@@ -1107,6 +1131,7 @@ def module3_figures(t5: pd.DataFrame) -> list[tuple[str, Any]]:
                         diag["freight_elasticity_clamped"].fillna(False).astype(str).tolist(),
                         (pd.to_numeric(diag["freight_energy_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
                         (pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
+                        pd.to_numeric(diag["freight_elasticity_adjustment"], errors="coerce").round(4).astype(str).replace("nan", "").tolist(),
                         _implied_growth_str,
                         diag["freight_elasticity_data_source"].fillna("").astype(str).tolist(),
                         diag["freight_elasticity_note"].fillna("").astype(str).tolist(),
@@ -1324,6 +1349,10 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
                 base_year = int(years.min())
                 base_df = base_df[pd.to_numeric(base_df["year"], errors="coerce") == base_year]
                 base_year_label = f" ({base_year})"
+        if "scenario" in base_df.columns:
+            scenario_labels = base_df["scenario"].dropna().astype(str)
+            if scenario_labels.str.casefold().eq("target").any():
+                base_df = base_df[base_df["scenario"].astype(str).str.casefold().eq("target")].copy()
 
         pvt = base_df.pivot_table(
             index="vehicle_type", columns="drive_type",
@@ -1359,11 +1388,16 @@ def module5_figures(t7: pd.DataFrame, t7f: pd.DataFrame) -> list[tuple[str, Any]
         years = pd.to_numeric(t7f["year"], errors="coerce").dropna().astype(int)
         unique_years = sorted(years.unique().tolist())
         if len(unique_years) > 1:
+            # Average scenarios first, then fill missing (year, vehicle_type, drive_type)
+            # combos with 0 before averaging across vehicle types.  A direct pivot_table
+            # mean would use unequal denominators for drive types absent from some vehicle
+            # types in the base year, causing the stacked total to exceed 100 %.
             traj = (
-                t7f.pivot_table(
-                    index="year", columns="drive_type",
-                    values="sales_share", aggfunc="mean", fill_value=0,
-                )
+                t7f.groupby(["year", "vehicle_type", "drive_type"])["sales_share"]
+                .mean()
+                .unstack("drive_type", fill_value=0.0)
+                .groupby(level="year")
+                .mean()
                 .sort_index()
             )
             if not traj.empty:
@@ -1610,7 +1644,11 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         "backcalculated_phev_utilisation_rate", "utilisation_status",
     }.issubset(t12_phev.columns):
         chart = t12_phev.copy()
-        chart["branch"] = chart["vehicle_type"].fillna("unknown")
+        chart["branch"] = (
+            chart["vehicle_type"].fillna("unknown")
+            + " | "
+            + chart["drive_type"].fillna("unknown")
+        )
         if "size" in chart.columns:
             chart["branch"] = chart["branch"] + chart["size"].fillna("").map(lambda x: f" | {x}" if x else "")
         for col in [
@@ -1676,14 +1714,14 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         fig.update_layout(
             **_layout("Module 6 - PHEV utilisation back-check"),
             yaxis_title="Electric-mode utilisation (%)",
-            xaxis_title="PHEV branch",
+            xaxis_title="Plug-in hybrid branch",
             yaxis_range=[0, 100],
         )
         figs.append((
-            "PHEV utilisation back-check",
+            "Plug-in hybrid utilisation back-check",
             fig,
             True,
-            "Back-calculates PHEV electric-km share from final electricity and liquid energy using adjusted efficiencies, then compares it with the supplied utilisation rate.",
+            "Back-calculates plug-in hybrid electric-km share from final electricity and liquid energy using adjusted efficiencies, then compares it with the supplied utilisation rate.",
         ))
 
     if not t10.empty and {"drive_type", "fuel", "device_share"}.issubset(t10.columns):
@@ -1897,8 +1935,12 @@ def module7_figures(
 
     if t7f is not None and not t7f.empty and {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
         ss = (
-            t7f.groupby(["year", "drive_type"])["sales_share"]
-            .mean().unstack(fill_value=0.0).sort_index()
+            t7f.groupby(["year", "vehicle_type", "drive_type"])["sales_share"]
+            .mean()
+            .unstack("drive_type", fill_value=0.0)
+            .groupby(level="year")
+            .mean()
+            .sort_index()
         )
         if not ss.empty:
             dt_order = ss.iloc[-1].sort_values(ascending=False).index.tolist()
@@ -2041,6 +2083,10 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
                 base_year = int(years.min())
                 base_df = base_df[pd.to_numeric(base_df["year"], errors="coerce") == base_year]
                 base_year_label = f" ({base_year})"
+        if "scenario" in base_df.columns:
+            scenario_labels = base_df["scenario"].dropna().astype(str)
+            if scenario_labels.str.casefold().eq("target").any():
+                base_df = base_df[base_df["scenario"].astype(str).str.casefold().eq("target")].copy()
         pvt = base_df.pivot_table(
             index="vehicle_type", columns="drive_type",
             values="sales_share", aggfunc="mean", fill_value=0,
@@ -2116,6 +2162,82 @@ def _reconciliation_alert_html(t12: pd.DataFrame | None) -> str:
     return f'<div class="alert {level}">&#9888; Reconciliation issues &mdash; {detail}</div>'
 
 
+def _transport_split_alert_html(t13: pd.DataFrame | None, tol: float = 0.75) -> str:
+    """Return an HTML alert banner checking the freight/passenger energy split.
+
+    The base-year share of the *smaller* transport type (usually freight) is used
+    as the reference.  If any projected year has that type's share outside
+    [base × (1-tol), base × (1+tol)] the banner shows a warning or failure.
+
+    Args:
+        t13: T13 mirror outputs DataFrame with columns year, transport_type,
+            mirror_energy_pj.
+        tol: Fractional tolerance (default 0.75 = ±75 %).
+    """
+    if t13 is None or not isinstance(t13, pd.DataFrame) or t13.empty:
+        return ""
+    req = {"year", "transport_type", "mirror_energy_pj"}
+    if not req.issubset(t13.columns):
+        return ""
+
+    energy = (
+        t13.groupby(["year", "transport_type"])["mirror_energy_pj"]
+        .sum().unstack(fill_value=0.0).sort_index()
+    )
+    if energy.empty or energy.shape[1] < 2:
+        return ""
+
+    base_year = int(energy.index.min())
+    base_row = energy.loc[base_year]
+    base_total = base_row.sum()
+    if base_total <= 0:
+        return ""
+
+    base_share = base_row / base_total
+    # The smaller transport type (typically freight) defines the bound.
+    min_type = str(base_share.idxmin())
+    base_min_share = float(base_share[min_type])
+    lower = base_min_share * (1.0 - tol)
+    upper = base_min_share * (1.0 + tol)
+
+    total = energy.sum(axis=1)
+    share_series = energy[min_type].div(total.replace(0.0, float("nan"))).dropna()
+    violations = share_series[(share_series < lower) | (share_series > upper)]
+
+    base_pct = f"{base_min_share * 100:.1f}%"
+    bound_lo = f"{lower * 100:.1f}%"
+    bound_hi = f"{upper * 100:.1f}%"
+    base_info = (
+        f"{min_type.capitalize()} share at base year {base_year}: <b>{base_pct}</b> "
+        f"&mdash; expected range: <b>{bound_lo}&ndash;{bound_hi}</b>"
+    )
+
+    if violations.empty:
+        return (
+            f'<div class="alert alert--ok">&#10003; Freight/passenger energy split within bounds. '
+            f'{base_info}.</div>'
+        )
+
+    viol_min = float(violations.min())
+    viol_max = float(violations.max())
+    viol_years = sorted(violations.index.tolist())
+    year_range = (
+        f"{viol_years[0]}&ndash;{viol_years[-1]}"
+        if len(viol_years) > 1 else str(viol_years[0])
+    )
+    detail = (
+        f"{min_type.capitalize()} share out of bounds in {len(viol_years)} year(s) "
+        f"({year_range}); "
+        f"observed range {viol_min * 100:.1f}%&ndash;{viol_max * 100:.1f}% "
+        f"vs expected {bound_lo}&ndash;{bound_hi}. "
+        f"{base_info}."
+    )
+    # fail if any year drops the smaller type below 10 % absolute share
+    severe = violations[violations < 0.10]
+    level = "alert--fail" if not severe.empty else "alert--warn"
+    return f'<div class="alert {level}">&#9888; Freight/passenger split out of bounds &mdash; {detail}</div>'
+
+
 # ---------------------------------------------------------------------------
 # HTML page builder
 # ---------------------------------------------------------------------------
@@ -2124,10 +2246,13 @@ _NAV_LINKS: list[tuple[str, str]] = [
     ("index.html", "Overview"),
     ("module1.html", "Inputs & branches"),
     ("module3.html", "Stocks, sales & turnover"),
+    ("module3_post_reconciliation.html", "Post-reconciliation stocks"),
     ("module6.html", "Reconciliation"),
     ("module7.html", "Simulated outputs"),
     ("workflow_summary.html", "Summary"),
 ]
+
+_ROAD_MODEL_DOC_HREF = "/road-model-docs/road_transport_model_simplified.md"
 
 _CSS = """
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:0;background:#f5f5f5;color:#333}
@@ -2148,6 +2273,8 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .module-btn{display:inline-block;background:#1a237e;color:white;text-decoration:none;padding:7px 11px;border-radius:6px;font-size:.88rem;font-weight:600;margin-bottom:8px}
 .module-btn:hover{background:#2a3796}
 .module-desc{font-size:.88rem;color:#555;line-height:1.45}
+.doc-link{display:inline-block;margin-top:10px;color:#1a237e;font-size:.88rem;font-weight:600;text-decoration:none}
+.doc-link:hover{text-decoration:underline}
 .diagram-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;padding:0 20px 40px;max-width:1680px;margin:0 auto}
 .diagram-card{background:white;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:16px}
 .diagram-card--wide{width:100%}
@@ -2256,9 +2383,10 @@ _RESIZE_SCRIPT = """
 
 _MODULE_META: dict[str, tuple[str, str]] = {
     "index": ("Overview", "Road model workflow QA dashboard. Choose a module from the navigation."),
-    "module1": ("Inputs & base-year branches", "Module 1 and 2 diagnostics: default/original input counts, source provenance, value fill methods, branch coverage and base-year metric distributions."),
-    "module2": ("Module 2 — Base-year branches", "Branch count heatmap, source flag coverage and metric distributions for the base-year branch table (T4)."),
+    "module1": ("Inputs & base-year branches", "Module 1 and 2 diagnostics: default/original input counts, branch coverage and base-year metric distributions."),
+    "module2": ("Module 2 — Base-year branches", "Branch count heatmap and metric distributions for the base-year branch table (T4)."),
     "module3": ("Stocks, sales & turnover", "Module 3, 4 and 5 diagnostics: stock target pathways, motorisation envelope, sales and turnover flows, vintages and drive-type sales shares."),
+    "module3_post_reconciliation": ("Post-reconciliation stocks & turnover", "Charts whose stock-target or turnover values change after Module 6 re-anchors stock trajectories to reconciled base-year stock."),
     "module4": ("Module 4 — Sales & turnover", "New sales, stock trajectories, vehicle retirements and base-year vintage profiles from the fleet turnover module."),
     "module5": ("Module 5 — Sales shares", "Drive-type sales shares over the projection horizon by vehicle type, showing technology transition trajectories."),
     "module6": ("Module 6 — LEAP handoff & reconciliation", "Fuel reconciliation diagnostics (ESTO vs model), reconciliation scalars, ECF by fuel, device shares and allocation concentration."),
@@ -2355,6 +2483,7 @@ def _index_extra_html(
         '<li><b>Reconciliation:</b> compare model fuel totals to ESTO and inspect scaling quality.</li>'
         '<li><b>Mirror model + summary:</b> check end-to-end outputs and Python mirror calculations.</li>'
         '</ul>'
+        f'<a class="doc-link" href="{_ROAD_MODEL_DOC_HREF}" target="_blank" rel="noopener">Open simplified road model documentation</a>'
         '</div>'
     )
 
@@ -2472,6 +2601,9 @@ def write_module_pages(
         (out / old_page).unlink(missing_ok=True)
     written: list[Path] = []
 
+    def _filter_figures_by_title(figs: list[tuple[str, Any]], titles: set[str]) -> list[tuple[str, Any]]:
+        return [item for item in figs if item and item[0] in titles]
+
     def _write(filename: str, figs: list[tuple[str, Any]], extra: str = "") -> None:
         key = filename.replace(".html", "")
         title, desc = _MODULE_META.get(key, (key, ""))
@@ -2489,14 +2621,43 @@ def write_module_pages(
     m1_summary = _module1_summary_html(m1_df, raw_df=m1_raw) if m1_df is not None else ""
     _write("module1.html", input_figures, extra=m1_summary)
 
-    t6 = workflow_outputs.get("T6")
-    t6v = workflow_outputs.get("T6v")
+    t5_pre = workflow_outputs.get("T5_pre_reconciliation")
+    t5_post = workflow_outputs.get("T5_post_reconciliation")
+    t6_pre = workflow_outputs.get("T6_pre_reconciliation")
+    t6_post = workflow_outputs.get("T6_post_reconciliation")
+    t6v_pre = workflow_outputs.get("T6v_pre_reconciliation")
+    t6v_post = workflow_outputs.get("T6v_post_reconciliation")
+
+    t5_for_main = t5_pre if isinstance(t5_pre, pd.DataFrame) and not t5_pre.empty else workflow_outputs.get("T5")
+    t6 = t6_pre if isinstance(t6_pre, pd.DataFrame) and not t6_pre.empty else workflow_outputs.get("T6")
+    t6v = t6v_pre if isinstance(t6v_pre, pd.DataFrame) and not t6v_pre.empty else workflow_outputs.get("T6v")
     t7 = workflow_outputs.get("T7")
     t7f = workflow_outputs.get("T7f")
-    stock_sales_figures = module3_figures(workflow_outputs.get("T5"))
+    stock_sales_figures = module3_figures(
+        t5_for_main,
+        population=workflow_outputs.get("population"),
+    )
     stock_sales_figures.extend(module4_figures(t6, t6v))
     stock_sales_figures.extend(module5_figures(t7, t7f))
     _write("module3.html", stock_sales_figures)
+
+    post_stock_figures: list[tuple[str, Any]] = []
+    if isinstance(t5_post, pd.DataFrame) and not t5_post.empty:
+        post_stock_figures.extend(_filter_figures_by_title(
+            module3_figures(t5_post, population=workflow_outputs.get("population")),
+            {
+                "Target stock trajectories",
+                "Freight stock growth index",
+                "Passenger X-LPV-equivalent vehicles vs saturation",
+                "Passenger X-LPV weight calibration",
+            },
+        ))
+    if isinstance(t6_post, pd.DataFrame) and not t6_post.empty:
+        post_stock_figures.extend(module4_figures(
+            t6_post,
+            t6v_post if isinstance(t6v_post, pd.DataFrame) else pd.DataFrame(),
+        ))
+    _write("module3_post_reconciliation.html", post_stock_figures)
 
     t12 = workflow_outputs.get("T12")
     recon_alert = _reconciliation_alert_html(t12)
@@ -2505,8 +2666,9 @@ def write_module_pages(
     _write("module6.html", module6_figures(m6_sub), extra=recon_alert)
 
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
+    split_alert = _transport_split_alert_html(workflow_outputs.get("T13"))
     _write("module7.html", module7_figures(m7_sub, t7f=workflow_outputs.get("T7f")),
-           extra=_MODULE7_NOTE_HTML)
+           extra=_MODULE7_NOTE_HTML + split_alert)
 
     _write("workflow_summary.html", workflow_summary_figures(workflow_outputs),
            extra=recon_alert)

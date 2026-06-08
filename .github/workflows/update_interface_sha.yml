@@ -14,11 +14,10 @@ jobs:
           repository: H3yfinn/road_model_inputs_interface
           token: ${{ secrets.INTERFACE_REPO_TOKEN }}
 
-      - name: Update LEAP_ROAD_MODEL_VERSION in Dockerfile
+      - name: Update LEAP_ROAD_MODEL_REF in Dockerfile
         run: |
           NEW_SHA="${{ github.sha }}"
-          SHORT_SHA="${NEW_SHA:0:7}"
-          sed -i "s/ARG LEAP_ROAD_MODEL_VERSION=.*/ARG LEAP_ROAD_MODEL_VERSION=${SHORT_SHA}/" Dockerfile
+          sed -i "s/ARG LEAP_ROAD_MODEL_REF=.*/ARG LEAP_ROAD_MODEL_REF=${NEW_SHA}/" Dockerfile
 
       - name: Commit and push
         run: |

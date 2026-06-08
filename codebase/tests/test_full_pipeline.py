@@ -27,7 +27,7 @@ ALL_ECONOMIES = [
 ]
 
 
-_DEFAULTS_VERSION = "v2026_05_25_best_guess"
+_DEFAULTS_VERSION = "v2026_06_05_road_module1_sources"
 
 
 def _run_and_assert(economy: str, tmp_path: Path) -> None:

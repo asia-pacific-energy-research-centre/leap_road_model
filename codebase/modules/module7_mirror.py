@@ -23,15 +23,10 @@ import numpy as np
 import pandas as pd
 
 from diagnostics.module_charts import write_module7_charts
+from modules.reconciliation_aggregation import build_reconciled_technology_assumptions
 from schemas.validation import validate_table
 
 log = logging.getLogger(__name__)
-
-_PRIMARY_FUEL_BY_DRIVE = {
-    "BEV": "Electricity",
-    "FCEV": "Hydrogen",
-    "PHEV": "Electricity",
-}
 
 _DIMENSION_COLUMNS = [
     "economy",
@@ -53,6 +48,7 @@ def run_module7_mirror(
     efficiency_adjustment_variables: pd.DataFrame | None = None,
     scrappage_by_year: pd.DataFrame | Mapping[str, Mapping[int, float]] | None = None,
     diagnostics_dir: str | None = None,
+    base_year_branches: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     """
     Run the Python mirror of the LEAP road stock/activity/energy calculation.
@@ -77,6 +73,11 @@ def run_module7_mirror(
         diagnostics_dir: Optional directory root for Module 7 PNG diagnostic
             charts. When provided, charts are written to
             diagnostics_dir/module7/.
+        base_year_branches: Optional T4 base-year branch table from Module 2.
+            Used as a fallback source of mileage_km_per_year and
+            efficiency_km_per_gj for branches present in sales_turnover
+            (via future sales shares) but absent from reconciliation_scalars
+            because they had no ESTO base-year energy data.
 
     Returns:
         Dict with:
@@ -94,6 +95,7 @@ def run_module7_mirror(
         mileage_adjustment_variables=mileage_adjustment_variables,
         efficiency_adjustment_variables=efficiency_adjustment_variables,
         scrappage_by_year=scrappage_by_year,
+        base_year_branches=base_year_branches,
     )
     fuel_outputs = calculate_mirror_fuel_outputs(technology_outputs, device_shares)
 
@@ -116,45 +118,153 @@ def build_base_technology_assumptions(reconciliation_scalars: pd.DataFrame) -> p
     assumptions repeated across fuels, so this keeps one preferred fuel row
     per technology branch and strips the fuel segment from the LEAP path.
     """
-    required = {
-        "drive_type",
-        "leap_branch_path",
-        "adjusted_mileage_km_per_year",
-        "adjusted_efficiency_km_per_gj",
-    }
-    missing = sorted(required - set(reconciliation_scalars.columns))
-    if missing:
-        raise KeyError(f"Missing columns in reconciliation_scalars: {missing}")
-
-    df = reconciliation_scalars.copy()
-    group_keys = [c for c in _DIMENSION_COLUMNS if c in df.columns]
-    if not group_keys:
-        raise ValueError("reconciliation_scalars must contain model dimension columns.")
-
-    df["_tech_path"] = df["leap_branch_path"].apply(_technology_path)
-    df["_primary_sort"] = df.apply(_primary_fuel_sort_key, axis=1)
-    df = (
-        df.sort_values("_primary_sort")
-        .drop_duplicates(subset=group_keys)
-        .reset_index(drop=True)
-    )
-
     rename = {
         "adjusted_stock": "base_stock",
         "adjusted_mileage_km_per_year": "base_mileage_km_per_year",
         "adjusted_efficiency_km_per_gj": "base_efficiency_km_per_gj",
-        "_tech_path": "leap_branch_path",
+        "final_technology_energy_pj": "base_energy_pj",
     }
+    df = build_reconciled_technology_assumptions(reconciliation_scalars)
+    group_keys = [c for c in _DIMENSION_COLUMNS if c in df.columns]
     keep = group_keys + [
         "adjusted_stock",
         "adjusted_mileage_km_per_year",
         "adjusted_efficiency_km_per_gj",
-        "_tech_path",
+        "final_technology_energy_pj",
+        "leap_branch_path",
     ]
     keep = [c for c in keep if c in df.columns]
 
     out = df[keep].rename(columns=rename)
-    return out.drop(columns=["_primary_sort"], errors="ignore")
+    return out
+
+
+def _fill_missing_assumptions_from_t4(
+    merged: pd.DataFrame,
+    base_year_branches: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Fill NaN base_mileage_km_per_year / base_efficiency_km_per_gj from T4.
+
+    T9 only has reconciled assumptions for branches with ESTO energy data.
+    Branches present in sales shares (e.g. future-tech BEV, FCEV) but absent
+    from ESTO get NaN after the T9 merge. T4 holds Module 1's raw assumptions
+    for every branch including zero-stock ones, so we fill from there.
+    """
+    t4 = base_year_branches.copy()
+    rename = {}
+    if "mileage_km_per_year" in t4.columns:
+        rename["mileage_km_per_year"] = "_t4_mileage"
+    if "efficiency_km_per_gj" in t4.columns:
+        rename["efficiency_km_per_gj"] = "_t4_efficiency"
+    if not rename:
+        return merged
+
+    t4 = t4.rename(columns=rename)
+    fill_cols = list(rename.values())
+    dim_cols = _common_dimension_columns(merged, t4)
+    if not dim_cols:
+        return merged
+
+    t4_lookup = (
+        t4[dim_cols + fill_cols]
+        .dropna(subset=fill_cols, how="all")
+        .drop_duplicates(subset=dim_cols, keep="first")
+    )
+    out = merged.reset_index().merge(t4_lookup, on=dim_cols, how="left").set_index("index")
+    out.index.name = None
+
+    if "_t4_mileage" in fill_cols:
+        t4_mileage = pd.to_numeric(out["_t4_mileage"], errors="coerce")
+        needs_mileage = (
+            merged["base_mileage_km_per_year"].isna()
+            | (pd.to_numeric(merged["base_mileage_km_per_year"], errors="coerce").fillna(0.0) <= 0)
+        )
+        out.loc[needs_mileage, "base_mileage_km_per_year"] = t4_mileage[needs_mileage]
+
+    if "_t4_efficiency" in fill_cols:
+        t4_efficiency = pd.to_numeric(out["_t4_efficiency"], errors="coerce")
+        needs_efficiency = (
+            merged["base_efficiency_km_per_gj"].isna()
+            | (pd.to_numeric(merged["base_efficiency_km_per_gj"], errors="coerce").fillna(0.0) <= 0)
+        )
+        out.loc[needs_efficiency, "base_efficiency_km_per_gj"] = t4_efficiency[needs_efficiency]
+
+    return out.drop(columns=[c for c in fill_cols if c in out.columns])
+
+
+def _validate_assumptions_for_nonzero_sales(merged: pd.DataFrame) -> None:
+    """
+    Raise if any branch has new_sales > 0 but no base-year mileage or efficiency.
+
+    This catches the case where a researcher enables sales shares for a fuel/drive
+    combination that had no ESTO data in the base year and therefore has no
+    mileage or efficiency assumption — which would silently produce NaN energy.
+    """
+    new_sales = pd.to_numeric(merged.get("new_sales", pd.Series(0.0, index=merged.index)), errors="coerce").fillna(0.0)
+    missing_mileage = merged["base_mileage_km_per_year"].isna() | (
+        pd.to_numeric(merged["base_mileage_km_per_year"], errors="coerce").fillna(0.0) <= 0
+    )
+    missing_efficiency = merged["base_efficiency_km_per_gj"].isna() | (
+        pd.to_numeric(merged["base_efficiency_km_per_gj"], errors="coerce").fillna(0.0) <= 0
+    )
+    problem_mask = (new_sales > 0) & (missing_mileage | missing_efficiency)
+
+    if not problem_mask.any():
+        return
+
+    label_cols = [c for c in ["economy", "scenario", "vehicle_type", "drive_type", "size"] if c in merged.columns]
+    bad_rows = merged.loc[problem_mask, label_cols + ["base_mileage_km_per_year", "base_efficiency_km_per_gj"]].copy()
+    bad_rows["missing"] = bad_rows.apply(_missing_assumption_label, axis=1)
+    bad = (
+        bad_rows[label_cols + ["missing"]]
+        .drop_duplicates()
+        .groupby(label_cols, dropna=False, as_index=False)["missing"]
+        .agg(_combine_missing_labels)
+        .sort_values(label_cols)
+    )
+
+    branch_lines = "\n".join(
+        f"  {row.to_dict()}" for _, row in bad.iterrows()
+    )
+    raise ValueError(
+        f"Sales shares are set > 0 for {len(bad)} branch(es) that have no base-year "
+        f"mileage or efficiency assumption. These branches had no ESTO data in the base "
+        f"year, so the model cannot compute energy for projected vehicles. Either:\n"
+        f"  (a) set mileage and efficiency values for these branches in the researcher "
+        f"input parameters, or\n"
+        f"  (b) remove the sales shares for these branches.\n\n"
+        f"Affected branches:\n{branch_lines}"
+    )
+
+
+def _missing_assumption_label(row: pd.Series) -> str:
+    """Return which base assumption is missing on one merged Module 7 row."""
+    missing_mileage = (
+        pd.isna(row.get("base_mileage_km_per_year"))
+        or float(row.get("base_mileage_km_per_year") or 0) <= 0
+    )
+    missing_efficiency = (
+        pd.isna(row.get("base_efficiency_km_per_gj"))
+        or float(row.get("base_efficiency_km_per_gj") or 0) <= 0
+    )
+    if missing_mileage and missing_efficiency:
+        return "mileage and efficiency"
+    if missing_mileage:
+        return "mileage"
+    return "efficiency"
+
+
+def _combine_missing_labels(labels: pd.Series) -> str:
+    """Combine per-year missing labels for one branch into one readable label."""
+    unique = set(labels.dropna().astype(str))
+    if "mileage and efficiency" in unique or {"mileage", "efficiency"}.issubset(unique):
+        return "mileage and efficiency"
+    if "mileage" in unique:
+        return "mileage"
+    if "efficiency" in unique:
+        return "efficiency"
+    return ""
 
 
 def calculate_mirror_technology_outputs(
@@ -165,6 +275,7 @@ def calculate_mirror_technology_outputs(
     mileage_adjustment_variables: pd.DataFrame | None = None,
     efficiency_adjustment_variables: pd.DataFrame | None = None,
     scrappage_by_year: pd.DataFrame | Mapping[str, Mapping[int, float]] | None = None,
+    base_year_branches: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Calculate technology-level mirror stocks, vehicle-km, and energy.
@@ -193,6 +304,12 @@ def calculate_mirror_technology_outputs(
         raise ValueError("sales_turnover and base_assumptions do not share dimension columns.")
 
     merged = t6.merge(base_assumptions, on=join_keys, how="left")
+
+    if base_year_branches is not None and not base_year_branches.empty:
+        merged = _fill_missing_assumptions_from_t4(merged, base_year_branches)
+
+    _validate_assumptions_for_nonzero_sales(merged)
+
     missing_base = merged["base_mileage_km_per_year"].isna().sum()
     if missing_base:
         log.warning("%d Module 7 rows have no base mileage/efficiency assumption", missing_base)
@@ -517,18 +634,6 @@ def _resolve_projection_years(
         .unique()
         .tolist()
     )
-
-
-def _technology_path(branch_path: str) -> str:
-    parts = str(branch_path).rsplit("\\", 1)
-    return parts[0] if len(parts) > 1 else str(branch_path)
-
-
-def _primary_fuel_sort_key(row: pd.Series) -> int:
-    primary = _PRIMARY_FUEL_BY_DRIVE.get(str(row.get("drive_type", "")))
-    if primary is None:
-        return 0
-    return 0 if row.get("fuel") == primary else 1
 
 
 def _common_dimension_columns(left: pd.DataFrame, right: pd.DataFrame) -> list[str]:

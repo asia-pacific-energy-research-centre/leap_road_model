@@ -389,21 +389,70 @@ def _apply_researcher_overrides(
     base_shares: pd.DataFrame,
     researcher_shares: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Replace computed shares with researcher-provided values where provided."""
+    """Replace or add base-year shares with researcher-provided values."""
     if researcher_shares is None or researcher_shares.empty:
         return base_shares
 
     key_cols = ["economy", "scenario", "vehicle_type", "drive_type"]
+    keep_cols = key_cols + ["sales_share"]
+    if "source_flag" in researcher_shares.columns:
+        keep_cols.append("source_flag")
+    researcher = researcher_shares[keep_cols].copy()
+    researcher = researcher.dropna(subset=["vehicle_type", "drive_type", "sales_share"])
+    if researcher.empty:
+        return base_shares
+
+    if "source_flag" not in researcher.columns:
+        researcher["source_flag"] = "researcher"
+
+    group_cols = ["economy", "scenario", "vehicle_type"]
+    provided_totals = researcher.groupby(group_cols)["sales_share"].sum().reset_index(name="_provided_total")
+    ice_groups = researcher[researcher["drive_type"].astype(str).str.upper().eq("ICE")][group_cols].drop_duplicates()
+    complete_groups = pd.concat(
+        [
+            provided_totals[provided_totals["_provided_total"].between(0.999, 1.001)][group_cols],
+            ice_groups,
+        ],
+        ignore_index=True,
+    ).drop_duplicates()
+    complete_keys = set(complete_groups[group_cols].astype(str).agg("\u241f".join, axis=1))
+    if complete_keys:
+        base_keys = base_shares[group_cols].astype(str).agg("\u241f".join, axis=1)
+        base_shares = base_shares[~base_keys.isin(complete_keys)].copy()
+
     merged = base_shares.merge(
-        researcher_shares[key_cols + ["sales_share"]].rename(
-            columns={"sales_share": "researcher_share"}
+        researcher.rename(
+            columns={
+                "sales_share": "researcher_share",
+                "source_flag": "override_source_flag",
+            }
         ),
         on=key_cols, how="left",
     )
     has_override = merged["researcher_share"].notna()
     merged.loc[has_override, "sales_share"] = merged.loc[has_override, "researcher_share"]
-    merged.loc[has_override, "source_flag"] = "researcher"
-    return merged.drop(columns=["researcher_share"])
+    merged.loc[has_override, "source_flag"] = merged.loc[has_override, "override_source_flag"]
+
+    existing_keys = set(merged[key_cols].astype(str).agg("\u241f".join, axis=1))
+    missing = researcher[
+        ~researcher[key_cols].astype(str).agg("\u241f".join, axis=1).isin(existing_keys)
+    ].copy()
+    if not missing.empty:
+        missing["ev_sales_share_used"] = np.where(
+            missing["drive_type"].isin(_NON_ICE),
+            missing["sales_share"],
+            0.0,
+        )
+        missing["year"] = _BASE_YEAR
+        base_columns = merged.drop(columns=["researcher_share", "override_source_flag"]).columns
+        merged = pd.concat(
+            [merged.drop(columns=["researcher_share", "override_source_flag"]), missing[base_columns]],
+            ignore_index=True,
+        )
+    else:
+        merged = merged.drop(columns=["researcher_share", "override_source_flag"])
+
+    return _renormalise(merged, ["economy", "scenario", "vehicle_type"], "sales_share")
 
 
 # ---------------------------------------------------------------------------

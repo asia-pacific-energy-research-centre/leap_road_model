@@ -7,6 +7,24 @@ builds the downstream Modules 2-7 tables, reconciles base-year road energy to
 ESTO, and writes LEAP-ready import outputs and diagnostics. LEAP remains the
 official projection platform.
 
+## Repo setup — both repos must be siblings
+
+Both repos must be cloned into the **same parent folder**:
+
+```text
+parent_folder/
+    leap_road_model/              ← this repo
+    road_model_inputs_interface/  ← sibling repo
+```
+
+Modules 2-7 read their Module 1 inputs from
+`../road_model_inputs_interface/back-end/outputs/road_module1_defaults/`.
+If the sibling repo is absent, the workflow falls back to legacy inputs in
+`input_data/module1_defaults/`.
+
+Keep both repos open together in one VS Code multi-root workspace
+(`File → Add Folder to Workspace`). Both use the `.venv` in their own folder.
+
 ## Overview diagrams
 
 ![Road transport model — quick view](docs/new%20model/Road%20transport%20model%20%E2%80%94%20quick%20view.png)
@@ -85,11 +103,19 @@ levels. It does not emit `Activity Level`.
 | Configuration | `codebase/config/` |
 | Module 1 package generator | `scripts/generate_module1_defaults.py` |
 | Strict LEAP import writer | `codebase/adapters/leap_import_writer.py` |
+| Lifecycle profile exporter | `codebase/adapters/lifecycle_profile_exporter.py` |
 
 When a LEAP reference export is available, the workflow writes a strict import
 workbook with LEAP ID columns, metadata rows, and both `LEAP` and `FOR_VIEWING`
 sheets. Any unmatched model/reference rows are returned in
 `outputs["leap_import_warnings"]` and written beside the workbook.
+
+The workflow also exports Module 4 survival and vintage profiles as LEAP
+lifecycle profile workbooks under
+`results/<economy>/lifecycle_profiles/`. The folder contains one workbook per
+vehicle/profile type, `lifecycle_profile_manifest.csv`, and
+`<economy>_lifecycle_profiles.zip` for interface download after a successful
+model run.
 
 ## Configuration
 
@@ -102,6 +128,38 @@ Key configuration files live in `codebase/config/`:
 | `vehicle_mappings.yaml` | Vehicle buckets, drive mappings, and vehicle-equivalent weights |
 | `fuel_mappings.yaml` | Fuel names and drive/fuel eligibility |
 | `model_defaults.yaml` | Guidance-only calibration reference; do not use as runtime fallback input |
+
+## Running without the website
+
+Modules 2-7 do not require the `road_model_inputs_interface` website to be
+running. They only need the pre-generated Module 1 static outputs that the
+sibling repo already contains under:
+
+```text
+../road_model_inputs_interface/back-end/outputs/road_module1_defaults/
+```
+
+**Quickest offline run — edit and execute `scripts/offline_workflow.py`:**
+
+```python
+# Set these constants near the bottom of scripts/offline_workflow.py
+ECONOMY = "01_AUS"
+SCENARIO = "Target"
+BUILD_DASHBOARDS = True
+
+# then run:
+python scripts/offline_workflow.py
+```
+
+The script discovers the sibling repo's outputs automatically and falls back
+to `input_data/module1_defaults/` if the sibling repo is not present. Set
+`RUN_ALL = True` to run all economies in sequence.
+
+**CLI equivalent:**
+
+```powershell
+python codebase\road_workflow.py 01_AUS --module1-defaults-dir ..\road_model_inputs_interface\back-end\outputs\road_module1_defaults
+```
 
 ## Running tests
 
@@ -175,6 +233,7 @@ outputs = run_with_config(config, inputs)
 t4  = outputs["T4"]   # base-year branch table (Module 2)
 t5  = outputs["T5"]   # stock targets (Module 3)
 t6  = outputs["T6"]   # sales & turnover (Module 4)
+t6v = outputs["T6v"]  # Module 4 age profiles used for lifecycle export
 t7f = outputs["T7f"]  # future sales shares (Module 5)
 t11 = outputs["T11"]  # LEAP-ready rows (Module 6)
 ```

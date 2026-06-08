@@ -20,7 +20,7 @@ economies:
     region: OAM
     base_year: 2022
   05_PRC:
-    name: "China, People's Republic of"
+    name: China
     region: NEA
     base_year: 2022
   06_HKC:
@@ -36,7 +36,7 @@ economies:
     region: NEA
     base_year: 2022
   09_ROK:
-    name: Korea
+    name: "Republic of Korea"
     region: NEA
     base_year: 2022
   10_MAS:
@@ -60,7 +60,7 @@ economies:
     region: OAM
     base_year: 2022
   15_PHL:
-    name: Philippines
+    name: "The Philippines"
     region: SEA
     base_year: 2022
   16_RUS:
@@ -80,7 +80,7 @@ economies:
     region: SEA
     base_year: 2022
   20_USA:
-    name: United States of America
+    name: United States
     region: NA
     base_year: 2022
   21_VN:

@@ -42,6 +42,16 @@ _SCALE = "Scale"
 _PER = "Per..."
 _SCENARIO_ID = "ScenarioID"
 _REGION_ID = "RegionID"
+_LEVEL_COLUMNS = [
+    "Level 1",
+    "Level 2",
+    "Level 3",
+    "Level 4",
+    "Level 5",
+    "Level 6",
+    "Level 7",
+    "Level 8...",
+]
 
 
 def load_leap_import_workbook_as_template(
@@ -299,7 +309,7 @@ def _build_leap_sheet(
             "Units": grp["unit"].iloc[0] if "unit" in grp.columns else "",
             "Expression": to_leap_expression(series),
         })
-    return pd.DataFrame(rows)
+    return _add_level_columns(pd.DataFrame(rows), branch_column="Branch Path")
 
 
 def _build_viewing_sheet(df: pd.DataFrame) -> pd.DataFrame:
@@ -317,4 +327,24 @@ def _build_viewing_sheet(df: pd.DataFrame) -> pd.DataFrame:
         aggfunc="first",
     ).reset_index()
     pivoted.columns.name = None
-    return pivoted
+    return _add_level_columns(pivoted, branch_column="leap_branch_path")
+
+
+def _branch_level_values(branch_path: object) -> list[str]:
+    parts = [part.strip() for part in str(branch_path or "").split("\\") if part.strip()]
+    values = parts[:len(_LEVEL_COLUMNS)]
+    return values + [""] * (len(_LEVEL_COLUMNS) - len(values))
+
+
+def _add_level_columns(df: pd.DataFrame, branch_column: str) -> pd.DataFrame:
+    if df.empty or branch_column not in df.columns:
+        return df
+    out = df.copy()
+    levels = pd.DataFrame(
+        out[branch_column].map(_branch_level_values).tolist(),
+        columns=_LEVEL_COLUMNS,
+        index=out.index,
+    )
+    for column in _LEVEL_COLUMNS:
+        out[column] = levels[column]
+    return out

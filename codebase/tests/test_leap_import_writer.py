@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from adapters.leap_import_writer import build_leap_import_tables, write_leap_import_workbook
 
@@ -141,8 +142,23 @@ def test_build_leap_import_tables_merges_ids_and_returns_warnings():
         "Per...",
         "Expression",
     ]
+    assert leap_sheet.columns[12] == ""
+    assert list(leap_sheet.columns[13:]) == [
+        "Level 1",
+        "Level 2",
+        "Level 3",
+        "Level 4",
+        "Level 5",
+        "Level 6",
+        "Level 7",
+        "Level 8...",
+    ]
     assert leap_sheet["BranchID"].iloc[0] == 1
+    assert leap_sheet["Level 1"].iloc[0] == "Demand"
+    assert leap_sheet["Level 2"].iloc[0] == "Freight road"
     assert "Data(2022, 100, 2023, 110)" in leap_sheet["Expression"].iloc[0]
+    assert "Level 1" in viewing_sheet.columns
+    assert "Level 8..." in viewing_sheet.columns
     assert 2022 in viewing_sheet.columns
     assert not viewing_sheet.empty
     assert {warning["type"] for warning in warnings} >= {
@@ -159,6 +175,124 @@ def test_build_leap_import_tables_merges_ids_and_returns_warnings():
         (leap_sheet["Branch Path"] == "Demand\\Freight road\\LCVs\\BEV\\Electricity")
         & (leap_sheet["Variable"] == "Fuel Economy")
     ).any()
+
+
+def test_build_leap_import_tables_applies_scale_to_expression_and_viewing_values():
+    t11 = pd.DataFrame([
+        {
+            "leap_branch_path": "Demand\\Passenger road",
+            "variable": "Stock",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 2_500_000.0,
+            "unit": "Device",
+            "scale": "Millions",
+        },
+        {
+            "leap_branch_path": "Demand\\Passenger road",
+            "variable": "Stock",
+            "scenario": "Target",
+            "year": 2023,
+            "value": 3_000_000.0,
+            "unit": "Device",
+            "scale": "Millions",
+        },
+    ])
+    reference = pd.DataFrame([
+        {
+            "BranchID": 1,
+            "VariableID": 2,
+            "ScenarioID": 3,
+            "RegionID": 4,
+            "Branch Path": "Demand\\Passenger road",
+            "Variable": "Stock",
+            "Scenario": "Target",
+            "Region": "United States of America",
+            "Scale": "",
+            "Units": "Device",
+            "Per...": "",
+        }
+    ])
+
+    leap_sheet, viewing_sheet, warnings, not_needed = build_leap_import_tables(
+        t11,
+        reference,
+        economy_long_name="United States of America",
+        region_id=4,
+    )
+
+    assert leap_sheet.loc[0, "Scale"] == "Millions"
+    assert leap_sheet.loc[0, "Expression"] == "Data(2022, 2.5, 2023, 3)"
+    assert viewing_sheet.loc[0, 2022] == pytest.approx(2.5)
+    assert viewing_sheet.loc[0, 2023] == pytest.approx(3.0)
+
+
+def test_build_leap_import_tables_can_export_raw_values_instead_of_scaled_values():
+    t11 = pd.DataFrame([
+        {
+            "leap_branch_path": "Demand\\Passenger road",
+            "variable": "Stock",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 2_500_000.0,
+            "unit": "Device",
+            "scale": "Millions",
+        },
+        {
+            "leap_branch_path": "Demand\\Passenger road\\LPVs",
+            "variable": "Sales Share",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 12.5,
+            "unit": "Share",
+            "scale": "%",
+        },
+    ])
+    reference = pd.DataFrame([
+        {
+            "BranchID": 1,
+            "VariableID": 2,
+            "ScenarioID": 3,
+            "RegionID": 4,
+            "Branch Path": "Demand\\Passenger road",
+            "Variable": "Stock",
+            "Scenario": "Target",
+            "Region": "United States of America",
+            "Scale": "",
+            "Units": "Device",
+            "Per...": "",
+        },
+        {
+            "BranchID": 5,
+            "VariableID": 6,
+            "ScenarioID": 3,
+            "RegionID": 4,
+            "Branch Path": "Demand\\Passenger road\\LPVs",
+            "Variable": "Sales Share",
+            "Scenario": "Target",
+            "Region": "United States of America",
+            "Scale": "%",
+            "Units": "Share",
+            "Per...": "",
+        },
+    ])
+
+    leap_sheet, viewing_sheet, warnings, not_needed = build_leap_import_tables(
+        t11,
+        reference,
+        economy_long_name="United States of America",
+        region_id=4,
+        export_values_in_raw_units=True,
+    )
+
+    stock_row = leap_sheet[leap_sheet["Variable"].eq("Stock")].iloc[0]
+    share_row = leap_sheet[leap_sheet["Variable"].eq("Sales Share")].iloc[0]
+    assert stock_row["Scale"] == ""
+    assert float(stock_row["Expression"]) == pytest.approx(2_500_000.0)
+    assert share_row["Scale"] == "%"
+    assert share_row["Expression"] == "12.5"
+    stock_view = viewing_sheet[viewing_sheet["Variable"].eq("Stock")].iloc[0]
+    assert stock_view[2022] == pytest.approx(2_500_000.0)
 
 
 def test_write_leap_import_workbook_writes_row_coverage_diagnostics(tmp_path):

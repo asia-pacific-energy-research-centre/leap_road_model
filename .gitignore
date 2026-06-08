@@ -45,8 +45,6 @@ results/*
 plotting_output/
 intermediate_data/
 
-# Commit lightweight dashboard HTML for deployment (served on HuggingFace Space).
-# Keep bulky module outputs and static diagnostic PNG suites ignored.
 # Git requires each directory level to be explicitly un-ignored when the parent is ignored.
 !results/*/
 # Smoke test and ad-hoc diagnostic run directories stay local only.
@@ -57,11 +55,6 @@ results/*_saturation_check/
 results/*_rowdiag/
 results/*_latest*/
 results/*/*
-!results/*/diagnostics/
-results/*/diagnostics/*
-!results/*/diagnostics/dashboard/
-results/*/diagnostics/dashboard/*
-!results/*/diagnostics/dashboard/*.html
 !results/shared/
 results/shared/*
 !results/shared/dashboard_assets/

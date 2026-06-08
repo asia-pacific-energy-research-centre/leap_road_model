@@ -37,45 +37,124 @@ import time
 import json
 from typing import Any
 
+import numpy as np
 import pandas as pd
+import yaml
 
 from modules.module2_base_year import run_module2
 from modules.module3_stock_targets import run_module3
 from modules.module4_sales_turnover import run_module4
 from modules.module5_sales_shares import run_module5
-from modules.module6_leap_handoff import run_module6
-from modules.module7_mirror import run_module7_mirror
+from modules.module6_reconciliation_and_leap_handoff import run_module6
+from modules.module7_mirror import build_base_technology_assumptions, run_module7_mirror
 from logging_utils import StructuredLogger, log_dataframe_info
 from adapters.road_module1_defaults import load_module1_for_economy
+from adapters.module1_reimport_exporter import (
+    load_module1_source_long_csv,
+    write_reconciled_module1_reimport_csv,
+)
 from adapters.leap_workbook import write_leap_import_workbook
+from adapters.lifecycle_profile_exporter import export_lifecycle_profiles_from_t6v
 
-# Full economy name for each canonical economy code (used as LEAP Region label)
-_ECONOMY_LONG_NAMES: dict[str, str] = {
+# Canonical LEAP region name(s) per economy code.
+# One-to-one mapping from economy code to canonical LEAP region name.
+# Keys use the road model's underscored code format (e.g. "01_AUS").
+ECONOMY_CODE_TO_LEAP_REGION_NAMES: dict[str, str] = {
     "01_AUS": "Australia",
-    "02_BD": "Brunei Darussalam",
+    "02_BD":  "Brunei Darussalam",
     "03_CDA": "Canada",
     "04_CHL": "Chile",
     "05_PRC": "China",
     "06_HKC": "Hong Kong, China",
     "07_INA": "Indonesia",
     "08_JPN": "Japan",
-    "09_ROK": "Korea",
+    "09_ROK": "Republic of Korea",
     "10_MAS": "Malaysia",
     "11_MEX": "Mexico",
-    "12_NZ": "New Zealand",
+    "12_NZ":  "New Zealand",
     "13_PNG": "Papua New Guinea",
-    "14_PE": "Peru",
-    "15_PHL": "Philippines",
+    "14_PE":  "Peru",
+    "15_PHL": "The Philippines",
     "16_RUS": "Russia",
     "17_SGP": "Singapore",
-    "18_CT": "Chinese Taipei",
+    "18_CT":  "Chinese Taipei",
     "19_THA": "Thailand",
     "20_USA": "United States",
-    "21_VN": "Viet Nam",
+    "21_VN":  "Viet Nam",
 }
-from diagnostics.module_charts import write_module1_charts, write_workflow_summary_charts
+from diagnostics.module_charts import write_module1_charts, write_module6_charts, write_workflow_summary_charts
 from diagnostics.plotly_dashboard import write_module_pages
 from adapters.leap_import_writer import write_leap_import_workbook as write_strict_leap_import_workbook
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_WORKFLOW_CONFIG_PATH = _REPO_ROOT / "codebase" / "config" / "workflow_defaults.yaml"
+
+
+def load_workflow_defaults(config_path: str | Path | None = None) -> dict[str, Any]:
+    """
+    Load runtime workflow defaults from YAML.
+
+    This controls run switches and paths only. Model assumptions still come from
+    Module 1 packages and module-specific configuration files.
+    """
+    path = Path(config_path) if config_path is not None else _DEFAULT_WORKFLOW_CONFIG_PATH
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Workflow defaults must be a YAML mapping: {path}")
+    return data
+
+
+def _workflow_defaults_to_config_overrides(defaults: dict[str, Any]) -> dict[str, Any]:
+    """Map workflow_defaults.yaml keys to RoadWorkflowConfig fields."""
+    run_modules = defaults.get("run_modules") or {}
+    module6 = defaults.get("module6") or {}
+    leap_import = defaults.get("leap_import") or {}
+    overrides: dict[str, Any] = {}
+
+    for key in [
+        "module1_defaults_dir",
+        "module1_defaults_version",
+        "enable_visualisations",
+        "save_csv_outputs",
+        "show_progress",
+        "write_leap_row_diagnostics",
+    ]:
+        if key in defaults:
+            overrides[key] = defaults[key]
+
+    for module_num in range(2, 8):
+        key = f"m{module_num}"
+        if key in run_modules:
+            overrides[f"run_m{module_num}"] = bool(run_modules[key])
+
+    if "match_tolerance" in module6:
+        overrides["module6_match_tolerance"] = float(module6["match_tolerance"])
+    if "adjust_stock_targets_after_reconciliation" in module6:
+        overrides["adjust_stock_targets_after_reconciliation"] = bool(
+            module6["adjust_stock_targets_after_reconciliation"]
+        )
+    if "export_values_in_raw_units" in leap_import:
+        overrides["leap_import_export_values_in_raw_units"] = bool(leap_import["export_values_in_raw_units"])
+
+    return overrides
+
+
+def _workflow_defaults_value(defaults: dict[str, Any], key: str, fallback: Any) -> Any:
+    value = defaults.get(key, fallback)
+    return fallback if value is None else value
+
+
+def _resolve_repo_relative_path(value: str | Path | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else _REPO_ROOT / path
 
 
 #%%
@@ -188,9 +267,13 @@ def parse_leap_format_inputs(
     }
     scale_multipliers = {
         "": 1.0,
-        "Thousand": 1_000.0,
-        "Million": 1_000_000.0,
-        "Billion": 1_000_000_000.0,
+        "%": 1.0,
+        "thousand": 1_000.0,
+        "thousands": 1_000.0,
+        "million": 1_000_000.0,
+        "millions": 1_000_000.0,
+        "billion": 1_000_000_000.0,
+        "billions": 1_000_000_000.0,
     }
 
     df = df.copy()
@@ -259,17 +342,17 @@ def parse_leap_format_inputs(
     # Apply LEAP Scale multiplier when the column is present
     if "Scale" in melted.columns:
         melted["value"] = melted["value"] * melted["Scale"].map(
-            lambda s: scale_multipliers.get(str(s).strip(), 1.0) if pd.notna(s) else 1.0
+            lambda s: scale_multipliers.get(str(s).strip().lower(), 1.0) if pd.notna(s) else 1.0
         )
 
     # Unit conversion: efficiency in MJ/100 km → km/GJ
-    # km/GJ = 100_000 / (MJ/100 km)
+    # km/GJ = 10_000 / (MJ/100 km)
     if "Units" in melted.columns:
         eff_mask = (melted["variable"] == "efficiency") & (
             melted["Units"].str.strip().str.lower().isin(["mj/100 km", "mj/100km"])
         )
         nonzero = eff_mask & (melted["value"] != 0)
-        melted.loc[nonzero, "value"] = 100_000.0 / melted.loc[nonzero, "value"]
+        melted.loc[nonzero, "value"] = 10_000.0 / melted.loc[nonzero, "value"]
         melted.loc[eff_mask, "Units"] = "km/GJ"
 
     # Economy: apply optional name→code mapping, fall back to Region as-is
@@ -430,6 +513,8 @@ class RoadWorkflowConfig:
     module3_config: dict[str, Any] | None = None
     module4_config: dict[str, Any] | None = None
     module6_match_tolerance: float = 0.01
+    adjust_stock_targets_after_reconciliation: bool = True
+    leap_import_export_values_in_raw_units: bool = False
 
     def projection_years(self) -> list[int]:
         return list(range(self.base_year, self.final_year + 1))
@@ -485,6 +570,109 @@ class RoadWorkflowInputs:
 # ---------------------------------------------------------------------------
 # Workflow engine
 # ---------------------------------------------------------------------------
+
+
+def build_post_reconciliation_stock_targets(
+    stock_targets: pd.DataFrame,
+    reconciliation_scalars: pd.DataFrame,
+    *,
+    base_year: int,
+    final_year: int,
+) -> pd.DataFrame:
+    """
+    Re-anchor Module 3 stock targets to Module 6 reconciled base-year stock.
+
+    Passenger stocks preserve the final-year ownership target. The difference
+    between the original base-year stock and reconciled base-year stock fades
+    linearly to zero by final_year.
+
+    Freight stocks preserve the original growth index. The reconciled base-year
+    stock is multiplied by the pre-reconciliation stock growth factor in each
+    later year, so reconciliation changes the physical level but not the
+    freight GDP-elasticity growth shape.
+    """
+    required_t5 = {"year", "transport_type", "vehicle_type", "target_stock"}
+    missing_t5 = sorted(required_t5 - set(stock_targets.columns))
+    if missing_t5:
+        raise KeyError(f"stock_targets missing required columns: {missing_t5}")
+
+    if stock_targets.empty or reconciliation_scalars.empty:
+        return stock_targets.copy()
+
+    base_assumptions = build_base_technology_assumptions(reconciliation_scalars)
+    if base_assumptions.empty or "base_stock" not in base_assumptions.columns:
+        return stock_targets.copy()
+
+    key_cols = [
+        c
+        for c in ["economy", "scenario", "transport_type", "vehicle_type"]
+        if c in stock_targets.columns and c in base_assumptions.columns
+    ]
+    if not {"transport_type", "vehicle_type"}.issubset(key_cols):
+        raise ValueError("stock targets and reconciliation scalars must share transport_type and vehicle_type")
+
+    reconciled = (
+        base_assumptions.groupby(key_cols, dropna=False)["base_stock"]
+        .sum()
+        .reset_index()
+        .rename(columns={"base_stock": "_reconciled_base_stock"})
+    )
+
+    out = stock_targets.copy()
+    out["_original_target_stock"] = pd.to_numeric(out["target_stock"], errors="coerce")
+    out = out.merge(reconciled, on=key_cols, how="left")
+
+    base_lookup = (
+        out[out["year"].astype(int).eq(int(base_year))]
+        [key_cols + ["_original_target_stock"]]
+        .rename(columns={"_original_target_stock": "_original_base_stock"})
+    )
+    out = out.merge(base_lookup, on=key_cols, how="left")
+
+    base_adjustment = out["_reconciled_base_stock"] - out["_original_base_stock"]
+    transport_type = out["transport_type"].astype(str).str.lower()
+    passenger_mask = transport_type.eq("passenger")
+    freight_mask = transport_type.eq("freight")
+
+    years_from_base = max(1, int(final_year) - int(base_year))
+    progress = (
+        (pd.to_numeric(out["year"], errors="coerce") - int(base_year)) / years_from_base
+    ).clip(lower=0.0, upper=1.0)
+    passenger_target_stock = out["_original_target_stock"] + base_adjustment.fillna(0.0) * (1.0 - progress)
+
+    growth_factor = out["_original_target_stock"] / out["_original_base_stock"].replace(0.0, np.nan)
+    freight_target_stock = out["_reconciled_base_stock"] * growth_factor
+
+    target_stock = out["_original_target_stock"].copy()
+    target_stock.loc[passenger_mask] = passenger_target_stock.loc[passenger_mask]
+    target_stock.loc[freight_mask] = freight_target_stock.loc[freight_mask]
+
+    has_reconciled_stock = out["_reconciled_base_stock"].notna()
+    out.loc[has_reconciled_stock, "target_stock"] = target_stock[has_reconciled_stock]
+    out.loc[
+        has_reconciled_stock & out["year"].astype(int).eq(int(base_year)),
+        "target_stock",
+    ] = out.loc[
+        has_reconciled_stock & out["year"].astype(int).eq(int(base_year)),
+        "_reconciled_base_stock",
+    ]
+
+    out["pre_reconciliation_target_stock"] = out["_original_target_stock"]
+    out["reconciled_base_stock"] = out["_reconciled_base_stock"]
+    out["stock_target_base_adjustment"] = base_adjustment
+    out["stock_target_adjustment_method"] = np.select(
+        [
+            passenger_mask & has_reconciled_stock,
+            freight_mask & has_reconciled_stock,
+        ],
+        [
+            "preserve_final_target_linear_base_adjustment",
+            "preserve_growth_index_from_reconciled_base",
+        ],
+        default="no_reconciled_base_stock",
+    )
+
+    return out.drop(columns=["_original_target_stock", "_reconciled_base_stock", "_original_base_stock"])
 
 
 def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> dict[str, Any]:
@@ -552,6 +740,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
     # dropped for missing year values — those disappear from merged_inputs.
     outputs["module1_merged"] = _merged
     outputs["module1_raw_df"] = m1["raw_leap_df"]
+    outputs["population"] = inputs.population
 
     if diagnostics_dir is not None:
         try:
@@ -600,6 +789,10 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         _print_progress(config, "Module 3: projecting stock targets.")
         _sat = m1.get("passenger_saturation_level")
         _saturation_overrides = {"researcher": float(_sat)} if _sat is not None else None
+        _module3_config = dict(config.module3_config or {})
+        _module3_config["passenger_stock_growth_rate_adjustment"] = float(
+            m1.get("passenger_stock_growth_rate_adjustment", 1.2)
+        )
         _vehicle_type_shares = inputs.vehicle_type_shares
         if _vehicle_type_shares is None:
             _physical_stock_shares = _interpolate_vehicle_type_stock_shares(
@@ -621,9 +814,14 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             saturation_overrides=_saturation_overrides,
             passenger_saturation_reached=bool(m1.get("passenger_saturation_reached", False)),
             elasticity_overrides=inputs.elasticity_overrides,
+            elasticity_adjustments=(
+                {"freight_total": float(m1.get("freight_gdp_elasticity_adjustment", 1.0))}
+                if float(m1.get("freight_gdp_elasticity_adjustment", 1.0)) != 1.0
+                else None
+            ),
             vehicle_equivalent_weights=m1["vehicle_equivalent_weights"] or None,
             vehicle_equivalent_weight_bounds=m1.get("vehicle_equivalent_weight_bounds"),
-            config=config.module3_config,
+            config=_module3_config,
             diagnostics_dir=str(diagnostics_dir) if diagnostics_dir else None,
             economy=config.economy,
             scenario=config.scenarios[0],
@@ -677,6 +875,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             _write_df(t6v, output_root / "module4" / "T6v_vintage_profiles.csv")
     else:
         t6 = outputs.get("T6")
+        t6v = outputs.get("T6v")
 
     # ------------------------ Module 5 ------------------------
     if config.run_m5:
@@ -701,6 +900,16 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                     .sum()
                     .rename(columns={"value": "sales_share"})
                 )
+        else:
+            _future_sales = _module1_future_sales_share_rows(
+                m1["raw_leap_df"],
+                base_year=config.base_year,
+            )
+        _module1_sales_shares = _module1_sales_share_overrides(
+            _merged,
+            economy=config.economy,
+            base_year=config.base_year,
+        )
 
         t0 = time.perf_counter()
         _print_progress(config, "Module 5: preparing vehicle sales shares.")
@@ -711,9 +920,10 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             scenarios=config.scenarios,
             economy_aliases=[
                 config.economy,
-                _ECONOMY_LONG_NAMES.get(config.economy, ""),
+                ECONOMY_CODE_TO_LEAP_REGION_NAMES.get(config.economy, ""),
             ],
             ev_sales_data=inputs.ev_sales_data,
+            researcher_sales_shares=_module1_sales_shares,
             diagnostics_dir=diagnostics_dir,
         )
         timings["module5_seconds"] = time.perf_counter() - t0
@@ -755,6 +965,74 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             match_tolerance=config.module6_match_tolerance,
             diagnostics_dir=diagnostics_dir,
         )
+        stock_targets_adjusted = False
+        t5_pre_reconciliation = t5.copy() if isinstance(t5, pd.DataFrame) else None
+        t6_pre_reconciliation = t6.copy() if isinstance(t6, pd.DataFrame) else None
+        t6v_pre_reconciliation = t6v.copy() if isinstance(t6v, pd.DataFrame) else None
+
+        if config.adjust_stock_targets_after_reconciliation and isinstance(t5, pd.DataFrame):
+            t5_post_reconciliation = build_post_reconciliation_stock_targets(
+                t5,
+                m6["T9"],
+                base_year=config.base_year,
+                final_year=config.final_year,
+            )
+            _before = pd.to_numeric(t5["target_stock"], errors="coerce").fillna(0.0)
+            _after = pd.to_numeric(t5_post_reconciliation["target_stock"], errors="coerce").fillna(0.0)
+            stock_targets_adjusted = not _before.reset_index(drop=True).equals(_after.reset_index(drop=True))
+
+            if stock_targets_adjusted:
+                _print_progress(
+                    config,
+                    "Module 6: re-anchoring stock trajectory to reconciled base-year stock.",
+                )
+                t_adjust = time.perf_counter()
+                t5 = t5_post_reconciliation
+                t6, t6v = run_module4(
+                    stock_targets=t5,
+                    survival_curves=m1["survival_curves"],
+                    vintage_profiles=m1["vintage_profiles"],
+                    turnover_policies=inputs.turnover_policies,
+                    fleet_age_shift_years=inputs.fleet_age_shift_years,
+                    scrappage_years=inputs.scrappage_years,
+                    config=config.module4_config,
+                    diagnostics_dir=diagnostics_dir,
+                    economy=config.economy,
+                    scenario=config.scenarios[0],
+                )
+                m6 = run_module6(
+                    base_year_branches=t4,
+                    sales_turnover=t6,
+                    sales_shares=t7f,
+                    esto_fuel_totals=inputs.esto_fuel_totals,
+                    projection_years=config.projection_years(),
+                    reconciliation_weights=m1.get("reconciliation_weights"),
+                    phev_electric_utilisation_rate=m1["phev_utilisation_rate"],
+                    scalar_bounds=m1["scalar_bounds"],
+                    match_tolerance=config.module6_match_tolerance,
+                    diagnostics_dir=None,
+                )
+                timings["post_reconciliation_stock_adjustment_seconds"] = time.perf_counter() - t_adjust
+                outputs["T5_pre_reconciliation"] = t5_pre_reconciliation
+                outputs["T6_pre_reconciliation"] = t6_pre_reconciliation
+                outputs["T6v_pre_reconciliation"] = t6v_pre_reconciliation
+                outputs["T5_post_reconciliation"] = t5
+                outputs["T6_post_reconciliation"] = t6
+                outputs["T6v_post_reconciliation"] = t6v
+
+                if diagnostics_dir is not None:
+                    try:
+                        write_module6_charts(
+                            {
+                                **m6,
+                                "T5_pre_reconciliation": t5_pre_reconciliation,
+                                "T5_post_reconciliation": t5,
+                            },
+                            diagnostics_dir,
+                        )
+                    except Exception as exc:
+                        logger.warning("module6_stock_trajectory_diagnostics_failed", error=str(exc))
+
         timings["module6_seconds"] = time.perf_counter() - t0
         logger.info(
             "module6_output",
@@ -772,15 +1050,42 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 
         t11_with_ca = _extract_current_accounts_base_year(m6["T11"], config.base_year)
         m6 = {**m6, "T11": t11_with_ca}
+        outputs["T5"] = t5
+        outputs["T6"] = t6
+        outputs["T6v"] = t6v
         outputs.update(m6)
 
         if config.save_csv_outputs:
+            if stock_targets_adjusted:
+                _write_df(t5_pre_reconciliation, output_root / "module3" / "T5_stock_targets_pre_reconciliation.csv")
+                _write_df(t5, output_root / "module3" / "T5_stock_targets.csv")
+                _write_df(t5, output_root / "module3" / "T5_stock_targets_post_reconciliation.csv")
+                _write_df(t6_pre_reconciliation, output_root / "module4" / "T6_sales_turnover_pre_reconciliation.csv")
+                _write_df(t6v_pre_reconciliation, output_root / "module4" / "T6v_vintage_profiles_pre_reconciliation.csv")
+                _write_df(t6, output_root / "module4" / "T6_sales_turnover.csv")
+                _write_df(t6, output_root / "module4" / "T6_sales_turnover_post_reconciliation.csv")
+                _write_df(t6v, output_root / "module4" / "T6v_vintage_profiles.csv")
+                _write_df(t6v, output_root / "module4" / "T6v_vintage_profiles_post_reconciliation.csv")
             _write_df(m6["T8"], output_root / "module6" / "T8_fuel_allocation.csv")
             _write_df(m6["T9"], output_root / "module6" / "T9_reconciliation_scalars.csv")
             _write_df(m6["T10"], output_root / "module6" / "T10_device_shares.csv")
             _write_df(m6["T11"], output_root / "module6" / "T11_leap_ready.csv")
             _write_df(m6["T12"], output_root / "module6" / "T12_reconciliation_diagnostics.csv")
             _write_df(m6["T12_phev"], output_root / "module6" / "T12_phev_utilisation_diagnostics.csv")
+            module1_reimport_path = output_root / "module6" / f"{config.economy}_module1_reimport_reconciled.csv"
+            module1_source_long = load_module1_source_long_csv(
+                config.module1_defaults_dir,
+                economy=config.economy,
+                version=config.module1_defaults_version,
+            )
+            write_reconciled_module1_reimport_csv(
+                source_long_df=module1_source_long,
+                leap_ready=m6["T11"],
+                output_path=module1_reimport_path,
+                base_year=config.base_year,
+                reconciliation_scalars=m6["T9"],
+            )
+            outputs["module1_reimport_reconciled_path"] = module1_reimport_path
             leap_import_path = output_root / "module6" / f"{config.economy}_leap_import.xlsx"
             reference_path = Path(config.leap_reference_path) if config.leap_reference_path else _default_leap_reference_path()
             if reference_path is not None and reference_path.exists():
@@ -788,13 +1093,14 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                     m6["T11"],
                     leap_import_path,
                     reference_path=reference_path,
-                    economy_long_name=_ECONOMY_LONG_NAMES.get(config.economy, config.economy),
+                    economy_long_name=ECONOMY_CODE_TO_LEAP_REGION_NAMES.get(config.economy, config.economy),
                     coverage_diagnostics_path=(
                         output_root / "module6" / f"{config.economy}_leap_import_row_coverage_diagnostics.csv"
                         if config.write_leap_row_diagnostics
                         else None
                     ),
                     economy_code=config.economy,
+                    export_values_in_raw_units=config.leap_import_export_values_in_raw_units,
                 )
                 outputs["leap_import_warnings"] = warnings
                 if config.write_leap_row_diagnostics:
@@ -810,7 +1116,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 write_leap_import_workbook(
                     m6["T11"],
                     leap_import_path,
-                    economy_long_name=_ECONOMY_LONG_NAMES.get(config.economy, config.economy),
+                    economy_long_name=ECONOMY_CODE_TO_LEAP_REGION_NAMES.get(config.economy, config.economy),
                 )
                 outputs["leap_import_warnings"] = [
                     {
@@ -842,6 +1148,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             efficiency_adjustment_variables=inputs.module7_efficiency_adjustment_variables,
             scrappage_by_year=inputs.module7_scrappage_by_year,
             diagnostics_dir=str(diagnostics_dir) if diagnostics_dir else None,
+            base_year_branches=outputs.get("T4"),
         )
         timings["module7_seconds"] = time.perf_counter() - t0
         logger.info(
@@ -857,6 +1164,27 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 _write_df(m7["T13"], output_root / "module7" / "T13_mirror_outputs.csv")
             if "T13_fuel" in m7:
                 _write_df(m7["T13_fuel"], output_root / "module7" / "T13_mirror_fuel_outputs.csv")
+
+    if config.save_csv_outputs and isinstance(outputs.get("T6v"), pd.DataFrame):
+        try:
+            lifecycle_result = export_lifecycle_profiles_from_t6v(
+                outputs["T6v"],
+                output_root / "lifecycle_profiles",
+                economy=config.economy,
+                area_name=f"{ECONOMY_CODE_TO_LEAP_REGION_NAMES.get(config.economy, config.economy)} transport",
+            )
+            outputs["lifecycle_profile_manifest_path"] = lifecycle_result["manifest_path"]
+            outputs["lifecycle_profile_zip_path"] = lifecycle_result.get("zip_path")
+            logger.info(
+                "lifecycle_profiles_exported",
+                manifest_path=str(lifecycle_result["manifest_path"]),
+                zip_path=str(lifecycle_result.get("zip_path", "")),
+                profile_count=len(lifecycle_result["manifest"]),
+            )
+            _print_progress(config, "Lifecycle profile export complete.")
+        except Exception as exc:
+            logger.warning("lifecycle_profile_export_failed", error=str(exc))
+            outputs["lifecycle_profile_export_error"] = str(exc)
 
     if diagnostics_dir is not None:
         try:
@@ -971,6 +1299,10 @@ def _extract_current_accounts_base_year(t11: pd.DataFrame, base_year: int) -> pd
 def _default_leap_reference_path() -> Path | None:
     repo_root = Path(__file__).resolve().parents[1]
     candidates = [
+        repo_root
+        / "input_data"
+        / "leap_import_templates"
+        / "DEFAULT_transport_leap_import_TGT_REF_CA.xlsx",
         repo_root.parent
         / "road_model_inputs_interface"
         / "back-end"
@@ -1018,6 +1350,69 @@ def _print_progress(config: RoadWorkflowConfig, message: str) -> None:
         print(message)
 
 
+def _module1_future_sales_share_rows(
+    raw_leap_df: pd.DataFrame,
+    base_year: int,
+) -> pd.DataFrame:
+    """Extract projected Sales Share rows from the canonical Module 1 package."""
+    if raw_leap_df is None or raw_leap_df.empty:
+        return pd.DataFrame()
+
+    parsed = parse_leap_format_inputs(raw_leap_df)
+    sales_rows = parsed[
+        parsed["variable"].eq("sales_share")
+        & (parsed["year"] > base_year)
+        & parsed["vehicle_type"].notna()
+        & parsed["drive_type"].notna()
+    ].copy()
+    if sales_rows.empty:
+        return pd.DataFrame()
+
+    group_cols = [
+        c for c in
+        ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type"]
+        if c in sales_rows.columns
+    ]
+    return (
+        sales_rows.groupby(group_cols, as_index=False)["value"]
+        .sum()
+        .rename(columns={"value": "sales_share"})
+    )
+
+
+def _module1_sales_share_overrides(
+    module1_inputs: pd.DataFrame,
+    economy: str,
+    base_year: int,
+) -> pd.DataFrame:
+    """Extract explicit base-year sales-share rows from parsed Module 1 inputs."""
+    required = {"scenario", "year", "vehicle_type", "drive_type", "variable", "value"}
+    if module1_inputs.empty or not required.issubset(module1_inputs.columns):
+        return pd.DataFrame()
+
+    df = module1_inputs[
+        module1_inputs["variable"].eq("sales_share")
+        & module1_inputs["year"].eq(base_year)
+        & module1_inputs["vehicle_type"].notna()
+        & module1_inputs["drive_type"].notna()
+    ].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    df["sales_share"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["sales_share"])
+    if df.empty:
+        return pd.DataFrame()
+
+    group_cols = ["scenario", "vehicle_type", "drive_type"]
+    df = df.groupby(group_cols, as_index=False)["sales_share"].sum()
+    if df["sales_share"].max() > 1.0:
+        df["sales_share"] = df["sales_share"] / 100.0
+    df["economy"] = economy
+    df["source_flag"] = "module1_input"
+    return df[["economy", "scenario", "vehicle_type", "drive_type", "sales_share", "source_flag"]]
+
+
 def _module6_reconciliation_summary(module6_outputs: dict[str, Any]) -> list[str]:
     t9 = module6_outputs.get("T9")
     t12 = module6_outputs.get("T12")
@@ -1028,10 +1423,25 @@ def _module6_reconciliation_summary(module6_outputs: dict[str, Any]) -> list[str
     out_of_bounds = int((~t9.get("scalars_within_bounds", pd.Series(dtype=bool)).astype(bool)).sum())
     hit_max_iterations = int(t9.get("reconciliation_hit_max_iterations", pd.Series(dtype=bool)).astype(bool).sum())
     if out_of_bounds or hit_max_iterations:
+        scalar_subset = t9.copy()
+        if out_of_bounds and "scalars_within_bounds" in scalar_subset.columns:
+            scalar_subset = scalar_subset[~scalar_subset["scalars_within_bounds"].astype(bool)].copy()
+        scalar_notes = []
+        for column, label in [
+            ("stock_scalar", "stock"),
+            ("mileage_scalar", "mileage"),
+            ("efficiency_scalar", "efficiency"),
+        ]:
+            if column in scalar_subset.columns and not scalar_subset.empty:
+                avg_scalar = pd.to_numeric(scalar_subset[column], errors="coerce").dropna().mean()
+                if pd.notna(avg_scalar):
+                    scalar_notes.append(f"{label}={avg_scalar:.3f}x")
+        scalar_text = f" Average bounded scalars: {', '.join(scalar_notes)}." if scalar_notes else ""
         lines.append(
             "Module 6 reconciliation note: "
             f"{out_of_bounds:,} branch(es) reached scalar bounds; "
             f"{hit_max_iterations:,} branch(es) hit the iteration limit."
+            f"{scalar_text}"
         )
 
     if isinstance(t12, pd.DataFrame) and not t12.empty and "gap_pct" in t12.columns:
@@ -1224,13 +1634,14 @@ def _print_dashboard_link(outputs: dict[str, Any]) -> None:
 
 def run_for_economy(
     economy: str,
-    scenario: str = "Target",
-    base_year: int = 2022,
-    final_year: int = 2060,
-    enable_visualisations: bool = True,
+    scenario: str | None = None,
+    base_year: int | None = None,
+    final_year: int | None = None,
+    enable_visualisations: bool | None = None,
     output_root: str | Path | None = None,
     future_sales_shares: pd.DataFrame | None = None,
-    auto_load_future_sales_shares: bool = True,
+    auto_load_future_sales_shares: bool | None = None,
+    workflow_config_path: str | Path | None = None,
     **config_overrides: Any,
 ) -> dict[str, Any]:
     """
@@ -1242,16 +1653,18 @@ def run_for_economy(
 
     Args:
         economy:               Canonical economy code, e.g. '20_USA'.
-        scenario:              Macro scenario label (default 'Target').
-        base_year:             Base year (default 2022).
-        final_year:            Final projection year (default 2060).
-        enable_visualisations: Write PNG/HTML diagnostics (default True).
+        scenario:              Macro scenario label. Defaults to workflow_defaults.yaml.
+        base_year:             Base year. Defaults to workflow_defaults.yaml.
+        final_year:            Final projection year. Defaults to workflow_defaults.yaml.
+        enable_visualisations: Write PNG/HTML diagnostics. Defaults to workflow_defaults.yaml.
         output_root:           Override CSV output directory.
         future_sales_shares:   Optional LEAP-format future sales-share table
                                (Branch Path / Variable / Scenario / Region + year cols).
         auto_load_future_sales_shares:
                                If True and future_sales_shares is None, attempt to
-                               auto-discover a future sales-share input file.
+                               auto-discover a future sales-share input file. Defaults
+                               to workflow_defaults.yaml.
+        workflow_config_path:  Optional YAML file with workflow defaults.
         **config_overrides:    Any RoadWorkflowConfig field overrides.
 
     Returns:
@@ -1265,6 +1678,21 @@ def run_for_economy(
     """
     from adapters.esto_inputs import load_population, load_gdp, load_esto_road_energy, load_esto_fuel_totals
 
+    workflow_defaults = load_workflow_defaults(workflow_config_path)
+    scenario = str(scenario or _workflow_defaults_value(workflow_defaults, "scenario", "Target"))
+    base_year = int(base_year if base_year is not None else _workflow_defaults_value(workflow_defaults, "base_year", 2022))
+    final_year = int(final_year if final_year is not None else _workflow_defaults_value(workflow_defaults, "final_year", 2060))
+    enable_visualisations = bool(
+        enable_visualisations
+        if enable_visualisations is not None
+        else _workflow_defaults_value(workflow_defaults, "enable_visualisations", True)
+    )
+    auto_load_future_sales_shares = bool(
+        auto_load_future_sales_shares
+        if auto_load_future_sales_shares is not None
+        else _workflow_defaults_value(workflow_defaults, "auto_load_future_sales_shares", True)
+    )
+
     population = load_population(economy, scenario=scenario)
     gdp = load_gdp(economy, scenario=scenario)
     esto_road_energy = load_esto_road_energy(economy)
@@ -1276,18 +1704,28 @@ def run_for_economy(
     _repo_root = Path(__file__).resolve().parents[1]  # leap_road_model/
     _output_root = Path(output_root) if output_root else _repo_root / "results" / economy
 
-    config = RoadWorkflowConfig(
-        economy=economy,
-        scenarios=[scenario],
-        base_year=base_year,
-        final_year=final_year,
-        enable_visualisations=enable_visualisations,
-        config_dir=_repo_root / "codebase" / "config",
-        module1_defaults_dir=_repo_root / "input_data" / "module1_defaults",
-        output_root=_output_root,
-        diagnostics_root=_output_root / "diagnostics" if enable_visualisations else None,
-        **config_overrides,
-    )
+    yaml_config_overrides = _workflow_defaults_to_config_overrides(workflow_defaults)
+    if "module1_defaults_dir" in yaml_config_overrides:
+        yaml_config_overrides["module1_defaults_dir"] = _resolve_repo_relative_path(
+            yaml_config_overrides["module1_defaults_dir"]
+        )
+
+    config_kwargs = {"module1_defaults_dir": _repo_root / "input_data" / "module1_defaults"}
+    config_kwargs.update(yaml_config_overrides)
+    config_kwargs.update({
+        "economy": economy,
+        "scenarios": [scenario],
+        "base_year": base_year,
+        "final_year": final_year,
+        "enable_visualisations": enable_visualisations,
+        "config_dir": _repo_root / "codebase" / "config",
+        "output_root": _output_root,
+        "diagnostics_root": _output_root / "diagnostics" if enable_visualisations else None,
+    })
+    config_kwargs.update(config_overrides)
+    if "module1_defaults_dir" in config_kwargs:
+        config_kwargs["module1_defaults_dir"] = _resolve_repo_relative_path(config_kwargs["module1_defaults_dir"])
+    config = RoadWorkflowConfig(**config_kwargs)
 
     auto_source: Path | None = None
     if future_sales_shares is None and auto_load_future_sales_shares:
@@ -1302,9 +1740,10 @@ def run_for_economy(
         print(f"[road_workflow] Auto-loaded future sales shares from: {auto_source}")
     elif future_sales_shares is None and auto_load_future_sales_shares:
         print(
-            "[road_workflow] No future sales-share input auto-discovered; "
-            "Module 5 will use base-year fallback trajectories. "
-            "Set ROAD_MODEL_FUTURE_SALES_SHARES_PATH to provide a file explicitly."
+            "[road_workflow] No external future sales-share file auto-discovered; "
+            "Module 5 will use projected Module 1 Sales Share rows if present, "
+            "otherwise base-year fallback trajectories. Set ROAD_MODEL_FUTURE_SALES_SHARES_PATH "
+            "to provide a file explicitly."
         )
 
     inputs = RoadWorkflowInputs(
@@ -1339,19 +1778,70 @@ Examples:
         """,
     )
     parser.add_argument("economy", help="Economy code, e.g. 20_USA")
-    parser.add_argument("--scenario", default="Target", help="Macro scenario (default: Target)")
-    parser.add_argument("--base-year", type=int, default=2022)
-    parser.add_argument("--final-year", type=int, default=2060)
-    parser.set_defaults(enable_visualisations=True)
+    parser.add_argument("--scenario", default=None, help="Macro scenario (default: workflow config)")
+    parser.add_argument("--base-year", type=int, default=None, help="Base year (default: workflow config)")
+    parser.add_argument("--final-year", type=int, default=None, help="Final projection year (default: workflow config)")
+    parser.set_defaults(enable_visualisations=None)
     parser.add_argument("--vis", action="store_true", dest="enable_visualisations",
-                        help="Write PNG/HTML diagnostic outputs (default)")
+                        help="Write PNG/HTML diagnostic outputs")
     parser.add_argument("--no-vis", action="store_false", dest="enable_visualisations",
                         help="Skip PNG/HTML diagnostic outputs")
     parser.add_argument("--output", default=None, dest="output_root",
                         help="Output directory (default: results/<economy>)")
+    parser.add_argument("--workflow-config", default=None, dest="workflow_config_path",
+                        help="Workflow defaults YAML (default: codebase/config/workflow_defaults.yaml)")
+    parser.add_argument("--module1-defaults-dir", default=None, dest="module1_defaults_dir",
+                        help="Module 1 defaults root directory (default: workflow config)")
+    parser.add_argument("--module1-defaults-version", default=None, dest="module1_defaults_version",
+                        help="Module 1 defaults version folder (default: workflow config)")
+    parser.set_defaults(save_csv_outputs=None)
+    parser.add_argument("--save-csv-outputs", action="store_true", dest="save_csv_outputs",
+                        help="Write intermediate module CSV outputs")
+    parser.add_argument("--no-save-csv-outputs", action="store_false", dest="save_csv_outputs",
+                        help="Skip intermediate module CSV outputs")
+    parser.set_defaults(show_progress=None)
+    parser.add_argument("--progress", action="store_true", dest="show_progress",
+                        help="Print workflow progress messages")
+    parser.add_argument("--no-progress", action="store_false", dest="show_progress",
+                        help="Suppress workflow progress messages")
+    parser.set_defaults(auto_load_future_sales_shares=None)
+    parser.add_argument("--auto-future-sales-shares", action="store_true", dest="auto_load_future_sales_shares",
+                        help="Auto-discover future sales-share inputs")
+    parser.add_argument("--no-auto-future-sales-shares", action="store_false", dest="auto_load_future_sales_shares",
+                        help="Disable future sales-share auto-discovery")
+    parser.set_defaults(write_leap_row_diagnostics=None)
     parser.add_argument("--leap-row-diagnostics", action="store_true", dest="write_leap_row_diagnostics",
                         help="Write LEAP row coverage diagnostics CSV with missing and not-needed rows")
+    parser.add_argument("--no-leap-row-diagnostics", action="store_false", dest="write_leap_row_diagnostics",
+                        help="Disable LEAP row coverage diagnostics CSV")
+    parser.add_argument("--module6-match-tolerance", type=float, default=None, dest="module6_match_tolerance",
+                        help="Module 6 fuel match tolerance fraction (default: workflow config)")
+    parser.set_defaults(leap_import_export_values_in_raw_units=None)
+    parser.add_argument("--leap-import-raw-values", action="store_true", dest="leap_import_export_values_in_raw_units",
+                        help="Write raw-unit values to the LEAP import workbook and clear numeric scale labels")
+    parser.add_argument("--leap-import-scaled-values", action="store_false", dest="leap_import_export_values_in_raw_units",
+                        help="Write values using LEAP Scale labels in the LEAP import workbook")
+    for module_num in range(2, 8):
+        parser.set_defaults(**{f"run_m{module_num}": None})
+        parser.add_argument(f"--run-m{module_num}", action="store_true", dest=f"run_m{module_num}",
+                            help=f"Run Module {module_num}")
+        parser.add_argument(f"--skip-m{module_num}", action="store_false", dest=f"run_m{module_num}",
+                            help=f"Skip Module {module_num}")
     args = parser.parse_args()
+
+    cli_config_overrides = {
+        k: v for k, v in {
+            "module1_defaults_dir": args.module1_defaults_dir,
+            "module1_defaults_version": args.module1_defaults_version,
+            "save_csv_outputs": args.save_csv_outputs,
+            "show_progress": args.show_progress,
+            "write_leap_row_diagnostics": args.write_leap_row_diagnostics,
+            "module6_match_tolerance": args.module6_match_tolerance,
+            "leap_import_export_values_in_raw_units": args.leap_import_export_values_in_raw_units,
+            **{f"run_m{module_num}": getattr(args, f"run_m{module_num}") for module_num in range(2, 8)},
+        }.items()
+        if v is not None
+    }
 
     result = run_for_economy(
         economy=args.economy,
@@ -1360,7 +1850,9 @@ Examples:
         final_year=args.final_year,
         enable_visualisations=args.enable_visualisations,
         output_root=args.output_root,
-        write_leap_row_diagnostics=args.write_leap_row_diagnostics,
+        auto_load_future_sales_shares=args.auto_load_future_sales_shares,
+        workflow_config_path=args.workflow_config_path,
+        **cli_config_overrides,
     )
     timings = result.get("timings", {})
     total = sum(v for v in timings.values())

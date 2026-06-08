@@ -41,6 +41,7 @@ _DEFAULTS = {
     "covid_exclude_years": [2020, 2021, 2022],
     "saturation_fallback_multiplier": 3.0,
     "saturation_already_reached_threshold": 0.95,
+    "passenger_stock_growth_rate_adjustment": 1.2,
     "elasticity_min": 0.0,
     "elasticity_max": 2.0,
     "default_elasticity": 0.8,
@@ -61,6 +62,7 @@ def run_module3(
     saturation_overrides: dict[str, float] | None = None,
     passenger_saturation_reached: bool = False,
     elasticity_overrides: dict[str, float] | None = None,
+    elasticity_adjustments: dict[str, float] | None = None,
     vehicle_equivalent_weights: dict[str, float] | None = None,
     vehicle_equivalent_weight_bounds: dict[str, tuple[float, float]] | None = None,
     config: dict | None = None,
@@ -86,6 +88,8 @@ def run_module3(
             motorisation level (car-equiv per capita). Overrides default fallback.
         elasticity_overrides: Optional dict mapping vehicle_type → GDP elasticity.
             Overrides estimated elasticity.
+        elasticity_adjustments: Optional dict mapping vehicle_type → multiplier
+            applied to the estimated GDP elasticity before clamping.
         vehicle_equivalent_weights: Optional dict mapping vehicle_type → weight.
             Defaults to local fallback vehicle-equivalent weights.
         config: Optional dict overriding _DEFAULTS.
@@ -123,6 +127,7 @@ def run_module3(
         saturation_overrides=saturation_overrides or {},
         passenger_saturation_reached=passenger_saturation_reached,
         vehicle_equivalent_weight_bounds=vehicle_equivalent_weight_bounds,
+        growth_rate_adjustment=float(cfg.get("passenger_stock_growth_rate_adjustment", 1.0)),
         cfg=cfg,
     )
 
@@ -135,16 +140,22 @@ def run_module3(
         base_stocks={vt: base_stocks.get(vt, 0.0) for vt in freight_types},
         vehicle_type_shares=vehicle_type_shares,
         elasticity_overrides=elasticity_overrides or {},
+        elasticity_adjustments=elasticity_adjustments or {},
         cfg=cfg,
     )
 
     _year_set = set(years)
+    gdp_base_value = gdp.get(base_year, pd.NA)
     rows = []
     for transport_type, stocks_dict in [("passenger", pax_stocks), ("freight", frt_stocks)]:
         for vt, series in stocks_dict["target_stocks"].items():
             for yr, val in series.items():
                 if yr not in _year_set:
                     continue
+                gdp_year_value = gdp.get(yr, pd.NA)
+                gdp_index = pd.NA
+                if pd.notna(gdp_year_value) and pd.notna(gdp_base_value) and float(gdp_base_value) != 0:
+                    gdp_index = float(gdp_year_value) / float(gdp_base_value) * 100
                 row = {
                     "economy": economy,
                     "scenario": scenario,
@@ -152,12 +163,15 @@ def run_module3(
                     "transport_type": transport_type,
                     "vehicle_type": vt,
                     "target_stock": val,
+                    "gdp_index": gdp_index,
                 }
                 if transport_type == "passenger":
                     row["motorisation_level"] = stocks_dict["M_envelope"].get(yr)
                     row["saturation_level"] = stocks_dict["M_sat"]
+                    row["k_raw"] = stocks_dict["k_raw"]
                     row["k_used"] = stocks_dict["k_used"]
                     row["k_clamped"] = stocks_dict["k_clamped"]
+                    row["passenger_stock_growth_rate_adjustment"] = stocks_dict["growth_rate_adjustment"]
                     row["is_saturated"] = stocks_dict["is_saturated"]
                     row["saturation_source_flag"] = stocks_dict["saturation_source_flag"]
                     row["original_vehicle_equivalent_weight"] = stocks_dict["original_weights"].get(vt)
@@ -172,6 +186,7 @@ def run_module3(
                     row["freight_elasticity_clamped"] = diagnostics.get("elasticity_clamped")
                     row["freight_energy_growth_rate"] = diagnostics.get("energy_growth_rate")
                     row["freight_gdp_growth_rate"] = diagnostics.get("gdp_growth_rate")
+                    row["freight_elasticity_adjustment"] = diagnostics.get("elasticity_adjustment")
                     row["freight_elasticity_data_source"] = diagnostics.get("data_source")
                     row["freight_elasticity_note"] = diagnostics.get("note")
                 rows.append(row)
@@ -205,6 +220,7 @@ def project_passenger_stocks(
     saturation_overrides: dict[str, float] | None = None,
     passenger_saturation_reached: bool = False,
     vehicle_equivalent_weight_bounds: dict[str, tuple[float, float]] | None = None,
+    growth_rate_adjustment: float = 1.0,
     cfg: dict | None = None,
 ) -> dict:
     """
@@ -253,9 +269,11 @@ def project_passenger_stocks(
     log.info("Base-year motorisation M_base=%.4f car-equiv/capita", M_base)
 
     is_saturated = M_base >= cfg["saturation_already_reached_threshold"] * M_sat
+    growth_rate_adjustment = max(0.0, float(growth_rate_adjustment))
 
     if is_saturated:
         k = 0.0
+        k_raw = 0.0
         k_clamped = False
         log.info("Economy treated as saturated — k set to 0.0")
     else:
@@ -269,7 +287,19 @@ def project_passenger_stocks(
             g_E, M_base, M_sat,
             k_min=cfg["k_min"], k_max=cfg["k_max"],
         )
-        log.info("Estimated k=%.4f (clamped=%s, g_E=%.4f)", k, k_clamped, g_E)
+        k_raw = k
+        if growth_rate_adjustment != 1.0:
+            k_adjusted = k * growth_rate_adjustment
+            k = float(np.clip(k_adjusted, cfg["k_min"], cfg["k_max"]))
+            k_clamped = k_clamped or not np.isclose(k_adjusted, k)
+        log.info(
+            "Estimated k=%.4f, adjusted k=%.4f (adjustment=%.3f, clamped=%s, g_E=%.4f)",
+            k_raw,
+            k,
+            growth_rate_adjustment,
+            k_clamped,
+            g_E,
+        )
         if k_clamped:
             log.warning("k was clamped to bounds — flag for review")
 
@@ -302,8 +332,10 @@ def project_passenger_stocks(
         "M_envelope": M_envelope,
         "M_sat": M_sat,
         "M_base": M_base,
+        "k_raw": k_raw,
         "k_used": k,
         "k_clamped": k_clamped,
+        "growth_rate_adjustment": growth_rate_adjustment,
         "is_saturated": is_saturated,
         "saturation_source_flag": sat_source,
         "target_stocks": target_stocks,
@@ -652,6 +684,7 @@ def project_freight_stocks(
     base_stocks: dict[str, float],
     vehicle_type_shares: dict[str, pd.Series] | None = None,
     elasticity_overrides: dict[str, float] | None = None,
+    elasticity_adjustments: dict[str, float] | None = None,
     cfg: dict | None = None,
 ) -> dict:
     """
@@ -665,6 +698,7 @@ def project_freight_stocks(
         energy_series: pd.Series indexed by year (PJ), freight road energy.
         base_stocks: Dict mapping vehicle_type → base-year count.
         elasticity_overrides: Optional dict mapping vehicle_type → override elasticity.
+        elasticity_adjustments: Optional dict mapping vehicle_type → elasticity multiplier.
         cfg: Config dict.
 
     Returns:
@@ -672,6 +706,7 @@ def project_freight_stocks(
     """
     cfg = cfg or _DEFAULTS
     overrides = elasticity_overrides or {}
+    adjustments = elasticity_adjustments or {}
     base_year = years[0]
     gdp_base = float(gdp[base_year])
 
@@ -688,13 +723,37 @@ def project_freight_stocks(
     elasticity = float(elasticity_diag["elasticity"])
     log.info("Estimated freight GDP elasticity: %.4f", elasticity)
 
-    e = overrides.get("freight_total", elasticity)
+    adjustment = float(adjustments.get("freight_total", 1.0))
+    adjusted_elasticity = float(np.clip(
+        elasticity * adjustment,
+        cfg["elasticity_min"],
+        cfg["elasticity_max"],
+    ))
+    e = overrides.get("freight_total", adjusted_elasticity)
+    if "freight_total" in adjustments and "freight_total" not in overrides:
+        elasticity_diag = {
+            **elasticity_diag,
+            "elasticity": float(e),
+            "elasticity_adjustment": adjustment,
+            "elasticity_clamped": bool(
+                elasticity_diag.get("elasticity_clamped", False)
+                or not np.isclose(elasticity * adjustment, adjusted_elasticity)
+            ),
+            "data_source": "estimated_adjusted",
+            "note": f"estimated elasticity multiplied by {adjustment:.4g}",
+        }
     if "freight_total" in overrides:
         elasticity_diag = {
             **elasticity_diag,
             "elasticity": float(e),
+            "elasticity_adjustment": adjustment,
             "data_source": "override",
             "note": "freight_total override used",
+        }
+    else:
+        elasticity_diag = {
+            **elasticity_diag,
+            "elasticity_adjustment": adjustment,
         }
     gdp_ratio = gdp / gdp_base
     total_base_stock = sum(float(value) for value in base_stocks.values())
