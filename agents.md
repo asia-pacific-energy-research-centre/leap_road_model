@@ -1384,3 +1384,123 @@ flowchart LR
   class C6,C7 recon;
   class D1,D2,D3,D4,D5 leap;
   class E1,E2,E3,E4 qa;
+
+
+
+# NEW END TO END DIAGRAM
+https://whimsical.com/aperc/end-to-end-road-model-workflow-compact-rectangular-layout-9eMVA11SFdbjYCzCgW4tzp
+
+C:\Users\Work\github\leap_road_model\docs\new model\End-to-end road model workflow 8062026.png
+
+flowchart TB
+
+  %% ---------- ROW 1 ----------
+  subgraph ROW1[" "]
+    direction LR
+
+    subgraph A["A. Source preparation<br/>road_model_inputs_interface"]
+      direction LR
+      A1["Near-term source workbook<br/>leap_transport export"]
+      A2["Processed + supplemental + manual + override sources"]
+      A3["Contract/config<br/>static_contract · priorities · parameters · exclusions"]
+      A4["Build defaults<br/>source merge → stock share derivation → override → contract checks"]
+      A5["Versioned Module 1 package<br/>canonical long CSV per economy"]
+      A6["Static UI bundle<br/>same long-row format"]
+
+      A1 --> A2
+      A2 --> A4
+      A3 --> A4
+      A4 --> A5
+      A5 --> A6
+    end
+
+    subgraph B["B. Researcher review interface"]
+      direction LR
+      B1["Browser loads static CSV"]
+      B2["Researcher edits allowed fields<br/>Value · Comment · Source"]
+      B3["Upload/download validation<br/>no new keys · no changed key columns"]
+      B4["Export/model-run long CSV"]
+
+      B1 --> B2 --> B3 --> B4
+    end
+  end
+
+  %% ---------- ROW 2 ----------
+  subgraph ROW2[" "]
+    direction LR
+
+    subgraph C["C. Python road workflow<br/>leap_road_model"]
+      direction LR
+      C0["Load Module 1 package<br/>+ population/GDP/ESTO/config"]
+      C2["M2 T4<br/>base-year branches"]
+      C3["M3 T5<br/>passenger/freight stock targets"]
+      C4["M4 T6/T6v<br/>sales · retirements · lifecycle profiles"]
+      C5["M5 T7/T7f<br/>sales shares"]
+      C6["M6 T8-T12 + T11<br/>fuel allocation · reconciliation · Device Shares · LEAP-ready rows"]
+      C7["Post-reconciliation re-anchor<br/>optional T5/T6 pre/post outputs"]
+
+      C0 --> C2
+      C2 --> C3
+      C3 --> C4
+      C4 --> C6
+      C2 --> C5
+      C5 --> C6
+      C6 --> C7
+      C7 -. "rerun turnover if enabled" .-> C4
+    end
+
+    subgraph D["D. LEAP handoff and official projection"]
+      direction LR
+      D1["LEAP import workbook<br/>strict row structure + IDs where available"]
+      D2["Lifecycle profile workbooks/ZIP"]
+      D3["LEAP desktop import"]
+      D4["Researchers edit future scenario assumptions in LEAP"]
+      D5["LEAP official road results"]
+
+      D1 --> D3
+      D2 --> D3
+      D3 --> D4 --> D5
+    end
+  end
+
+  %% ---------- ROW 3 ----------
+  subgraph E["E. QA and communication outputs"]
+    direction LR
+    E1["Module CSV diagnostics<br/>results/economy/module*/"]
+    E2["Dashboard HTML<br/>pre/post reconciliation views"]
+    E3["M7 optional Python mirror<br/>T13 comparison outputs"]
+    E4["LEAP results export<br/>comparison input"]
+
+    E4 --> E3 --> E2
+  end
+
+  %% ---------- CROSS-SECTION LINKS ----------
+  A6 --> B1
+  A5 --> C0
+  B4 -. "optional backend run" .-> C0
+
+  C6 --> D1
+  C4 --> D2
+
+  C6 --> E1
+  C6 --> E2
+  C7 --> E2
+  C6 --> E3
+  D5 --> E4
+
+  %% ---------- STYLES ----------
+  classDef source fill:#D3455B,color:#ffffff,stroke:#D3455B;
+  classDef ui fill:#F7C325,color:#334155,stroke:#F7C325;
+  classDef module fill:#2C88D9,color:#ffffff,stroke:#2C88D9;
+  classDef recon fill:#1AAE9F,color:#ffffff,stroke:#1AAE9F;
+  classDef leap fill:#BD34D1,color:#ffffff,stroke:#BD34D1;
+  classDef qa fill:#788896,color:#ffffff,stroke:#788896;
+  classDef row fill:transparent,stroke:transparent,color:transparent;
+
+  class A1,A2,A3,A4,A5,A6 source;
+  class B1,B2,B3,B4 ui;
+  class C0,C2,C3,C4,C5 module;
+  class C6,C7 recon;
+  class D1,D2,D3,D4,D5 leap;
+  class E1,E2,E3,E4 qa;
+  class ROW1,ROW2 row;

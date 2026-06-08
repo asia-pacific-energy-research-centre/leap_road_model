@@ -8,6 +8,10 @@
 
 This guide describes the Python-side workflow needed to prepare the road transport model before it is passed into LEAP.
 
+![End-to-end road model workflow](End-to-end%20road%20model%20workflow%208062026.png)
+
+*Primary reference for the full end-to-end workflow. Some implementation detail is not shown.*
+
 The road model is the most detailed transport demand model because it uses a stock-flow structure: vehicle stock, sales, retirements, mileage, efficiency, and fuel allocation all interact to produce energy use. Existing transport documentation describes this as a sales-based model where ownership assumptions, sales shares, survival curves, efficiency, and mileage combine to produce annual energy use in LEAP.
 
 This guide covers:
@@ -255,6 +259,7 @@ Module 1 defaults package
 
 ![Road transport model — researcher detail](Road%20transport%20model%20%E2%80%94%20researcher%20detail.png)
 
+![Road model module workflow and end-to-end handoff](Road%20model%20module%20workflow%20and%20end-to-end%20handoff.png)
 ## Module 1 - Road Input Data and Defaults
 
 ### Purpose

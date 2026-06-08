@@ -18,6 +18,10 @@
 11. [Validation Checks](#11-validation-checks)
 12. [Current Reference Files](#12-current-reference-files)
 
+![End-to-end road model workflow](End-to-end%20road%20model%20workflow%208062026.png)
+
+*Primary reference for the full end-to-end workflow. Some implementation detail is not shown.*
+
 ![Road transport model — quick view](Road%20transport%20model%20%E2%80%94%20quick%20view.png)
 
 ## 1. Scope
@@ -105,7 +109,7 @@ LEAP input package creation
 optional Python mirror validation
 ```
 
-![Road model interface and LEAP pipeline workflow](Road%20model%20interface%20and%20LEAP%20pipeline%20workflow.png)
+![Road model module workflow and end-to-end handoff](Road%20model%20module%20workflow%20and%20end-to-end%20handoff.png)
 
 The pipeline is now two linked repositories: `road_model_inputs_interface`
 generates and preserves the Module 1 long CSV package, while `leap_road_model`

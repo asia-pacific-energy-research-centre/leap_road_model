@@ -200,10 +200,14 @@ def load_reference_id_table(
 ) -> pd.DataFrame:
     """Load LEAP BranchID/VariableID/ScenarioID metadata from a reference export."""
     path = Path(reference_path)
-    try:
-        df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
-    except ValueError:
-        df = pd.read_excel(path, sheet_name="Export", header=header_row)
+    for name in [sheet_name, "Export", 0]:
+        try:
+            df = pd.read_excel(path, sheet_name=name, header=header_row)
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError(f"Could not find a usable sheet in {path}")
 
     missing = [column for column in REFERENCE_RENAME if column not in df.columns]
     if missing:
