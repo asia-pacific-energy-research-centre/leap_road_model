@@ -51,17 +51,26 @@ _PLUGIN_LIQUID_FUELS_BY_DRIVE = {
 _DEFAULT_PLUGIN_LIQUID_FUELS = {"Motor gasoline", "Biogasoline", "Efuel"}
 
 _FUEL_ALLOCATION_PRIORITY = {
+    # Gaseous fuels: allocated before liquids. LNG restricted to Trucks ICE;
+    # LPG and Natural gas distributed across all ICE by stock share.
+    "LNG":                [["freight", "Trucks", "ICE"]],
+    "LPG":                [[None, None, "ICE"]],
+    "Natural gas":        [[None, None, "ICE"]],
+    # Liquid fuels: priority tiers ensure diesel stays freight-first, gasoline passenger-first.
     "Gas and diesel oil": [["freight", "Trucks"], ["freight", "LCVs"], ["passenger", None]],
-    "Biodiesel": [["freight", "Trucks"], ["freight", "LCVs"], ["passenger", None]],
-    "Motor gasoline": [["passenger", None], ["freight", "LCVs"]],
-    "Biogasoline": [["passenger", None], ["freight", "LCVs"]],
+    "Biodiesel":          [["freight", "Trucks"], ["freight", "LCVs"], ["passenger", None]],
+    "Motor gasoline":     [["passenger", None], ["freight", "LCVs"]],
+    "Biogasoline":        [["passenger", None], ["freight", "LCVs"]],
 }
 
 _PRIORITY_FUEL_ALLOCATION_ORDER = {
-    "Gas and diesel oil": 0,
-    "Biodiesel": 1,
-    "Motor gasoline": 2,
-    "Biogasoline": 3,
+    "LNG": 0,
+    "LPG": 1,
+    "Natural gas": 2,
+    "Gas and diesel oil": 3,
+    "Biodiesel": 4,
+    "Motor gasoline": 5,
+    "Biogasoline": 6,
 }
 
 _FUEL_ELIGIBILITY: dict[str, list[str]] | None = None
@@ -100,20 +109,33 @@ def _transport_path(branch_path: str) -> str:
 
 
 def _priority_tier_mask(df: pd.DataFrame, tier: list[str | None]) -> pd.Series:
-    """Return rows matching a [transport_type, vehicle_type] allocation tier."""
-    transport_type, vehicle_type = tier
-    mask = df["transport_type"] == transport_type
+    """Return rows matching a [transport_type, vehicle_type, drive_type] allocation tier.
+
+    Any element that is None matches all values for that dimension.
+    """
+    transport_type = tier[0] if len(tier) > 0 else None
+    vehicle_type   = tier[1] if len(tier) > 1 else None
+    drive_type     = tier[2] if len(tier) > 2 else None
+    mask = pd.Series(True, index=df.index)
+    if transport_type is not None:
+        mask &= df["transport_type"] == transport_type
     if vehicle_type is not None:
         mask &= df["vehicle_type"] == vehicle_type
+    if drive_type is not None:
+        mask &= df["drive_type"] == drive_type
     return mask
 
 
-def _priority_tier_key(tier: list[str | None]) -> tuple[str, str | None]:
+def _priority_tier_key(tier: list[str | None]) -> tuple[str | None, str | None, str | None]:
     """Return a hashable priority-tier key."""
-    return str(tier[0]), tier[1]
+    return (
+        tier[0] if len(tier) > 0 else None,
+        tier[1] if len(tier) > 1 else None,
+        tier[2] if len(tier) > 2 else None,
+    )
 
 
-def _build_priority_tier_capacity(priority_rows: pd.DataFrame) -> dict[tuple[str, str | None], float]:
+def _build_priority_tier_capacity(priority_rows: pd.DataFrame) -> dict[tuple[str | None, str | None, str | None], float]:
     """
     Return liquid-energy capacity for each priority tier.
 

@@ -1797,6 +1797,228 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Module 7 — interactive dropdown helpers
+# ---------------------------------------------------------------------------
+
+
+def _area_chart_with_dropdown(
+    t13: pd.DataFrame,
+    metric_col: str,
+    yaxis_title: str,
+    title: str,
+    t13_fuel: pd.DataFrame | None = None,
+    fuel_metric_col: str | None = None,
+) -> "go.Figure | None":
+    """Stacked area chart with a Plotly dropdown to switch between groupings.
+
+    Groupings: vehicle type, drive type, transport type,
+    drive × vehicle type, drive × transport type.
+    When t13_fuel and fuel_metric_col are provided, a 'By fuel' option is added.
+    """
+    if t13 is None or t13.empty or metric_col not in t13.columns or "year" not in t13.columns:
+        return None
+
+    grouping_defs: list[tuple] = []
+    if "vehicle_type" in t13.columns:
+        grouping_defs.append(("By vehicle type", t13, "vehicle_type", _vehicle_type_colour, metric_col))
+    if "drive_type" in t13.columns:
+        grouping_defs.append(("By drive type", t13, "drive_type", _drive_colour, metric_col))
+    if "transport_type" in t13.columns:
+        grouping_defs.append(("By transport type", t13, "transport_type", _transport_mode_colour, metric_col))
+    if {"drive_type", "vehicle_type"}.issubset(t13.columns):
+        _tmp = t13.copy()
+        _tmp["_dv"] = _tmp["drive_type"].astype(str) + " × " + _tmp["vehicle_type"].astype(str)
+        grouping_defs.append(("By drive × vehicle type", _tmp, "_dv", None, metric_col))
+    if {"drive_type", "transport_type"}.issubset(t13.columns):
+        _tmp = t13.copy()
+        _tmp["_dt"] = _tmp["drive_type"].astype(str) + " × " + _tmp["transport_type"].astype(str)
+        grouping_defs.append(("By drive × transport type", _tmp, "_dt", None, metric_col))
+    if (
+        t13_fuel is not None
+        and not t13_fuel.empty
+        and fuel_metric_col is not None
+        and "fuel" in t13_fuel.columns
+        and fuel_metric_col in t13_fuel.columns
+        and "year" in t13_fuel.columns
+    ):
+        grouping_defs.append(("By fuel", t13_fuel, "fuel", _fuel_colour, fuel_metric_col))
+
+    if not grouping_defs:
+        return None
+
+    fig = go.Figure()
+    trace_groups: list[tuple[str, int, int]] = []
+    n_traces = 0
+
+    for grp_idx, (grp_label, src_df, grp_col, colour_fn, m_col) in enumerate(grouping_defs):
+        g = src_df.groupby(["year", grp_col])[m_col].sum().unstack(fill_value=0.0).sort_index()
+        if g.empty:
+            trace_groups.append((grp_label, n_traces, 0))
+            continue
+        cats = sorted(g.columns.tolist(), key=lambda c: float(g[c].sum()), reverse=True)
+        is_first = grp_idx == 0
+        for j, cat in enumerate(cats):
+            _c = colour_fn(str(cat), j) if colour_fn else _COLOURS[j % len(_COLOURS)]
+            fig.add_trace(go.Scatter(
+                x=g.index.tolist(),
+                y=g[cat].tolist(),
+                name=str(cat),
+                stackgroup=grp_label,
+                mode="lines",
+                line=dict(color=_c, width=0.7),
+                fillcolor=_c,
+                visible=is_first,
+                showlegend=is_first,
+                legendgroup=f"{grp_label}::{cat}",
+            ))
+        trace_groups.append((grp_label, n_traces, len(cats)))
+        n_traces += len(cats)
+
+    if n_traces == 0:
+        return None
+
+    total = n_traces
+    buttons = []
+    for grp_label, start, count in trace_groups:
+        if count == 0:
+            continue
+        vis = [False] * total
+        sleg = [False] * total
+        for i in range(start, start + count):
+            vis[i] = True
+            sleg[i] = True
+        buttons.append(dict(
+            label=grp_label,
+            method="update",
+            args=[{"visible": vis, "showlegend": sleg}],
+        ))
+
+    if not buttons:
+        return None
+
+    fig.update_layout(
+        **_layout(title),
+        xaxis_title="Year",
+        yaxis_title=yaxis_title,
+        margin=dict(t=90),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.0,
+            y=1.22,
+            xanchor="left",
+            yanchor="top",
+            buttons=buttons,
+            showactive=True,
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=12),
+        )],
+    )
+    return fig
+
+
+def _distribution_chart_with_dropdown(
+    df: pd.DataFrame,
+    metric_col: str,
+    metric_label: str,
+    title: str,
+) -> "go.Figure | None":
+    """Box/dot plots for a metric distribution with a dropdown to switch grouping.
+
+    Groups by vehicle type, drive type, and transport type (whichever are present),
+    sorted by median value so the most extreme categories are easiest to read.
+    """
+    if df is None or df.empty or metric_col not in df.columns:
+        return None
+
+    grouping_defs: list[tuple[str, str, Any]] = []
+    if "vehicle_type" in df.columns:
+        grouping_defs.append(("By vehicle type", "vehicle_type", _vehicle_type_colour))
+    if "drive_type" in df.columns:
+        grouping_defs.append(("By drive type", "drive_type", _drive_colour))
+    if "transport_type" in df.columns:
+        grouping_defs.append(("By transport type", "transport_type", _transport_mode_colour))
+
+    if not grouping_defs:
+        return None
+
+    tmp = df.copy()
+    tmp[metric_col] = pd.to_numeric(tmp[metric_col], errors="coerce")
+    tmp = tmp.dropna(subset=[metric_col])
+    if tmp.empty:
+        return None
+
+    fig = go.Figure()
+    trace_groups: list[tuple[str, int, int]] = []
+    n_traces = 0
+
+    for grp_idx, (grp_label, grp_col, colour_fn) in enumerate(grouping_defs):
+        if grp_col not in tmp.columns:
+            trace_groups.append((grp_label, n_traces, 0))
+            continue
+        order = tmp.groupby(grp_col)[metric_col].median().sort_values(ascending=False).index.tolist()
+        is_first = grp_idx == 0
+        for j, cat in enumerate(order):
+            vals = tmp.loc[tmp[grp_col] == cat, metric_col].tolist()
+            _c = colour_fn(str(cat), j)
+            fig.add_trace(go.Box(
+                y=vals,
+                name=str(cat),
+                marker_color=_c,
+                line_color=_c,
+                boxpoints="all",
+                jitter=0.4,
+                pointpos=0,
+                visible=is_first,
+                showlegend=False,
+            ))
+        count = len(order)
+        trace_groups.append((grp_label, n_traces, count))
+        n_traces += count
+
+    if n_traces == 0:
+        return None
+
+    total = n_traces
+    buttons = []
+    for grp_label, start, count in trace_groups:
+        if count == 0:
+            continue
+        vis = [False] * total
+        for i in range(start, start + count):
+            vis[i] = True
+        buttons.append(dict(
+            label=grp_label,
+            method="update",
+            args=[{"visible": vis}],
+        ))
+
+    if not buttons:
+        return None
+
+    fig.update_layout(
+        **_layout(title),
+        yaxis_title=metric_label,
+        margin=dict(t=90),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.0,
+            y=1.22,
+            xanchor="left",
+            yanchor="top",
+            buttons=buttons,
+            showactive=True,
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=12),
+        )],
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Module 7 — mirror model
 # ---------------------------------------------------------------------------
 
@@ -1813,12 +2035,14 @@ _MODULE7_NOTE_HTML = (
 def module7_figures(
     module7_outputs: dict[str, Any],
     t7f: pd.DataFrame | None = None,
+    t4: pd.DataFrame | None = None,
 ) -> list[tuple[str, Any]]:
     """Interactive QA figures for Module 7 mirror outputs (T13, T13_fuel).
 
     Args:
         module7_outputs: dict with T13 and T13_fuel DataFrames.
         t7f: Optional T7f future sales shares DataFrame (for sales share by drive type).
+        t4: Optional T4 base-year branches DataFrame (for mileage/efficiency distributions).
     """
     if not _can_plot() or not module7_outputs:
         return []
@@ -2006,6 +2230,88 @@ def module7_figures(
                 xaxis_title="Year", yaxis_title="Energy difference (PJ)",
             )
             figs.append(("Simulation minus LEAP energy", fig))
+
+    # --- Interactive dropdown area charts ---
+
+    if not t13.empty and "mirror_energy_pj" in t13.columns:
+        en_dropdown = _area_chart_with_dropdown(
+            t13,
+            metric_col="mirror_energy_pj",
+            yaxis_title="Energy (PJ)",
+            title="Energy breakdown — select grouping",
+            t13_fuel=t13_fuel if not t13_fuel.empty else None,
+            fuel_metric_col="mirror_fuel_energy_pj",
+        )
+        if en_dropdown is not None:
+            figs.append((
+                "Energy breakdown — interactive grouping",
+                en_dropdown,
+                True,
+                "Use the dropdown (top-left of chart) to switch between groupings: vehicle type, drive type, transport type, fuel, or compound categories.",
+            ))
+
+    if not t13.empty and "mirror_stock" in t13.columns:
+        stock_dropdown = _area_chart_with_dropdown(
+            t13,
+            metric_col="mirror_stock",
+            yaxis_title="Vehicles",
+            title="Stock breakdown — select grouping",
+        )
+        if stock_dropdown is not None:
+            figs.append((
+                "Stock breakdown — interactive grouping",
+                stock_dropdown,
+                True,
+                "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
+            ))
+
+    if not t13.empty and "mirror_vehicle_km" in t13.columns:
+        vkm_dropdown = _area_chart_with_dropdown(
+            t13,
+            metric_col="mirror_vehicle_km",
+            yaxis_title="Vehicle-km",
+            title="Vehicle-km breakdown — select grouping",
+        )
+        if vkm_dropdown is not None:
+            figs.append((
+                "Vehicle-km breakdown — interactive grouping",
+                vkm_dropdown,
+                True,
+                "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
+            ))
+
+    # --- Mileage and efficiency distribution plots (from T4 base-year branches) ---
+
+    if t4 is not None and not t4.empty:
+        if "mileage_km_per_year" in t4.columns:
+            mileage_dist = _distribution_chart_with_dropdown(
+                t4,
+                metric_col="mileage_km_per_year",
+                metric_label="Mileage (km/year)",
+                title="Mileage distribution — select grouping",
+            )
+            if mileage_dist is not None:
+                figs.append((
+                    "Mileage distribution",
+                    mileage_dist,
+                    False,
+                    "Distribution of base-year mileage (km/year) across branches, sorted by median. Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
+                ))
+
+        if "efficiency_km_per_gj" in t4.columns:
+            eff_dist = _distribution_chart_with_dropdown(
+                t4,
+                metric_col="efficiency_km_per_gj",
+                metric_label="Efficiency (km/GJ)",
+                title="Efficiency distribution — select grouping",
+            )
+            if eff_dist is not None:
+                figs.append((
+                    "Efficiency distribution",
+                    eff_dist,
+                    False,
+                    "Distribution of base-year efficiency (km/GJ) across branches, sorted by median. Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
+                ))
 
     return figs
 
@@ -2221,16 +2527,24 @@ def _transport_split_alert_html(t13: pd.DataFrame | None, tol: float = 0.75) -> 
     viol_min = float(violations.min())
     viol_max = float(violations.max())
     viol_years = sorted(violations.index.tolist())
+    first_year = viol_years[0]
+    first_val = float(violations.loc[first_year])
+    first_rule = (
+        f"exceeds upper bound ({bound_hi})" if first_val > upper
+        else f"falls below lower bound ({bound_lo})"
+    )
     year_range = (
-        f"{viol_years[0]}&ndash;{viol_years[-1]}"
-        if len(viol_years) > 1 else str(viol_years[0])
+        f"{first_year}&ndash;{viol_years[-1]}"
+        if len(viol_years) > 1 else str(first_year)
     )
     detail = (
-        f"{min_type.capitalize()} share out of bounds in {len(viol_years)} year(s) "
-        f"({year_range}); "
+        f"First breach: <b>{first_year}</b> ({min_type} share {first_val * 100:.1f}% {first_rule}). "
+        f"Continues for {len(viol_years)} year(s) ({year_range}); "
         f"observed range {viol_min * 100:.1f}%&ndash;{viol_max * 100:.1f}% "
-        f"vs expected {bound_lo}&ndash;{bound_hi}. "
-        f"{base_info}."
+        f"vs allowed {bound_lo}&ndash;{bound_hi}. "
+        f"{base_info}. "
+        f"<i>Note: this is an indicator only &mdash; a genuine rapid shift in one transport "
+        f"type&apos;s energy use will also trigger this.</i>"
     )
     # fail if any year drops the smaller type below 10 % absolute share
     severe = violations[violations < 0.10]
@@ -2437,6 +2751,12 @@ def _index_extra_html(
         )
 
     _DIAGRAMS = [
+        (
+            "End-to-end road model workflow 8062026.png",
+            "road_model_end_to_end_workflow.png",
+            "End-to-end road model workflow",
+            "Primary reference for the full end-to-end workflow from data preparation through LEAP projection. Some implementation detail is not shown.",
+        ),
         (
             "Road transport model — quick view.png",
             "road_transport_model_quick_view.png",
@@ -2667,8 +2987,11 @@ def write_module_pages(
 
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
     split_alert = _transport_split_alert_html(workflow_outputs.get("T13"))
-    _write("module7.html", module7_figures(m7_sub, t7f=workflow_outputs.get("T7f")),
-           extra=_MODULE7_NOTE_HTML + split_alert)
+    _write(
+        "module7.html",
+        module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4")),
+        extra=_MODULE7_NOTE_HTML + split_alert,
+    )
 
     _write("workflow_summary.html", workflow_summary_figures(workflow_outputs),
            extra=recon_alert)

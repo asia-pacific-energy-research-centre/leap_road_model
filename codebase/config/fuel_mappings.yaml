@@ -55,8 +55,8 @@ drive_fuel_eligibility:
     biofuels:  [Biogasoline, Biodiesel, Biogas]
     efuels:    [Efuel]
   HEV:
-    primary:   [Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG]
-    biofuels:  [Biogasoline, Biodiesel, Biogas]
+    primary:   [Motor gasoline, Gas and diesel oil]
+    biofuels:  [Biogasoline, Biodiesel]
     efuels:    [Efuel]
   BEV:
     primary:   [Electricity]
