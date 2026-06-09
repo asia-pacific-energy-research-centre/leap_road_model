@@ -1,4 +1,4 @@
-"""
+﻿"""
 Plotly-based interactive HTML dashboard for road model QA verification.
 
 Generates one self-contained HTML page per module plus an index page.  Each
@@ -2656,8 +2656,8 @@ _NAV_LINKS: list[tuple[str, str]] = [
     ("index.html", "Overview"),
     ("module1.html", "Inputs & branches"),
     ("module3.html", "Stocks, sales & turnover"),
-    ("module3_post_reconciliation.html", "Post-reconciliation stocks"),
     ("module6.html", "Reconciliation"),
+    ("module3_post_reconciliation.html", "Post-reconciliation stocks"),
     ("module7.html", "Simulated outputs"),
     ("workflow_summary.html", "Summary"),
 ]
@@ -2799,7 +2799,7 @@ _RESIZE_SCRIPT = """
 """
 
 _MODULE_META: dict[str, tuple[str, str]] = {
-    "index": ("Overview", "Use this dashboard to check whether the road model has run correctly for this economy."),
+    "index": ("Overview", "This dashboard is a quality-check guide for the road model. It helps you move through the modelling outputs in the same order that it is completed, to help you better understand the model itself too."),
     "module1": ("Inputs & base-year branches", "Module 1 and 2 diagnostics: default/original input counts, branch coverage and base-year metric distributions."),
     "module2": ("Module 2 — Base-year branches", "Branch count heatmap and metric distributions for the base-year branch table (T4)."),
     "module3": ("Stocks, sales & turnover", "Module 3, 4 and 5 diagnostics: stock target pathways, motorisation envelope, sales and turnover flows, vintages and drive-type sales shares."),
@@ -2834,10 +2834,10 @@ def _html_relative_path(from_dir: Path, to_path: Path) -> str:
 _INDEX_CARD_DESCS: dict[str, str] = {
     "module1": "Check the base-year inputs, defaults, branch coverage, and key source data.",
     "module3": "Review stock pathways, sales, retirements, vintages, and drive-type transitions.",
-    "module3_post_reconciliation": "Check how stock and turnover changed after the model was re-anchored to reconciled base-year stock.",
     "module6": "Compare modelled fuel use with ESTO and inspect the reconciliation adjustments.",
+    "module3_post_reconciliation": "Check how stock and stock growth changed after the model was re-anchored to reconciled base-year stock levels.",
     "module7": "Review the Python simulation of likely LEAP outputs: stock, travel, energy, fuels, and drive types.",
-    "workflow_summary": "See the final workflow checks, timing, reconciliation quality, and aggregate outputs.",
+    "workflow_summary": "Review a selection of charts from the dashboard, acting as a summary. Includes some extra graphs intended as system diagnostics.",
 }
 
 
@@ -2867,13 +2867,13 @@ def _index_extra_html(
         (
             "End-to-end road model workflow 8062026.png",
             "end_to_end_road_model_workflow.png",
-            "End-to-end road model workflow",
+            "Road model workflow & systems",
             "Primary reference for the full end-to-end workflow. Some implementation detail is not shown.",
         ),
         (
             "Road transport model — researcher detail.png",
             "road_transport_model_researcher_detail.png",
-            "Road transport model — researcher detail",
+            "Simplified illustration of the Road transport model",
             "More simplified illustration of the modelling workflow.",
         ),
     ]
@@ -2902,10 +2902,10 @@ def _index_extra_html(
 
     overview = (
         '<div class="intro-card">'
-        '<h3>What to check first</h3>'
-        '<p>This page is a quality-check guide for the road model. It helps you move from raw inputs, through stock and sales projections, to reconciled energy results and final LEAP-ready outputs.</p>'
+        '<h3>Overview</h3>'
+        '<p>This dashboard is a quality-check guide for the road model. It helps you move through the modelling outputs in the same order that it is completed, to help you better understand the model itself too.</p>'
         '<p style="margin:8px 0 4px 0;font-size:.9rem;color:#4a4a4a"><b>Recommended review order:</b> '
-        'Inputs &amp; branches → Stocks &amp; sales → Reconciliation → Outputs → Summary</p>'
+        'Inputs &amp; branches → Stocks &amp; sales → Reconciliation → Post-Reconciliation stocks → Outputs → Summary</p>'
         f'<a class="doc-link" href="{_ROAD_MODEL_DOC_HREF}" target="_blank" rel="noopener">Open simplified road model documentation</a>'
         '</div>'
     )
