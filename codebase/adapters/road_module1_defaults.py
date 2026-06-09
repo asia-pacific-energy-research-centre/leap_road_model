@@ -246,7 +246,27 @@ def _iter_package_csvs(package_root: Path, economy_filter: list[str] | None = No
         pairs.append((economy_code, csv_path))
         seen_paths.add(csv_path.resolve())
 
-    return pairs
+    # Deduplicate by economy code: two folders with different capitalisation/underscore
+    # conventions (e.g. '01AUS' and '01_AUS') can both resolve to the same economy code.
+    # Keep only the newest file per economy to avoid duplicate rows in defaults_df.
+    seen_economies: dict[str, tuple[str, Path]] = {}
+    for economy_code, csv_path in pairs:
+        if economy_code not in seen_economies:
+            seen_economies[economy_code] = (economy_code, csv_path)
+        else:
+            existing_mtime = seen_economies[economy_code][1].stat().st_mtime
+            if csv_path.stat().st_mtime > existing_mtime:
+                log.warning(
+                    "Duplicate economy folder detected for %s — keeping newer file %s, ignoring %s",
+                    economy_code, csv_path.name, seen_economies[economy_code][1].name,
+                )
+                seen_economies[economy_code] = (economy_code, csv_path)
+            else:
+                log.warning(
+                    "Duplicate economy folder detected for %s — keeping newer file %s, ignoring %s",
+                    economy_code, seen_economies[economy_code][1].name, csv_path.name,
+                )
+    return list(seen_economies.values())
 
 
 def _normalise_variable_name(variable_raw: str, branch_path: str) -> str:

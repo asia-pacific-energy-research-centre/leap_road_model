@@ -159,6 +159,7 @@ def run_module4(
         for age, share in vintage.items():
             surv_val = float(survival.get(age, 0.0))
             t6v_rows.append({
+                "transport_type": "passenger" if vt in _PASSENGER_VEHICLE_TYPES else "freight",
                 "vehicle_type": vt,
                 "age": int(age),
                 "vintage_share": float(share),

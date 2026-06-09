@@ -22,8 +22,8 @@
 
 *Primary reference for the full end-to-end workflow. Some implementation detail is not shown.*
 
-![Road transport model — quick view](Road%20transport%20model%20%E2%80%94%20quick%20view.png)
-
+![Road transport model — researcher detail](Road%20transport%20model%20%E2%80%94%20researcher%20detail.png)
+*More simplified illustration of the modelling workflow.*
 ## 1. Scope
 
 The road transport model is a Python-prepared, LEAP-executed stock-flow model. Python prepares calibrated base-year inputs and scenario assumptions; LEAP remains the official projection platform.
@@ -108,8 +108,6 @@ Device Share calculation
 LEAP input package creation
 optional Python mirror validation
 ```
-
-![Road model module workflow and end-to-end handoff](Road%20model%20module%20workflow%20and%20end-to-end%20handoff.png)
 
 The pipeline is now two linked repositories: `road_model_inputs_interface`
 generates and preserves the Module 1 long CSV package, while `leap_road_model`

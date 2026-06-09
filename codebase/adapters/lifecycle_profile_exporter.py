@@ -34,7 +34,7 @@ def _normalise_vehicle_token(vehicle_type: str) -> str:
 
 
 def _validate_t6v_columns(t6v: pd.DataFrame) -> None:
-    required = {"vehicle_type", "age", "vintage_share", "survival_probability"}
+    required = {"transport_type", "vehicle_type", "age", "vintage_share", "survival_probability"}
     missing = sorted(required - set(t6v.columns))
     if missing:
         raise ValueError(f"T6v is missing required lifecycle columns: {missing}")
@@ -185,7 +185,10 @@ def export_lifecycle_profiles_from_t6v(
     area_name: str | None = None,
     create_zip: bool = True,
 ) -> dict[str, Path | pd.DataFrame]:
-    """Export all vehicle-type survival and vintage profiles from T6v.
+    """Export survival and vintage profiles from T6v, one file per transport type.
+
+    Profiles are assumed to be identical across vehicle types within a transport
+    type, so one representative vehicle type is used per group.
 
     Returns a dict with:
     - ``manifest_path``: CSV manifest with one row per workbook
@@ -200,27 +203,32 @@ def export_lifecycle_profiles_from_t6v(
     manifest_rows: list[dict[str, object]] = []
     workbook_paths: list[Path] = []
 
-    for vehicle_type in sorted(t6v["vehicle_type"].dropna().astype(str).unique()):
-        rows = _clean_age_profile(t6v[t6v["vehicle_type"].astype(str) == vehicle_type], vehicle_type=vehicle_type)
-        token = _normalise_vehicle_token(vehicle_type)
+    profile_specs = [
+        ("vehicle_survival", "Vehicle Survival"),
+        ("vintage", "Vintage Profile"),
+    ]
+
+    for transport_type in sorted(t6v["transport_type"].dropna().astype(str).unique()):
+        tt_rows = t6v[t6v["transport_type"].astype(str) == transport_type]
+        representative_vt = tt_rows["vehicle_type"].dropna().astype(str).iloc[0]
+        rows = _clean_age_profile(
+            tt_rows[tt_rows["vehicle_type"].astype(str) == representative_vt],
+            vehicle_type=representative_vt,
+        )
         by_age = rows.set_index("age")
 
         survival_profile = _annual_survival_to_cumulative_percent(by_age["survival_probability"])
         vintage_profile = _vintage_to_percent(by_age["vintage_share"])
 
-        profile_specs = [
-            ("vehicle_survival", "Vehicle Survival", survival_profile),
-            ("vintage", "Vintage Profile", vintage_profile),
-        ]
-
-        for profile_type, label, profile in profile_specs:
-            profile_name = f"{economy} {vehicle_type} {label}"
+        for profile_type, label in profile_specs:
+            profile = survival_profile if profile_type == "vehicle_survival" else vintage_profile
+            profile_name = f"{economy} {transport_type} {label}"
             diagnostics = validate_lifecycle_profile(
                 profile,
                 profile_type=profile_type,
                 profile_name=profile_name,
             )
-            file_name = f"{economy}_{token}_{profile_type}.xlsx"
+            file_name = f"{economy}_{transport_type}_{profile_type}.xlsx"
             workbook_path = write_lifecycle_profile_excel(
                 out_dir / file_name,
                 area_name=area,
@@ -231,7 +239,7 @@ def export_lifecycle_profiles_from_t6v(
             manifest_rows.append(
                 {
                     "economy": economy,
-                    "vehicle_type": vehicle_type,
+                    "transport_type": transport_type,
                     "profile_type": profile_type,
                     "profile_name": profile_name,
                     "area_name": area,
@@ -242,7 +250,7 @@ def export_lifecycle_profiles_from_t6v(
             )
 
     if not manifest_rows:
-        raise ValueError("No lifecycle profiles were exported; T6v had no vehicle_type rows.")
+        raise ValueError("No lifecycle profiles were exported; T6v had no transport_type rows.")
 
     manifest = pd.DataFrame(manifest_rows)
     manifest_path = out_dir / MANIFEST_FILENAME

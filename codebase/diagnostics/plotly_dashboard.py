@@ -180,8 +180,30 @@ def _drive_colour(drive: str, idx: int) -> str:
     return _DRIVE_COLOURS.get(str(drive), _COLOURS[idx % len(_COLOURS)])
 
 
+_VT_ALIASES: dict[str, str] = {
+    "LPV": "Light private vehicle",
+    "LPVs": "Light private vehicle",
+    "Private car": "Light private vehicle",
+    "LCV": "Light commercial vehicle",
+    "LCVs": "Light commercial vehicle",
+    "Light commercial": "Light commercial vehicle",
+    "Buses": "Bus",
+    "bus": "Bus",
+    "buses": "Bus",
+    "Trucks": "Truck",
+    "trucks": "Truck",
+    "Motorcycles": "Motorcycle",
+    "motorcycles": "Motorcycle",
+    "Moped": "Motorcycle",
+    "moped": "Motorcycle",
+    "Motorbike": "Motorcycle",
+    "motorbike": "Motorcycle",
+}
+
+
 def _vehicle_type_colour(vt: str, idx: int) -> str:
-    return _VEHICLE_TYPE_COLOURS.get(str(vt), _COLOURS[idx % len(_COLOURS)])
+    normalized = _VT_ALIASES.get(str(vt), str(vt))
+    return _VEHICLE_TYPE_COLOURS.get(normalized, _COLOURS[idx % len(_COLOURS)])
 
 
 def _transport_mode_colour(mode: str, idx: int) -> str:
@@ -841,11 +863,16 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
     req = {"year", "transport_type", "vehicle_type", "target_stock"}
     if req.issubset(t5.columns):
         fig = make_subplots(rows=1, cols=2, subplot_titles=["Passenger", "Freight"])
+        # Build a global vehicle-type index so colours are consistent across both panels,
+        # even when the name doesn't match the colour map and the fallback palette is used.
+        all_vts = sorted(t5["vehicle_type"].dropna().unique().tolist(), key=str)
+        vt_global_idx = {str(vt): i for i, vt in enumerate(all_vts)}
         for col_idx, tt in enumerate(["passenger", "freight"], 1):
             sub = t5[t5["transport_type"] == tt]
             if sub.empty:
                 continue
-            for i, (vt, grp) in enumerate(sub.groupby("vehicle_type")):
+            for vt, grp in sub.groupby("vehicle_type"):
+                i = vt_global_idx.get(str(vt), 0)
                 series = grp.groupby("year")["target_stock"].sum().sort_index()
                 fig.add_trace(
                     go.Scatter(
@@ -2019,6 +2046,214 @@ def _distribution_chart_with_dropdown(
 
 
 # ---------------------------------------------------------------------------
+# Share-based interactive charts (used in Module 7)
+# ---------------------------------------------------------------------------
+
+def _stacked_share_chart_with_dropdown(
+    t13: pd.DataFrame,
+    metric_col: str,
+    yaxis_title: str,
+    title: str,
+) -> "go.Figure | None":
+    """Stacked 100% area chart of shares with a dropdown to switch groupings.
+
+    For each grouping dimension the metric values are summed by (year, category),
+    then expressed as a percentage of the yearly total so each view sums to 100%.
+    """
+    if t13 is None or t13.empty or metric_col not in t13.columns or "year" not in t13.columns:
+        return None
+
+    grouping_defs: list[tuple[str, str, Any]] = []
+    if "drive_type" in t13.columns:
+        grouping_defs.append(("By drive type", "drive_type", _drive_colour))
+    if "vehicle_type" in t13.columns:
+        grouping_defs.append(("By vehicle type", "vehicle_type", _vehicle_type_colour))
+    if "transport_type" in t13.columns:
+        grouping_defs.append(("By transport type", "transport_type", _transport_mode_colour))
+
+    if not grouping_defs:
+        return None
+
+    fig = go.Figure()
+    trace_groups: list[tuple[str, int, int]] = []
+    n_traces = 0
+
+    for grp_idx, (grp_label, grp_col, colour_fn) in enumerate(grouping_defs):
+        g = t13.groupby(["year", grp_col])[metric_col].sum().unstack(fill_value=0.0).sort_index()
+        if g.empty:
+            trace_groups.append((grp_label, n_traces, 0))
+            continue
+        totals = g.sum(axis=1).replace(0.0, float("nan"))
+        share = g.div(totals, axis=0).fillna(0.0)
+        cats = share.sum(axis=0).sort_values(ascending=False).index.tolist()
+        is_first = grp_idx == 0
+        for j, cat in enumerate(cats):
+            _c = colour_fn(str(cat), j)
+            fig.add_trace(go.Scatter(
+                x=share.index.tolist(),
+                y=(share[cat] * 100).tolist(),
+                name=str(cat),
+                stackgroup=grp_label,
+                mode="lines",
+                line=dict(color=_c, width=0.7),
+                fillcolor=_c,
+                visible=is_first,
+                showlegend=is_first,
+                legendgroup=f"{grp_label}::{cat}",
+            ))
+        trace_groups.append((grp_label, n_traces, len(cats)))
+        n_traces += len(cats)
+
+    if n_traces == 0:
+        return None
+
+    total = n_traces
+    buttons = []
+    for grp_label, start, count in trace_groups:
+        if count == 0:
+            continue
+        vis = [False] * total
+        sleg = [False] * total
+        for i in range(start, start + count):
+            vis[i] = True
+            sleg[i] = True
+        buttons.append(dict(
+            label=grp_label,
+            method="update",
+            args=[{"visible": vis, "showlegend": sleg}],
+        ))
+
+    if not buttons:
+        return None
+
+    fig.update_layout(
+        **_layout(title),
+        xaxis_title="Year",
+        yaxis_title=yaxis_title,
+        yaxis=dict(range=[0, 105]),
+        margin=dict(t=90),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.0, y=1.22,
+            xanchor="left", yanchor="top",
+            buttons=buttons,
+            showactive=True,
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=12),
+        )],
+    )
+    return fig
+
+
+def _sales_share_with_dropdown(t7f: pd.DataFrame, title: str) -> "go.Figure | None":
+    """Sales share by drive type with a dropdown to filter by vehicle type.
+
+    The default view shows the fleet-average drive-type sales mix. Each subsequent
+    dropdown option shows the drive-type trajectory for a single vehicle type.
+    """
+    if t7f is None or t7f.empty:
+        return None
+    if not {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
+        return None
+
+    grouping_defs: list[tuple[str, pd.DataFrame]] = []
+
+    fleet_avg = (
+        t7f.groupby(["year", "vehicle_type", "drive_type"])["sales_share"]
+        .mean()
+        .unstack("drive_type", fill_value=0.0)
+        .groupby(level="year")
+        .mean()
+        .sort_index()
+    )
+    if not fleet_avg.empty:
+        grouping_defs.append(("All vehicles (fleet avg)", fleet_avg))
+
+    if "vehicle_type" in t7f.columns:
+        for vt in sorted(t7f["vehicle_type"].dropna().unique(), key=str):
+            sub = t7f[t7f["vehicle_type"] == vt]
+            vt_data = (
+                sub.groupby(["year", "drive_type"])["sales_share"]
+                .mean()
+                .unstack("drive_type", fill_value=0.0)
+                .sort_index()
+            )
+            if not vt_data.empty:
+                grouping_defs.append((str(vt), vt_data))
+
+    if not grouping_defs:
+        return None
+
+    fig = go.Figure()
+    trace_groups: list[tuple[str, int, int]] = []
+    n_traces = 0
+
+    for grp_idx, (label, df_view) in enumerate(grouping_defs):
+        drive_order = df_view.mean(axis=0).sort_values(ascending=False).index.tolist()
+        is_first = grp_idx == 0
+        for j, dt in enumerate(drive_order):
+            _c = _drive_colour(str(dt), j)
+            fig.add_trace(go.Scatter(
+                x=df_view.index.tolist(),
+                y=(df_view[dt] * 100).tolist(),
+                name=str(dt),
+                stackgroup=label,
+                mode="lines",
+                line=dict(color=_c, width=0.7),
+                fillcolor=_c,
+                visible=is_first,
+                showlegend=is_first,
+                legendgroup=f"{label}::{dt}",
+            ))
+        trace_groups.append((label, n_traces, len(drive_order)))
+        n_traces += len(drive_order)
+
+    if n_traces == 0:
+        return None
+
+    total = n_traces
+    buttons = []
+    for grp_label, start, count in trace_groups:
+        if count == 0:
+            continue
+        vis = [False] * total
+        sleg = [False] * total
+        for i in range(start, start + count):
+            vis[i] = True
+            sleg[i] = True
+        buttons.append(dict(
+            label=grp_label,
+            method="update",
+            args=[{"visible": vis, "showlegend": sleg}],
+        ))
+
+    if not buttons:
+        return None
+
+    fig.update_layout(
+        **_layout(title),
+        xaxis_title="Year",
+        yaxis_title="Share of new sales (%)",
+        yaxis=dict(range=[0, 105]),
+        margin=dict(t=90),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.0, y=1.22,
+            xanchor="left", yanchor="top",
+            buttons=buttons,
+            showactive=True,
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=12),
+        )],
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Module 7 — mirror model
 # ---------------------------------------------------------------------------
 
@@ -2051,167 +2286,31 @@ def module7_figures(
     _t13 = module7_outputs.get("T13"); t13 = _t13 if isinstance(_t13, pd.DataFrame) else pd.DataFrame()
     _t13f = module7_outputs.get("T13_fuel"); t13_fuel = _t13f if isinstance(_t13f, pd.DataFrame) else pd.DataFrame()
 
-    if not t13.empty and {"year", "vehicle_type", "mirror_stock"}.issubset(t13.columns):
-        fig = go.Figure()
-        for i, (vt, grp) in enumerate(t13.groupby("vehicle_type")):
-            s = grp.groupby("year")["mirror_stock"].sum().sort_index()
-            fig.add_trace(go.Scatter(
-                x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
-                line=dict(color=_vehicle_type_colour(str(vt), i)),
-            ))
-        fig.update_layout(
-            **_layout("Stock by vehicle type"),
-            xaxis_title="Year", yaxis_title="Vehicles",
-        )
-        figs.append(("Stock by vehicle type", fig))
-
-    if not t13.empty and {"year", "vehicle_type", "mirror_vehicle_km"}.issubset(t13.columns):
-        fig = go.Figure()
-        for i, (vt, grp) in enumerate(t13.groupby("vehicle_type")):
-            s = grp.groupby("year")["mirror_vehicle_km"].sum().sort_index()
-            fig.add_trace(go.Scatter(
-                x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
-                line=dict(color=_vehicle_type_colour(str(vt), i)),
-            ))
-        fig.update_layout(
-            **_layout("Vehicle-km by vehicle type"),
-            xaxis_title="Year", yaxis_title="Vehicle-km",
-        )
-        figs.append(("Vehicle-km by vehicle type", fig))
-
-    if not t13.empty and {"year", "transport_type", "mirror_energy_pj"}.issubset(t13.columns):
-        energy = (
-            t13.groupby(["year", "transport_type"])["mirror_energy_pj"]
-            .sum().unstack(fill_value=0.0).sort_index()
-        )
-        if not energy.empty:
-            fig = go.Figure()
-            for i, col in enumerate(energy.columns):
-                _c = _transport_mode_colour(str(col), i)
-                fig.add_trace(go.Scatter(
-                    x=energy.index.tolist(), y=energy[col].tolist(),
-                    name=str(col), stackgroup="en", mode="lines",
-                    line=dict(color=_c, width=0.7),
-                    fillcolor=_c,
-                ))
-            fig.update_layout(
-                **_layout("Energy by transport type"),
-                xaxis_title="Year", yaxis_title="Energy (PJ)",
-            )
-            figs.append(("Energy by transport type", fig))
-
-    if not t13_fuel.empty and {"year", "fuel", "mirror_fuel_energy_pj"}.issubset(t13_fuel.columns):
-        fe = (
-            t13_fuel.groupby(["year", "fuel"])["mirror_fuel_energy_pj"]
-            .sum().unstack(fill_value=0.0).sort_index()
-        )
-        if not fe.empty:
-            # Order fuels by total energy descending so the largest fuel is at the bottom.
-            fuel_order = fe.sum(axis=0).sort_values(ascending=False).index.tolist()
-            # Drop fuels with zero total so the legend stays clean.
-            fuel_order = [f for f in fuel_order if fe[f].sum() > 0]
-            fig = go.Figure()
-            for i, fuel in enumerate(fuel_order):
-                _c = _fuel_colour(fuel, i)
-                fig.add_trace(go.Scatter(
-                    x=fe.index.tolist(), y=fe[fuel].tolist(),
-                    name=str(fuel), stackgroup="fuel_en", mode="lines",
-                    line=dict(color=_c, width=0.7),
-                    fillcolor=_c,
-                ))
-            fig.update_layout(
-                **_layout("Fuel energy mix"),
-                xaxis_title="Year", yaxis_title="Fuel energy (PJ)",
-            )
-            figs.append(("Fuel energy mix", fig))
-
     # --- Drive-type charts ---
 
     if not t13.empty and {"year", "drive_type", "mirror_stock"}.issubset(t13.columns):
-        stock_by_dt = (
-            t13.groupby(["year", "drive_type"])["mirror_stock"]
-            .sum().unstack(fill_value=0.0).sort_index()
+        stock_share_fig = _stacked_share_chart_with_dropdown(
+            t13,
+            metric_col="mirror_stock",
+            yaxis_title="Share of fleet (%)",
+            title="Stock share — select grouping",
         )
-        if not stock_by_dt.empty:
-            total = stock_by_dt.sum(axis=1)
-            share_dt = stock_by_dt.div(total.replace(0, float("nan")), axis=0).fillna(0.0)
-            # Order: ICE first (largest), then ZEVs ascending by final-year share.
-            dt_order = share_dt.iloc[-1].sort_values(ascending=False).index.tolist()
-            fig = go.Figure()
-            for i, dt in enumerate(dt_order):
-                _c = _drive_colour(str(dt), i)
-                fig.add_trace(go.Scatter(
-                    x=share_dt.index.tolist(),
-                    y=(share_dt[dt] * 100).tolist(),
-                    name=str(dt), stackgroup="stock_share", mode="lines",
-                    line=dict(color=_c, width=0.7),
-                    fillcolor=_c,
-                ))
-            fig.update_layout(
-                **_layout("Stock share by drive type"),
-                xaxis_title="Year", yaxis_title="Share of fleet (%)",
-            )
+        if stock_share_fig is not None:
             figs.append((
-                "Stock share by drive type",
-                fig,
-                "Share of total vehicle stock by drive type over the projection. ICE dominates in the base year; shares shift as ZEVs enter the fleet.",
+                "Stock share — select grouping",
+                stock_share_fig,
+                "half",
+                "Use the dropdown to switch between: share by drive type, vehicle type, or transport type.",
             ))
 
     if t7f is not None and not t7f.empty and {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
-        ss = (
-            t7f.groupby(["year", "vehicle_type", "drive_type"])["sales_share"]
-            .mean()
-            .unstack("drive_type", fill_value=0.0)
-            .groupby(level="year")
-            .mean()
-            .sort_index()
-        )
-        if not ss.empty:
-            dt_order = ss.iloc[-1].sort_values(ascending=False).index.tolist()
-            fig = go.Figure()
-            for i, dt in enumerate(dt_order):
-                _c = _drive_colour(str(dt), i)
-                fig.add_trace(go.Scatter(
-                    x=ss.index.tolist(),
-                    y=(ss[dt] * 100).tolist(),
-                    name=str(dt), stackgroup="sales_share", mode="lines",
-                    line=dict(color=_c, width=0.7),
-                    fillcolor=_c,
-                ))
-            fig.update_layout(
-                **_layout("Sales share by drive type"),
-                xaxis_title="Year", yaxis_title="Share of new sales (%)",
-            )
+        sales_share_fig = _sales_share_with_dropdown(t7f, "Sales share — select vehicle type")
+        if sales_share_fig is not None:
             figs.append((
-                "Sales share by drive type",
-                fig,
-                "New vehicle sales mix by drive type. This is the technology transition pathway input — stock shares follow with a lag as older vehicles retire.",
-            ))
-
-    if not t13.empty and {"year", "drive_type", "mirror_energy_pj"}.issubset(t13.columns):
-        en_by_dt = (
-            t13.groupby(["year", "drive_type"])["mirror_energy_pj"]
-            .sum().unstack(fill_value=0.0).sort_index()
-        )
-        if not en_by_dt.empty:
-            dt_order = en_by_dt.sum(axis=0).sort_values(ascending=False).index.tolist()
-            fig = go.Figure()
-            for i, dt in enumerate(dt_order):
-                _c = _drive_colour(str(dt), i)
-                fig.add_trace(go.Scatter(
-                    x=en_by_dt.index.tolist(), y=en_by_dt[dt].tolist(),
-                    name=str(dt), stackgroup="en_dt", mode="lines",
-                    line=dict(color=_c, width=0.7),
-                    fillcolor=_c,
-                ))
-            fig.update_layout(
-                **_layout("Energy use by drive type"),
-                xaxis_title="Year", yaxis_title="Energy (PJ)",
-            )
-            figs.append((
-                "Energy use by drive type",
-                fig,
-                "Total energy demand split by drive type. ICE energy may decline as ZEVs grow; BEV/FCEV energy reflects electricity and hydrogen demand.",
+                "Sales share — select vehicle type",
+                sales_share_fig,
+                "half",
+                "Use the dropdown to view the drive-type mix for all vehicles (fleet average) or a specific vehicle type.",
             ))
 
     if not t13.empty and {"mirror_energy_pj", "leap_energy_pj", "year"}.issubset(t13.columns):
@@ -2325,21 +2424,45 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     if not _can_plot() or not workflow_outputs:
         return []
 
-    figs: list[tuple[str, Any]] = []
-    _t12 = workflow_outputs.get("T12"); t12 = _t12 if isinstance(_t12, pd.DataFrame) else pd.DataFrame()
     timings = workflow_outputs.get("timings") or {}
 
+    # Module 7 figures — collect by title so we can reorder; drop interactive groupings.
+    _EXCLUDE_M7 = {
+        "Energy breakdown — interactive grouping",
+        "Stock breakdown — interactive grouping",
+        "Vehicle-km breakdown — interactive grouping",
+        "Simulation minus LEAP energy",
+    }
+    m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
+    m7_raw = module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4"))
+    m7_by_title = {item[0]: item for item in m7_raw if item[0] not in _EXCLUDE_M7}
+
+    # Module 3 figures — Passenger X-LPV and Freight stock growth index.
+    t5 = (
+        workflow_outputs.get("T5_post_reconciliation")
+        or workflow_outputs.get("T5_pre_reconciliation")
+        or workflow_outputs.get("T5")
+    )
+    m3_raw = (
+        module3_figures(t5, population=workflow_outputs.get("population"))
+        if isinstance(t5, pd.DataFrame) and not t5.empty
+        else []
+    )
+    m3_by_title = {item[0]: item for item in m3_raw}
+
+    # Post-reconciliation vs ESTO figure.
+    _t12 = workflow_outputs.get("T12")
+    t12 = _t12 if isinstance(_t12, pd.DataFrame) else pd.DataFrame()
+    esto_fig: tuple | None = None
     if not t12.empty and {
         "fuel", "remaining_esto_pj", "post_reconciliation_model_pj",
     }.issubset(t12.columns):
         g = t12.copy()
         if "reconciliation_status" not in g.columns:
             g["reconciliation_status"] = "unknown"
-
         fuels = g["fuel"].tolist()
         statuses = g["reconciliation_status"].fillna("unknown").astype(str).tolist()
         post_vals = g["post_reconciliation_model_pj"].tolist()
-
         fig = go.Figure()
         if "pre_reconciliation_model_pj" in g.columns:
             fig.add_trace(go.Bar(
@@ -2354,7 +2477,6 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
             y=g["remaining_esto_pj"].tolist(),
             marker_color="#1565C0",
         ))
-
         for status, label, colour in [
             ("ok", "Post-reconciliation model (OK)", "#43A047"),
             ("large_adjustment", "Post-reconciliation model (Large adjustment)", "#FFA000"),
@@ -2364,63 +2486,15 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
             y_vals = [v if s == status else None for v, s in zip(post_vals, statuses)]
             if all(v is None for v in y_vals):
                 continue
-            fig.add_trace(go.Bar(
-                name=label,
-                x=fuels,
-                y=y_vals,
-                marker_color=colour,
-            ))
-
+            fig.add_trace(go.Bar(name=label, x=fuels, y=y_vals, marker_color=colour))
         fig.update_layout(
             **_layout("Post-reconciliation vs ESTO targets (status-coloured post bars)"),
             barmode="group", xaxis_title="Fuel", yaxis_title="Energy (PJ)",
         )
-        figs.append(("Post-reconciliation vs ESTO", fig, True))
+        esto_fig = ("Post-reconciliation vs ESTO", fig, True)
 
-    # Base-year sales shares snapshot
-    _t7 = workflow_outputs.get("T7")
-    t7 = _t7 if isinstance(_t7, pd.DataFrame) else pd.DataFrame()
-    if not t7.empty and {"vehicle_type", "drive_type", "sales_share"}.issubset(t7.columns):
-        base_df = t7.copy()
-        base_year_label = ""
-        if "year" in base_df.columns:
-            years = pd.to_numeric(base_df["year"], errors="coerce").dropna().astype(int)
-            if not years.empty:
-                base_year = int(years.min())
-                base_df = base_df[pd.to_numeric(base_df["year"], errors="coerce") == base_year]
-                base_year_label = f" ({base_year})"
-        if "scenario" in base_df.columns:
-            scenario_labels = base_df["scenario"].dropna().astype(str)
-            if scenario_labels.str.casefold().eq("target").any():
-                base_df = base_df[base_df["scenario"].astype(str).str.casefold().eq("target")].copy()
-        pvt = base_df.pivot_table(
-            index="vehicle_type", columns="drive_type",
-            values="sales_share", aggfunc="mean", fill_value=0,
-        )
-        if not pvt.empty:
-            non_ice_cols = [c for c in pvt.columns if str(c).upper() != "ICE"]
-            order_key = pvt[non_ice_cols].sum(axis=1) if non_ice_cols else pvt.sum(axis=1)
-            pvt = pvt.loc[order_key.sort_values(ascending=False).index]
-            drive_order = pvt.sum(axis=0).sort_values(ascending=False).index.tolist()
-            fig = go.Figure()
-            for j, col in enumerate(drive_order):
-                fig.add_trace(go.Bar(
-                    name=str(col), y=pvt.index.tolist(), x=(pvt[col] * 100).tolist(),
-                    orientation="h",
-                    marker_color=_drive_colour(str(col), j),
-                ))
-            fig.update_layout(
-                **_layout(f"Sales shares (base-year){base_year_label}"),
-                barmode="stack", xaxis_title="Sales share (%)", yaxis_title="Vehicle type",
-                xaxis=dict(range=[0, 105]),
-            )
-            figs.append((
-                f"Sales shares (base-year){base_year_label}",
-                fig,
-                True,
-                "Vehicle types are sorted by non-ICE share, with the largest values at the bottom so smaller rows stay easier to compare.",
-            ))
-
+    # Workflow timing figure.
+    timing_fig: tuple | None = None
     if isinstance(timings, dict) and timings:
         modules = [k.replace("_seconds", "").replace("_", " ") for k in timings if k.endswith("_seconds")]
         secs = [timings[k] for k in timings if k.endswith("_seconds")]
@@ -2430,12 +2504,32 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
                 **_layout("Workflow timing by module"),
                 xaxis_title="Module", yaxis_title="Seconds",
             )
-            figs.append(("Workflow timing", fig))
+            timing_fig = ("Workflow timing", fig)
 
-    # Append Module 7 figures if available
-    m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
-    if any(v is not None for v in m7_sub.values()):
-        figs.extend(module7_figures(m7_sub, t7f=workflow_outputs.get("T7f")))
+    # Assemble in desired row order, then ESTO second-to-last, timing at the bottom.
+    _DESIRED_ORDER = [
+        "Stock by vehicle type",
+        "Vehicle-km by vehicle type",
+        "Energy by transport type",
+        "Fuel energy mix",
+        "Energy use by drive type",
+        "Stock share by drive type",
+        "Sales share by drive type",
+        "Passenger X-LPV-equivalent vehicles vs saturation",
+        "Freight stock growth index",
+        "Mileage distribution",
+        "Efficiency distribution",
+    ]
+    figs: list[tuple[str, Any]] = []
+    for title in _DESIRED_ORDER:
+        item = m7_by_title.get(title) or m3_by_title.get(title)
+        if item is not None:
+            figs.append(item)
+
+    if esto_fig is not None:
+        figs.append(esto_fig)
+    if timing_fig is not None:
+        figs.append(timing_fig)
 
     return figs
 
@@ -2593,11 +2687,12 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .diagram-card{background:white;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:16px}
 .diagram-card--wide{width:100%}
 .diagram-title{font-size:.9rem;font-weight:600;color:#444;margin-bottom:8px}
-.diagram-caption{font-size:.85rem;color:#666;line-height:1.45;margin-top:8px}
+.diagram-caption{font-size:.85rem;color:#666;line-height:1.45;margin-top:8px;font-style:italic}
 .diagram-card img{display:block;width:100%;height:auto;border-radius:6px;border:1px solid #e5e5e5}
 .charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px;padding:0 20px 40px}
 .chart-card{background:white;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:14px;overflow:hidden;min-width:0}
 .chart-card--wide{grid-column:1/-1}
+.charts-pair{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .chart-title{font-size:.9rem;font-weight:600;color:#444;margin-bottom:8px}
 .chart-caption{font-size:.84rem;color:#666;line-height:1.45;margin:4px 0 8px}
 .chart-card .plotly-graph-div,.chart-card .js-plotly-plot,.chart-card .plot-container,.chart-card .svg-container{width:100%!important;max-width:100%!important}
@@ -2609,9 +2704,15 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .alert--warn{background:#fff8e1;color:#e65100;border-left:4px solid #ffa000}
 .alert--fail{background:#ffebee;color:#b71c1c;border-left:4px solid #e53935}
 footer{text-align:center;padding:20px;color:#aaa;font-size:.78rem}
+.module-grid--overview{grid-template-columns:repeat(6,1fr)}
+@media (max-width:1200px){
+.module-grid--overview{grid-template-columns:repeat(3,1fr)}
+}
 @media (max-width:900px){
 .charts-grid{grid-template-columns:minmax(0,1fr);gap:16px;padding:0 16px 28px}
+.charts-pair{grid-template-columns:minmax(0,1fr)}
 .module-grid{grid-template-columns:minmax(0,1fr);gap:12px;padding:0 16px 16px}
+.module-grid--overview{grid-template-columns:minmax(0,1fr)}
 .diagram-grid{grid-template-columns:minmax(0,1fr);gap:12px;padding:0 16px 28px}
 .intro-card{margin:8px 16px 14px;padding:14px}
 .page-title{padding:18px 16px 4px}
@@ -2696,7 +2797,7 @@ _RESIZE_SCRIPT = """
 """
 
 _MODULE_META: dict[str, tuple[str, str]] = {
-    "index": ("Overview", "Road model workflow QA dashboard. Choose a module from the navigation."),
+    "index": ("Overview", "Use this dashboard to check whether the road model has run correctly for this economy."),
     "module1": ("Inputs & base-year branches", "Module 1 and 2 diagnostics: default/original input counts, branch coverage and base-year metric distributions."),
     "module2": ("Module 2 — Base-year branches", "Branch count heatmap and metric distributions for the base-year branch table (T4)."),
     "module3": ("Stocks, sales & turnover", "Module 3, 4 and 5 diagnostics: stock target pathways, motorisation envelope, sales and turnover flows, vintages and drive-type sales shares."),
@@ -2728,6 +2829,16 @@ def _html_relative_path(from_dir: Path, to_path: Path) -> str:
     return Path(os.path.relpath(to_path, start=from_dir)).as_posix()
 
 
+_INDEX_CARD_DESCS: dict[str, str] = {
+    "module1": "Check the base-year inputs, defaults, branch coverage, and key source data.",
+    "module3": "Review stock pathways, sales, retirements, vintages, and drive-type transitions.",
+    "module3_post_reconciliation": "Check how stock and turnover changed after the model was re-anchored to reconciled base-year stock.",
+    "module6": "Compare modelled fuel use with ESTO and inspect the reconciliation adjustments.",
+    "module7": "Review the Python simulation of likely LEAP outputs: stock, travel, energy, fuels, and drive types.",
+    "workflow_summary": "See the final workflow checks, timing, reconciliation quality, and aggregate outputs.",
+}
+
+
 def _index_extra_html(
     out_dir: Path | None = None,
     shared_assets_dir: Path | None = None,
@@ -2742,32 +2853,26 @@ def _index_extra_html(
     module_cards: list[str] = []
     for href, label in _NAV_LINKS[1:]:
         key = href.replace(".html", "")
-        title, desc = _MODULE_META.get(key, (label, ""))
+        desc = _INDEX_CARD_DESCS.get(key, _MODULE_META.get(key, (label, ""))[1])
         module_cards.append(
             f'<div class="module-card">'
             f'<a class="module-btn" href="{href}">{label}</a>'
-            f'<div class="module-desc"><b>{title}</b><br>{desc}</div>'
+            f'<div class="module-desc">{desc}</div>'
             f'</div>'
         )
 
     _DIAGRAMS = [
         (
             "End-to-end road model workflow 8062026.png",
-            "road_model_end_to_end_workflow.png",
+            "end_to_end_road_model_workflow.png",
             "End-to-end road model workflow",
-            "Primary reference for the full end-to-end workflow from data preparation through LEAP projection. Some implementation detail is not shown.",
-        ),
-        (
-            "Road transport model — quick view.png",
-            "road_transport_model_quick_view.png",
-            "Road transport model — quick view",
-            "High-level map of data flow from default inputs, through core modules, into reconciliation and LEAP-ready outputs.",
+            "Primary reference for the full end-to-end workflow. Some implementation detail is not shown.",
         ),
         (
             "Road transport model — researcher detail.png",
             "road_transport_model_researcher_detail.png",
             "Road transport model — researcher detail",
-            "Detailed view of module internals, intermediate tables, and dependency paths used for deeper QA and method tracing.",
+            "More simplified illustration of the modelling workflow.",
         ),
     ]
 
@@ -2795,19 +2900,15 @@ def _index_extra_html(
 
     overview = (
         '<div class="intro-card">'
-        '<h3>How this system works</h3>'
-        '<p>This dashboard tracks the full road-transport modelling pipeline: base-year inputs are assembled and cleaned, stock and turnover trajectories are projected, sales shares are applied, then energy is reconciled to ESTO targets before producing LEAP-ready handoff tables.</p>'
-        '<ul>'
-        '<li><b>Inputs & branches:</b> check base-year source inputs, defaults and branch-level metrics.</li>'
-        '<li><b>Stocks, sales & turnover:</b> inspect target stock pathways, sales flows, retirements, vintages and drive transitions.</li>'
-        '<li><b>Reconciliation:</b> compare model fuel totals to ESTO and inspect scaling quality.</li>'
-        '<li><b>Mirror model + summary:</b> check end-to-end outputs and Python mirror calculations.</li>'
-        '</ul>'
+        '<h3>What to check first</h3>'
+        '<p>This page is a quality-check guide for the road model. It helps you move from raw inputs, through stock and sales projections, to reconciled energy results and final LEAP-ready outputs.</p>'
+        '<p style="margin:8px 0 4px 0;font-size:.9rem;color:#4a4a4a"><b>Recommended review order:</b> '
+        'Inputs &amp; branches → Stocks &amp; sales → Reconciliation → Outputs → Summary</p>'
         f'<a class="doc-link" href="{_ROAD_MODEL_DOC_HREF}" target="_blank" rel="noopener">Open simplified road model documentation</a>'
         '</div>'
     )
 
-    module_section = f'<div class="module-grid">{"".join(module_cards)}</div>'
+    module_section = f'<div class="module-grid module-grid--overview">{"".join(module_cards)}</div>'
     diagrams_section = f'<div class="diagram-grid">{"".join(diagrams)}</div>' if diagrams else ""
     return overview + module_section + diagrams_section
 
@@ -2832,9 +2933,11 @@ def _build_html_page(
     economy_label = f" — {economy}" if economy else ""
 
     if figures:
-        chart_divs: list[str] = []
+        rendered: list[str] = []
+        half_buffer: list[str] = []
         for idx, item in enumerate(figures):
             title, fig = item[0], item[1]
+            half = False
             explicit_wide = False
             caption = ""
             if len(item) > 2:
@@ -2842,10 +2945,14 @@ def _build_html_page(
                     explicit_wide = bool(item[2])
                     if len(item) > 3 and isinstance(item[3], str):
                         caption = item[3]
+                elif item[2] == "half":
+                    half = True
+                    if len(item) > 3 and isinstance(item[3], str):
+                        caption = item[3]
                 elif isinstance(item[2], str):
                     caption = item[2]
 
-            wide = _should_render_wide(fig, explicit_wide=explicit_wide)
+            wide = not half and _should_render_wide(fig, explicit_wide=explicit_wide)
             fig = _apply_dashboard_layout(fig, wide=wide)
             include_js: Any = "cdn" if idx == 0 else False
             fig_html = pio.to_html(
@@ -2853,12 +2960,27 @@ def _build_html_page(
                 include_plotlyjs=include_js,
                 config={"responsive": True, "displaylogo": False},
             )
-            css = "chart-card chart-card--wide" if wide else "chart-card"
             caption_html = f'<div class="chart-caption">{caption}</div>' if caption else ""
-            chart_divs.append(
-                f'<div class="{css}"><div class="chart-title">{title}</div>{caption_html}{fig_html}</div>'
-            )
-        charts_section = f'<div class="charts-grid">{"".join(chart_divs)}</div>'
+            card_html = f'<div class="chart-card"><div class="chart-title">{title}</div>{caption_html}{fig_html}</div>'
+
+            if half:
+                half_buffer.append(card_html)
+                if len(half_buffer) == 2:
+                    rendered.append(f'<div class="charts-pair">{"".join(half_buffer)}</div>')
+                    half_buffer = []
+            else:
+                if half_buffer:
+                    rendered.append(f'<div class="charts-pair">{"".join(half_buffer)}</div>')
+                    half_buffer = []
+                css = "chart-card chart-card--wide" if wide else "chart-card"
+                rendered.append(
+                    f'<div class="{css}"><div class="chart-title">{title}</div>{caption_html}{fig_html}</div>'
+                )
+
+        if half_buffer:
+            rendered.append(f'<div class="charts-pair">{"".join(half_buffer)}</div>')
+
+        charts_section = f'<div class="charts-grid">{"".join(rendered)}</div>'
     else:
         charts_section = ""
 
