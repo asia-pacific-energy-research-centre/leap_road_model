@@ -129,6 +129,7 @@ def build_reconciled_module1_reimport(
         multiplier = _scale_multiplier(row.get("Scale", ""))
         out.at[idx, "Value"] = replacement_values[key] / multiplier
 
+    out = out[out["Shown In Interface"].astype(str).str.strip().str.lower().ne("false")]
     _validate_unique_keys(out, context="reconciled Module 1 re-import")
     return out[MODULE1_REIMPORT_COLUMNS].copy()
 

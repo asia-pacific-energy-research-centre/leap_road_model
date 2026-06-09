@@ -138,13 +138,13 @@ def test_reconciled_reimport_preserves_row_keys_and_metadata():
     out = build_reconciled_module1_reimport(source, _t11_rows(), base_year=2022)
 
     assert list(out.columns) == MODULE1_REIMPORT_COLUMNS
-    assert set(map(tuple, out[["Branch Path", "Variable", "Scenario", "Year"]].to_numpy())) == set(
-        map(tuple, source[["Branch Path", "Variable", "Scenario", "Year"]].to_numpy())
-    )
 
-    sales_share = out[out["Variable"] == "Sales Share"].iloc[0]
-    assert sales_share["Value"] == pytest.approx(55.0)
-    assert sales_share["Shown In Interface"] == "False"
+    # Rows with Shown In Interface == "False" are stripped (interface rejects them).
+    assert out[out["Shown In Interface"].astype(str).str.lower() == "false"].empty
+    shown_source = source[source["Shown In Interface"].astype(str).str.lower() != "false"]
+    assert set(map(tuple, out[["Branch Path", "Variable", "Scenario", "Year"]].to_numpy())) == set(
+        map(tuple, shown_source[["Branch Path", "Variable", "Scenario", "Year"]].to_numpy())
+    )
 
     stock = out[out["Variable"] == "Stock"].iloc[0]
     assert stock["Source"] == "original_source.csv"

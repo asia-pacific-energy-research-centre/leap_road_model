@@ -112,12 +112,12 @@ def test_dashboard_diagrams_are_written_to_shared_assets(tmp_path):
     write_module_pages({}, dashboard_dir=dashboard_dir, economy="05_PRC")
 
     shared_assets = tmp_path / "results" / "shared" / "dashboard_assets"
-    assert (shared_assets / "road_transport_model_quick_view.png").exists()
+    assert (shared_assets / "end_to_end_road_model_workflow.png").exists()
     assert (shared_assets / "road_transport_model_researcher_detail.png").exists()
-    assert not (dashboard_dir / "road_transport_model_quick_view.png").exists()
+    assert not (dashboard_dir / "end_to_end_road_model_workflow.png").exists()
 
     index_html = (dashboard_dir / "index.html").read_text(encoding="utf-8")
-    assert "../../../shared/dashboard_assets/road_transport_model_quick_view.png" in index_html
+    assert "../../../shared/dashboard_assets/end_to_end_road_model_workflow.png" in index_html
     assert "../../../shared/dashboard_assets/road_transport_model_researcher_detail.png" in index_html
     assert "/road-model-docs/road_transport_model_simplified.md" in index_html
 

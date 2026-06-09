@@ -2438,10 +2438,12 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     m7_by_title = {item[0]: item for item in m7_raw if item[0] not in _EXCLUDE_M7}
 
     # Module 3 figures — Passenger X-LPV and Freight stock growth index.
+    _t5_post = workflow_outputs.get("T5_post_reconciliation")
+    _t5_pre = workflow_outputs.get("T5_pre_reconciliation")
     t5 = (
-        workflow_outputs.get("T5_post_reconciliation")
-        or workflow_outputs.get("T5_pre_reconciliation")
-        or workflow_outputs.get("T5")
+        _t5_post if isinstance(_t5_post, pd.DataFrame) and not _t5_post.empty
+        else _t5_pre if isinstance(_t5_pre, pd.DataFrame) and not _t5_pre.empty
+        else workflow_outputs.get("T5")
     )
     m3_raw = (
         module3_figures(t5, population=workflow_outputs.get("population"))
