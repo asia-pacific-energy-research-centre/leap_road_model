@@ -8,14 +8,17 @@ jobs:
   rebuild:
     runs-on: ubuntu-latest
     steps:
-      - name: Factory-restart HF Space
+      - name: Dispatch sync_to_hf workflow in interface repo
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          INTERFACE_REPO_TOKEN: ${{ secrets.INTERFACE_REPO_TOKEN }}
         run: |
           curl -s -o response.json -w "%{http_code}" \
-            -X POST "https://huggingface.co/api/spaces/finbarmaunsell/leap_road_model/restart?factory=true" \
-            -H "Authorization: Bearer $HF_TOKEN" | tee http_status
+            -X POST \
+            -H "Authorization: Bearer $INTERFACE_REPO_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/H3yfinn/road_model_inputs_interface/actions/workflows/sync_to_hf.yml/dispatches" \
+            -d '{"ref":"main"}' | tee http_status
           echo ""
           cat response.json
           STATUS=$(cat http_status)
-          [ "$STATUS" -eq 200 ] || [ "$STATUS" -eq 204 ] || { echo "HF restart failed with HTTP $STATUS"; exit 1; }
+          [ "$STATUS" -eq 204 ] || { echo "Dispatch failed with HTTP $STATUS"; exit 1; }
