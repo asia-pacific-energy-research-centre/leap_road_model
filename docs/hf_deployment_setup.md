@@ -6,7 +6,7 @@
 2. [Repo roles](#repo-roles)
 3. [GitHub Actions](#github-actions)
 4. [HF push constraints and how we handle them](#hf-push-constraints-and-how-we-handle-them)
-5. After every deployment: hard-refresh your browser
+5. [After every deployment: hard-refresh your browser](#after-every-deployment-hard-refresh-your-browser)
 6. [Keys](#keys-stored-in-gitignored-keystxt)
 
 ## How it works
@@ -15,11 +15,12 @@ Two GitHub repos feed one Hugging Face Space (`finbarmaunsell/leap_road_model`):
 
 ```
 push to leap_road_model (GitHub)
-    → Action updates LEAP_ROAD_MODEL_REF to the new commit SHA in road_model_inputs_interface Dockerfile
-        → Action commits and pushes road_model_inputs_interface to GitHub
-            → sync_to_hf.yml pushes road_model_inputs_interface to HF Space
-                → HF rebuilds the container, cloning leap_road_model at that exact SHA
+    → update_interface_sha.yml dispatches sync_to_hf.yml in road_model_inputs_interface
+        → sync_to_hf.yml pushes road_model_inputs_interface to HF Space
+            → HF rebuilds the container, cloning leap_road_model at latest main
 ```
+
+The Dockerfile uses `LEAP_ROAD_MODEL_REF=main` — no SHA pinning. Every rebuild always picks up the latest `leap_road_model` main.
 
 ## Repo roles
 
@@ -33,13 +34,13 @@ push to leap_road_model (GitHub)
 
 ### `leap_road_model/.github/workflows/update_interface_sha.yml`
 
-Triggers on push to `main`. Updates `LEAP_ROAD_MODEL_REF` in `road_model_inputs_interface/Dockerfile` to the new commit SHA (full SHA, not short), then commits and pushes to that repo. The Dockerfile's clone step uses this value to check out that exact commit, so the HF build is pinned to the same SHA that triggered the deploy.
+Triggers on push to `main`. Calls the GitHub API to dispatch `sync_to_hf.yml` in the interface repo, which triggers an HF Space rebuild.
 
 **Secret required:** `INTERFACE_REPO_TOKEN` — a GitHub fine-grained PAT with Contents Read & Write on `H3yfinn/road_model_inputs_interface`. Set in `asia-pacific-energy-research-centre/leap_road_model` → Settings → Secrets → Actions.
 
 ### `road_model_inputs_interface/.github/workflows/sync_to_hf.yml`
 
-Triggers on push to `main`. Creates an orphan commit (no history) and force-pushes it to the HF Space.
+Triggers on push to `main` or `workflow_dispatch`. Creates an orphan commit (no history) and force-pushes it to the HF Space. HF detects the new commit and rebuilds, cloning `leap_road_model` at `main`.
 
 **Secret required:** `HF_TOKEN` — a Hugging Face token with write access to `finbarmaunsell/leap_road_model`. Set in `H3yfinn/road_model_inputs_interface` → Settings → Secrets → Actions.
 
@@ -62,7 +63,7 @@ Even with large files absent from the current commit, HF rejected pushes because
 
 **Fix:** The `sync_to_hf.yml` Action uses `git checkout --orphan` to create a history-free snapshot commit before pushing. HF only ever sees the current state of the repo, not any prior commits.
 
-## ⚠️ After every deployment: hard-refresh your browser
+## After every deployment: hard-refresh your browser
 
 After a new deployment, your browser will likely still be running the **old cached `app.js`**. This causes subtle failures — e.g. requesting `.json` files when the new code expects `.csv` — that look like server errors but are actually stale client code.
 
@@ -72,6 +73,10 @@ After a new deployment, your browser will likely still be running the **old cach
 - Mac: `Cmd + Shift + R`
 
 If the error persists after a hard refresh, then it is a real server-side issue.
+
+## Manual rebuild
+
+To trigger a rebuild without pushing new code, run `sync_to_hf.yml` manually from the GitHub Actions UI in the interface repo: Actions → Sync to Hugging Face Space → Run workflow.
 
 ## Keys (stored in gitignored `keys.txt`)
 
