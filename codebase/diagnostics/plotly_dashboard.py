@@ -1805,7 +1805,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                     ),
                 ))
             fig.update_layout(
-                **_layout("Module 6 - Final fuel allocation share by vehicle type and drive"),
+                **_layout("Module 6 - Final fuel allocation share by vehicle type and drive (2022)"),
                 barmode="stack",
                 height=620,
                 xaxis_title="Vehicle type | drive",
@@ -1814,7 +1814,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 legend_title_text="Fuel",
             )
             figs.append((
-                "Final fuel allocation share by vehicle type and drive",
+                "Final fuel allocation share by vehicle type and drive (2022)",
                 fig,
                 True,
                 "Final allocated fuel energy mix after reconciliation. Each bar sums to 100%; fuels with the largest total allocation are stacked from the bottom.",
@@ -2063,13 +2063,21 @@ def _stacked_share_chart_with_dropdown(
     if t13 is None or t13.empty or metric_col not in t13.columns or "year" not in t13.columns:
         return None
 
-    grouping_defs: list[tuple[str, str, Any]] = []
+    grouping_defs: list[tuple[str, Any, str, Any]] = []
     if "drive_type" in t13.columns:
-        grouping_defs.append(("By drive type", "drive_type", _drive_colour))
+        grouping_defs.append(("By drive type", t13, "drive_type", _drive_colour))
     if "vehicle_type" in t13.columns:
-        grouping_defs.append(("By vehicle type", "vehicle_type", _vehicle_type_colour))
+        grouping_defs.append(("By vehicle type", t13, "vehicle_type", _vehicle_type_colour))
     if "transport_type" in t13.columns:
-        grouping_defs.append(("By transport type", "transport_type", _transport_mode_colour))
+        grouping_defs.append(("By transport type", t13, "transport_type", _transport_mode_colour))
+    if {"drive_type", "vehicle_type"}.issubset(t13.columns):
+        _tmp = t13.copy()
+        _tmp["_dv"] = _tmp["drive_type"].astype(str) + " × " + _tmp["vehicle_type"].astype(str)
+        grouping_defs.append(("By drive × vehicle type", _tmp, "_dv", None))
+    if {"drive_type", "transport_type"}.issubset(t13.columns):
+        _tmp = t13.copy()
+        _tmp["_dt"] = _tmp["drive_type"].astype(str) + " × " + _tmp["transport_type"].astype(str)
+        grouping_defs.append(("By drive × transport type", _tmp, "_dt", None))
 
     if not grouping_defs:
         return None
@@ -2078,8 +2086,8 @@ def _stacked_share_chart_with_dropdown(
     trace_groups: list[tuple[str, int, int]] = []
     n_traces = 0
 
-    for grp_idx, (grp_label, grp_col, colour_fn) in enumerate(grouping_defs):
-        g = t13.groupby(["year", grp_col])[metric_col].sum().unstack(fill_value=0.0).sort_index()
+    for grp_idx, (grp_label, src_df, grp_col, colour_fn) in enumerate(grouping_defs):
+        g = src_df.groupby(["year", grp_col])[metric_col].sum().unstack(fill_value=0.0).sort_index()
         if g.empty:
             trace_groups.append((grp_label, n_traces, 0))
             continue
@@ -2088,7 +2096,7 @@ def _stacked_share_chart_with_dropdown(
         cats = share.sum(axis=0).sort_values(ascending=False).index.tolist()
         is_first = grp_idx == 0
         for j, cat in enumerate(cats):
-            _c = colour_fn(str(cat), j)
+            _c = colour_fn(str(cat), j) if colour_fn else _COLOURS[j % len(_COLOURS)]
             fig.add_trace(go.Scatter(
                 x=share.index.tolist(),
                 y=(share[cat] * 100).tolist(),
@@ -2293,21 +2301,21 @@ def module7_figures(
             t13,
             metric_col="mirror_stock",
             yaxis_title="Share of fleet (%)",
-            title="Stock share — select grouping",
+            title="Stock share",
         )
         if stock_share_fig is not None:
             figs.append((
-                "Stock share — select grouping",
+                "Stock share",
                 stock_share_fig,
                 "half",
-                "Use the dropdown to switch between: share by drive type, vehicle type, or transport type.",
+                "Use the dropdown to switch between: share by drive type, vehicle type, transport type, or compound categories.",
             ))
 
     if t7f is not None and not t7f.empty and {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
-        sales_share_fig = _sales_share_with_dropdown(t7f, "Sales share — select vehicle type")
+        sales_share_fig = _sales_share_with_dropdown(t7f, "Sales share")
         if sales_share_fig is not None:
             figs.append((
-                "Sales share — select vehicle type",
+                "Sales share",
                 sales_share_fig,
                 "half",
                 "Use the dropdown to view the drive-type mix for all vehicles (fleet average) or a specific vehicle type.",
@@ -2337,13 +2345,13 @@ def module7_figures(
             t13,
             metric_col="mirror_energy_pj",
             yaxis_title="Energy (PJ)",
-            title="Energy breakdown — select grouping",
+            title="Energy",
             t13_fuel=t13_fuel if not t13_fuel.empty else None,
             fuel_metric_col="mirror_fuel_energy_pj",
         )
         if en_dropdown is not None:
             figs.append((
-                "Energy breakdown — interactive grouping",
+                "Energy",
                 en_dropdown,
                 True,
                 "Use the dropdown (top-left of chart) to switch between groupings: vehicle type, drive type, transport type, fuel, or compound categories.",
@@ -2354,11 +2362,11 @@ def module7_figures(
             t13,
             metric_col="mirror_stock",
             yaxis_title="Vehicles",
-            title="Stock breakdown — select grouping",
+            title="Stock",
         )
         if stock_dropdown is not None:
             figs.append((
-                "Stock breakdown — interactive grouping",
+                "Stock",
                 stock_dropdown,
                 True,
                 "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
@@ -2369,11 +2377,11 @@ def module7_figures(
             t13,
             metric_col="mirror_vehicle_km",
             yaxis_title="Vehicle-km",
-            title="Vehicle-km breakdown — select grouping",
+            title="Vehicle-km",
         )
         if vkm_dropdown is not None:
             figs.append((
-                "Vehicle-km breakdown — interactive grouping",
+                "Vehicle-km",
                 vkm_dropdown,
                 True,
                 "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
@@ -2387,7 +2395,7 @@ def module7_figures(
                 t4,
                 metric_col="mileage_km_per_year",
                 metric_label="Mileage (km/year)",
-                title="Mileage distribution — select grouping",
+                title="Mileage distribution",
             )
             if mileage_dist is not None:
                 figs.append((
@@ -2402,7 +2410,7 @@ def module7_figures(
                 t4,
                 metric_col="efficiency_km_per_gj",
                 metric_label="Efficiency (km/GJ)",
-                title="Efficiency distribution — select grouping",
+                title="Efficiency distribution",
             )
             if eff_dist is not None:
                 figs.append((
@@ -2426,16 +2434,13 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
 
     timings = workflow_outputs.get("timings") or {}
 
-    # Module 7 figures — collect by title so we can reorder; drop interactive groupings.
-    _EXCLUDE_M7 = {
-        "Energy breakdown — interactive grouping",
-        "Stock breakdown — interactive grouping",
-        "Vehicle-km breakdown — interactive grouping",
-        "Simulation minus LEAP energy",
-    }
+    # Module 7 figures — only mileage/efficiency distributions (base-year T4 data).
+    # Simulated stock/energy outputs are excluded: they rely on assumptions about sales
+    # shares and fleet turnover that differ from LEAP, so they are not model outputs.
+    _INCLUDE_M7 = {"Mileage distribution", "Efficiency distribution"}
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
     m7_raw = module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4"))
-    m7_by_title = {item[0]: item for item in m7_raw if item[0] not in _EXCLUDE_M7}
+    m7_by_title = {item[0]: item for item in m7_raw if item[0] in _INCLUDE_M7}
 
     # Module 3 figures — Passenger X-LPV and Freight stock growth index.
     _t5_post = workflow_outputs.get("T5_post_reconciliation")
@@ -2451,6 +2456,29 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         else []
     )
     m3_by_title = {item[0]: item for item in m3_raw}
+
+    # Module 4 figures — new sales and stock trajectories by vehicle type.
+    _t6_post = workflow_outputs.get("T6_post_reconciliation")
+    _t6_pre = workflow_outputs.get("T6_pre_reconciliation")
+    t6 = (
+        _t6_post if isinstance(_t6_post, pd.DataFrame) and not _t6_post.empty
+        else _t6_pre if isinstance(_t6_pre, pd.DataFrame) and not _t6_pre.empty
+        else workflow_outputs.get("T6")
+    )
+    _t6v_post = workflow_outputs.get("T6v_post_reconciliation")
+    _t6v_pre = workflow_outputs.get("T6v_pre_reconciliation")
+    t6v = (
+        _t6v_post if isinstance(_t6v_post, pd.DataFrame) and not _t6v_post.empty
+        else _t6v_pre if isinstance(_t6v_pre, pd.DataFrame) and not _t6v_pre.empty
+        else workflow_outputs.get("T6v")
+    )
+    m4_raw = module4_figures(t6, t6v) if isinstance(t6, pd.DataFrame) and not t6.empty else []
+    m4_by_title = {item[0]: item for item in m4_raw}
+
+    # Module 6 figures — reconciliation scalars and fuel allocation.
+    m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12", "T12_phev")}
+    m6_raw = module6_figures(m6_sub)
+    m6_by_title = {item[0]: item for item in m6_raw}
 
     # Post-reconciliation vs ESTO figure.
     _t12 = workflow_outputs.get("T12")
@@ -2510,21 +2538,18 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
 
     # Assemble in desired row order, then ESTO second-to-last, timing at the bottom.
     _DESIRED_ORDER = [
-        "Stock by vehicle type",
-        "Vehicle-km by vehicle type",
-        "Energy by transport type",
-        "Fuel energy mix",
-        "Energy use by drive type",
-        "Stock share by drive type",
-        "Sales share by drive type",
+        "New sales by vehicle type",
+        "Stock trajectory by vehicle type",
         "Passenger X-LPV-equivalent vehicles vs saturation",
         "Freight stock growth index",
+        "Adjustment scalars by branch",
+        "Final fuel allocation share by vehicle type and drive (2022)",
         "Mileage distribution",
         "Efficiency distribution",
     ]
     figs: list[tuple[str, Any]] = []
     for title in _DESIRED_ORDER:
-        item = m7_by_title.get(title) or m3_by_title.get(title)
+        item = m4_by_title.get(title) or m3_by_title.get(title) or m6_by_title.get(title) or m7_by_title.get(title)
         if item is not None:
             figs.append(item)
 
@@ -2695,7 +2720,7 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .chart-card{background:white;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:14px;overflow:hidden;min-width:0}
 .chart-card--wide{grid-column:1/-1}
 .charts-pair{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:20px}
-.chart-title{font-size:.9rem;font-weight:600;color:#444;margin-bottom:8px}
+.chart-title{font-size:1.15rem;font-weight:700;color:#1a237e;margin-bottom:6px;text-align:center}
 .chart-caption{font-size:.84rem;color:#666;line-height:1.45;margin:4px 0 8px}
 .chart-card .plotly-graph-div,.chart-card .js-plotly-plot,.chart-card .plot-container,.chart-card .svg-container{width:100%!important;max-width:100%!important}
 .chart-card .plotly-graph-div{min-height:340px}
@@ -2808,7 +2833,7 @@ _MODULE_META: dict[str, tuple[str, str]] = {
     "module5": ("Module 5 — Sales shares", "Drive-type sales shares over the projection horizon by vehicle type, showing technology transition trajectories."),
     "module6": ("Module 6 — LEAP handoff & reconciliation", "Fuel reconciliation diagnostics (ESTO vs model), reconciliation scalars, ECF by fuel, device shares and allocation concentration."),
     "module7": ("Module 7 — Simulated outputs", "Python simulation of what LEAP might produce: stock, vehicle-km, energy by transport type, fuel energy mix, drive-type breakdowns, and comparison with LEAP energy."),
-    "workflow_summary": ("Workflow summary", "End-of-process summary: post-reconciliation vs ESTO targets, workflow timing by module and Module 7 aggregate outputs."),
+    "workflow_summary": ("Model outputs — what the road model sends to LEAP", "Key road model outputs sent directly to LEAP: new sales, stock trajectories, reconciliation scalars, and base-year fuel allocation. These are the actual model results. Module 7 projections are excluded — they simulate what LEAP might produce using additional assumptions about sales shares and fleet turnover that are not the same as what LEAP uses."),
 }
 
 
@@ -2837,7 +2862,7 @@ _INDEX_CARD_DESCS: dict[str, str] = {
     "module6": "Compare modelled fuel use with ESTO and inspect the reconciliation adjustments.",
     "module3_post_reconciliation": "Check how stock and stock growth changed after the model was re-anchored to reconciled base-year stock levels.",
     "module7": "Review the Python simulation of likely LEAP outputs: stock, travel, energy, fuels, and drive types.",
-    "workflow_summary": "Review a selection of charts from the dashboard, acting as a summary. Includes some extra graphs intended as system diagnostics.",
+    "workflow_summary": "Review the actual road model outputs sent to LEAP: sales, stocks, reconciliation scalars, and fuel allocation. No Module 7 simulations.",
 }
 
 

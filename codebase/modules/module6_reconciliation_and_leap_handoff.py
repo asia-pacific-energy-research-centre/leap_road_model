@@ -51,14 +51,16 @@ _PLUGIN_LIQUID_FUELS_BY_DRIVE = {
 _DEFAULT_PLUGIN_LIQUID_FUELS = {"Motor gasoline", "Biogasoline", "Efuel"}
 
 _FUEL_ALLOCATION_PRIORITY = {
-    # Gaseous fuels: allocated before liquids. LNG restricted to Trucks ICE;
-    # LPG and Natural gas distributed across all ICE by stock share.
+    # Gaseous fuels: LNG to Trucks ICE only; LPG and Natural gas to all ICE (not HEV).
     "LNG":                [["freight", "Trucks", "ICE"]],
     "LPG":                [[None, None, "ICE"]],
     "Natural gas":        [[None, None, "ICE"]],
-    # Liquid fuels: priority tiers ensure diesel stays freight-first, gasoline passenger-first.
-    "Gas and diesel oil": [["freight", "Trucks"], ["freight", "LCVs"], ["passenger", None]],
-    "Biodiesel":          [["freight", "Trucks"], ["freight", "LCVs"], ["passenger", None]],
+    # Diesel family: freight ICE first (Trucks + LCVs share proportionally by
+    # initial_energy_pj), with passenger as overflow for economies where freight
+    # ICE initial energy is less than the diesel ESTO total.
+    "Gas and diesel oil": [["freight", None, "ICE"], ["passenger", None]],
+    "Biodiesel":          [["freight", None, "ICE"], ["passenger", None]],
+    # Gasoline family: passenger first, LCVs receive any surplus.
     "Motor gasoline":     [["passenger", None], ["freight", "LCVs"]],
     "Biogasoline":        [["passenger", None], ["freight", "LCVs"]],
 }
@@ -164,10 +166,11 @@ def _allocate_priority_fuel_group(
     remaining_tier_capacity: dict[tuple[str, str | None], float] | None = None,
 ) -> pd.DataFrame:
     """
-    Allocate one fuel group through vehicle priority tiers before stock fallback.
+    Allocate one fuel group through vehicle priority tiers, then distribute remainder
+    proportionally by initial_energy_pj (branch energy demand = stock x mileage / efficiency).
 
-    Diesel/biodiesel are filled through Trucks -> LCVs -> passenger. Gasoline and
-    biogasoline use passenger -> LCVs so trucks remain diesel-only.
+    Using initial_energy_pj as the share weight (rather than raw vehicle count) gives
+    high-intensity vehicles like Trucks their proportional share of liquid fuels.
     """
     out = group.copy()
     if "fuel" in out.columns:
@@ -180,6 +183,12 @@ def _allocate_priority_fuel_group(
     remaining = max(0.0, float(out["remaining_esto_fuel_pj"].iloc[0]))
     allocated = pd.Series(0.0, index=out.index)
     last_tier_mask: pd.Series | None = None
+
+    def _energy_shares(mask: pd.Series) -> pd.Series:
+        total = float(out.loc[mask, "initial_energy_pj"].sum())
+        if total > 0:
+            return out.loc[mask, "initial_energy_pj"] / total
+        return pd.Series(0.0, index=out.loc[mask].index)
 
     if tiers:
         for tier in tiers:
@@ -199,30 +208,14 @@ def _allocate_priority_fuel_group(
             if tier_allocation <= 0:
                 continue
 
-            total_stock = float(out.loc[tier_mask, "stock"].sum())
-            if total_stock > 0:
-                shares = out.loc[tier_mask, "stock"] / total_stock
-            else:
-                total_energy = out.loc[tier_mask, "initial_energy_pj"].sum()
-                shares = (out.loc[tier_mask, "initial_energy_pj"] / total_energy) if total_energy > 0 else 0.0
-            allocated.loc[tier_mask] = allocated.loc[tier_mask] + (shares * tier_allocation)
+            allocated.loc[tier_mask] = allocated.loc[tier_mask] + (_energy_shares(tier_mask) * tier_allocation)
             remaining -= tier_allocation
             if remaining_tier_capacity is not None:
                 remaining_tier_capacity[tier_key] = max(0.0, tier_capacity - tier_allocation)
 
     if remaining > 0:
         fallback_mask = last_tier_mask if last_tier_mask is not None else pd.Series(True, index=out.index)
-        total_stock = float(out.loc[fallback_mask, "stock"].sum())
-        if total_stock > 0:
-            fallback_shares = out.loc[fallback_mask, "stock"] / total_stock
-        else:
-            total_energy = out.loc[fallback_mask, "initial_energy_pj"].sum()
-            fallback_shares = (
-                out.loc[fallback_mask, "initial_energy_pj"] / total_energy
-                if total_energy > 0
-                else pd.Series(0.0, index=out.loc[fallback_mask].index)
-            )
-        allocated.loc[fallback_mask] = allocated.loc[fallback_mask] + (fallback_shares * remaining)
+        allocated.loc[fallback_mask] = allocated.loc[fallback_mask] + (_energy_shares(fallback_mask) * remaining)
 
     total_allocated = float(allocated.sum())
     out["allocated_branch_fuel_pj"] = allocated
