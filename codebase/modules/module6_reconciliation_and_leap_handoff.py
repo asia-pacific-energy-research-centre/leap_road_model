@@ -904,70 +904,87 @@ def allocate_esto_fuel_to_branches(
     return df[[c for c in t8_cols if c in df.columns]].reset_index(drop=True)
 
 
-# ===========================================================================
-# Steps 5–7 — Simultaneous reconciliation
-# ===========================================================================
-
-def _repair_zero_stock_assumptions(t9: pd.DataFrame) -> pd.DataFrame:
+def _apply_peer_scalars_to_zero_stock_branches(t9: pd.DataFrame) -> pd.DataFrame:
     """
-    Fill invalid mileage/efficiency on zero-stock T9 branches from reconciled peers.
+    For branches with zero base-year stock, replace their mileage/efficiency scalars
+    with the mean from reconciled peer branches.
 
-    Zero-stock branches (e.g. FCEV trucks with no base-year vehicles) participate
-    in reconciliation with ECF=1.0 so their adjusted values equal their T4 values.
-    When T4 had no valid efficiency (0 or NaN — because that drive type had no ESTO
-    data and the researcher's input didn't cover it), adjusted_efficiency ends up 0
-    or NaN after reconciliation even though sibling drive types do have valid values.
-
-    For each such branch we use the mean adjusted_mileage / adjusted_efficiency from
-    T9 peers with the same (economy, scenario, vehicle_type, size) group.  This is
-    equivalent to "initialise at the same level as peers were after reconciliation."
+    Peer lookup hierarchy (first match wins):
+      1. same (economy, scenario, drive_type)           — all fuels, same drive technology
+      2. same (economy, scenario, vehicle_type, size)   — all drives, same vehicle size
+      3. same (economy, scenario, vehicle_type)         — all drives, same vehicle type
     """
-    peer_keys = [k for k in ["economy", "scenario", "vehicle_type", "size"] if k in t9.columns]
-
-    def _invalid(col: str) -> pd.Series:
-        return t9[col].isna() | (pd.to_numeric(t9[col], errors="coerce").fillna(0.0) <= 0)
-
-    zero_stock = pd.to_numeric(t9["adjusted_stock"], errors="coerce").fillna(0.0) <= 0
-    need_mileage = zero_stock & _invalid("adjusted_mileage_km_per_year")
-    need_efficiency = zero_stock & _invalid("adjusted_efficiency_km_per_gj")
-
-    if not need_mileage.any() and not need_efficiency.any():
+    zero_mask = t9["stock"].fillna(0).le(0)
+    if not zero_mask.any():
         return t9
 
-    for col, need_mask in [
-        ("adjusted_mileage_km_per_year", need_mileage),
-        ("adjusted_efficiency_km_per_gj", need_efficiency),
-    ]:
-        if not need_mask.any():
-            continue
+    t9 = t9.copy()
+    peer_rows = t9[~zero_mask]
 
-        peer_mean = (
-            t9.loc[~_invalid(col), peer_keys + [col]]
-            .assign(**{col: pd.to_numeric(t9.loc[~_invalid(col), col], errors="coerce")})
-            .dropna(subset=[col])
-            .groupby(peer_keys, as_index=False)[col]
+    peer_ms = pd.Series(np.nan, index=t9.index)
+    peer_es = pd.Series(np.nan, index=t9.index)
+
+    grouping_levels: list[list[str]] = [
+        [k for k in ["economy", "scenario", "drive_type"] if k in t9.columns],
+        [k for k in ["economy", "scenario", "vehicle_type", "size"] if k in t9.columns],
+        [k for k in ["economy", "scenario", "vehicle_type"] if k in t9.columns],
+    ]
+    # Remove degenerate levels (e.g. if "size" absent, level 2 collapses to level 3)
+    seen: set[tuple[str, ...]] = set()
+    unique_levels = []
+    for lk in grouping_levels:
+        key = tuple(lk)
+        if key not in seen:
+            seen.add(key)
+            unique_levels.append(lk)
+
+    remaining = t9[zero_mask].index.tolist()
+
+    for level_keys in unique_levels:
+        if not remaining:
+            break
+        if peer_rows.empty:
+            break
+
+        mean_scalars = (
+            peer_rows.groupby(level_keys)[["mileage_scalar", "efficiency_scalar"]]
             .mean()
-            .rename(columns={col: "_peer"})
+            .reset_index()
+            .rename(columns={"mileage_scalar": "_peer_ms", "efficiency_scalar": "_peer_es"})
         )
 
-        t9 = t9.merge(peer_mean, on=peer_keys, how="left")
-        filled = need_mask & t9["_peer"].notna()
-        if filled.any():
-            label_cols = [c for c in ["economy", "scenario", "vehicle_type", "drive_type", "fuel", "size"] if c in t9.columns]
-            branch_lines = "\n".join(
-                f"  {r.to_dict()}" for _, r in t9.loc[filled, label_cols].drop_duplicates().iterrows()
-            )
-            short = col.replace("adjusted_", "").replace("_km_per_year", "").replace("_km_per_gj", "")
-            log.info(
-                "T9 repair: filled %s from peer-group mean for %d zero-stock branch row(s) "
-                "with no valid base-year value:\n%s",
-                short, int(filled.sum()), branch_lines,
-            )
-            t9[col] = t9[col].where(~filled, t9["_peer"])
-        t9 = t9.drop(columns=["_peer"])
+        zero_df = t9.loc[remaining, level_keys].copy()
+        zero_df["_orig_idx"] = remaining
+        merged = zero_df.merge(mean_scalars, on=level_keys, how="left")
+
+        got = merged["_peer_ms"].notna() & merged["_peer_es"].notna()
+        if got.any():
+            orig_idxs = merged.loc[got, "_orig_idx"].values
+            peer_ms.loc[orig_idxs] = merged.loc[got, "_peer_ms"].values
+            peer_es.loc[orig_idxs] = merged.loc[got, "_peer_es"].values
+            remaining = [i for i in remaining if i not in set(orig_idxs)]
+
+    filled = peer_ms.notna() & zero_mask
+    if filled.any():
+        t9.loc[filled, "mileage_scalar"] = peer_ms[filled]
+        t9.loc[filled, "efficiency_scalar"] = peer_es[filled]
+        t9.loc[filled, "adjusted_mileage_km_per_year"] = (
+            t9.loc[filled, "mileage_km_per_year"] * peer_ms[filled]
+        )
+        t9.loc[filled, "adjusted_efficiency_km_per_gj"] = (
+            t9.loc[filled, "efficiency_km_per_gj"] * peer_es[filled]
+        )
+        log.info(
+            "Applied peer-group mileage/efficiency scalars to %d zero-stock branch row(s)",
+            int(filled.sum()),
+        )
 
     return t9
 
+
+# ===========================================================================
+# Steps 5–7 — Simultaneous reconciliation
+# ===========================================================================
 
 def reconcile_stock_mileage_efficiency(
     fuel_allocation: pd.DataFrame,
@@ -1118,7 +1135,7 @@ def reconcile_stock_mileage_efficiency(
             max_iteration_count,
             out_of_bounds_count,
         )
-    t9 = _repair_zero_stock_assumptions(t9)
+    t9 = _apply_peer_scalars_to_zero_stock_branches(t9)
     return t9
 
 

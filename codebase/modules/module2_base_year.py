@@ -267,6 +267,20 @@ def _populate_base_year_values(
 
     has_size = "size" in base_data.columns and base_data["size"].notna().any()
 
+    # Validate: mileage and efficiency must not be 0 — 0 is an invalid placeholder that
+    # would silently propagate through reconciliation and break Module 7.
+    _zero_check_vars = {"mileage", "efficiency"}
+    zero_rows = base_data[
+        base_data["variable"].isin(_zero_check_vars) & base_data["value"].eq(0)
+    ]
+    if not zero_rows.empty:
+        detail_cols = [c for c in ["economy", "scenario", "vehicle_type", "drive_type", "variable"] if c in zero_rows.columns]
+        details = zero_rows[detail_cols].drop_duplicates().to_string(index=False)
+        raise ValueError(
+            f"T3 contains {len(zero_rows)} row(s) where mileage or efficiency is exactly 0. "
+            f"These values are invalid — remove or correct them in the source inputs before running.\n{details}"
+        )
+
     base_join_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type"]
     if has_size:
         base_join_keys.append("size")

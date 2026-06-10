@@ -625,11 +625,6 @@ def _load_single_economy(
             unit = "km/GJ"
             variable = "efficiency"
 
-        # Zero mileage or efficiency is physically impossible — skip so the
-        # Module 2 fallback fills it rather than propagating 0.
-        if variable in ("mileage", "efficiency") and value_2022 == 0:
-            continue
-
         # Passenger saturation in Module 1 defaults is commonly stored as
         # devices per 1000 people. Module 3 expects per-capita values.
         if variable == "saturation_level":
