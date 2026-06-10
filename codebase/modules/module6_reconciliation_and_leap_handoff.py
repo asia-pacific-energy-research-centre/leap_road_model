@@ -15,6 +15,58 @@ Workflow (per the design document):
     Step 9: Validate
 
 Outputs: T8–T12 DataFrames + T11_leap_ready.
+
+--- Step 4 fuel allocation design ---
+
+Fuel eligibility (coarse gate):
+    drive_fuel_eligibility in fuel_mappings.yaml controls which fuels each drive
+    type (ICE, HEV, BEV, PHEV, EREV, FCEV) can receive. HEV is NOT eligible for
+    LPG, LNG, or Natural gas — those are ICE-only fuels.
+
+Priority fuels (_FUEL_ALLOCATION_PRIORITY):
+    Fuels listed here are allocated in _PRIORITY_FUEL_ALLOCATION_ORDER before
+    any stock-share fuels. Each fuel has one or more tiers: a list of
+    [transport_type, vehicle_type, drive_type] filters applied in order. None
+    matches all values for that dimension.
+
+    Tier logic:
+      - Each tier receives fuel up to its initial_energy_pj capacity.
+      - Any fuel not absorbed by a tier spills to the next tier.
+      - After the last tier, any remainder stays within the last tier (fallback).
+      - Within a tier, fuel is distributed proportionally by initial_energy_pj
+        (branch energy = stock × mileage / efficiency). This gives high-intensity
+        vehicles like Trucks their correct share without being overwhelmed by raw
+        vehicle counts.
+
+    Why initial_energy_pj weights (not stock):
+      Trucks have small vehicle counts but high energy demand per vehicle. Stock-
+      based shares would give Trucks far less fuel than they need; energy-based
+      shares give each branch its proportional claim on the fuel pool.
+
+    Why diesel uses a single freight tier (not Trucks→LCVs):
+      A strict Trucks-first→LCVs-second tier fails when Trucks' initial_energy_pj
+      exceeds the diesel ESTO total — Trucks absorb everything and LCVs receive
+      zero. A single [freight, None, ICE] tier distributes diesel across Trucks
+      and LCVs proportionally (Trucks still get more because they are more energy-
+      intensive), with passenger as overflow for economies where freight ICE
+      initial energy is less than the diesel ESTO total.
+
+    Current tier assignments:
+      LNG          → [freight, Trucks, ICE]            (Trucks ICE only)
+      LPG          → [None, None, ICE]                 (all ICE, energy-share)
+      Natural gas  → [None, None, ICE]                 (all ICE, energy-share)
+      Diesel       → [freight, None, ICE] → [passenger](freight ICE first, passenger overflow)
+      Biodiesel    → [freight, None, ICE] → [passenger](same as diesel)
+      Gasoline     → [passenger] → [freight, LCVs]     (passenger first, LCV overflow)
+      Biogasoline  → [passenger] → [freight, LCVs]     (same as gasoline)
+
+    Trucks do not receive gasoline: neither gasoline tier includes Trucks, and
+    the fallback (last_tier_mask) points to LCVs, so Trucks rows in the gasoline
+    group are permanently zeroed out.
+
+Non-priority fuels (Biogas, Efuel, Electricity, Hydrogen):
+    Allocated by straight energy-share across all eligible branches. No tier
+    ordering — branch receives fuel proportional to its initial_energy_pj.
 """
 
 from __future__ import annotations
@@ -166,11 +218,22 @@ def _allocate_priority_fuel_group(
     remaining_tier_capacity: dict[tuple[str, str | None], float] | None = None,
 ) -> pd.DataFrame:
     """
-    Allocate one fuel group through vehicle priority tiers, then distribute remainder
-    proportionally by initial_energy_pj (branch energy demand = stock x mileage / efficiency).
+    Allocate one fuel group through its priority tiers, then distribute any remainder
+    within the last tier — all proportional to initial_energy_pj.
 
-    Using initial_energy_pj as the share weight (rather than raw vehicle count) gives
-    high-intensity vehicles like Trucks their proportional share of liquid fuels.
+    initial_energy_pj = stock × mileage / efficiency for each branch. Using this as
+    the share weight (not raw vehicle count) ensures high-intensity vehicles like
+    Trucks receive their proportional share of liquid fuels even when their stock
+    count is small relative to passenger vehicles.
+
+    Tiers come from _FUEL_ALLOCATION_PRIORITY. Each tier is a
+    [transport_type, vehicle_type, drive_type] filter; None matches all. Fuel fills
+    each tier up to that tier's total initial_energy_pj capacity, then spills to the
+    next tier. After all tiers, any remaining fuel is re-distributed within the last
+    tier (not spilled further).
+
+    For fuels not in _FUEL_ALLOCATION_PRIORITY (tiers=None), all fuel is distributed
+    across all eligible rows in one pass using the fallback path.
     """
     out = group.copy()
     if "fuel" in out.columns:
