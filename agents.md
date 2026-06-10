@@ -327,6 +327,25 @@ python leap_road_model/codebase/road_workflow.py <economy>
 
 The runner assumes the repos are siblings unless `LEAP_ROAD_MODEL_DIR` is set.
 
+### Dashboard HTML is generated at runtime — never cached
+
+The QA dashboard pages under `results/<economy>/diagnostics/dashboard/` are **not
+pre-generated static files**. They are produced fresh on every model run:
+
+1. The interface backend launches `road_workflow.py` as a subprocess via
+   `asyncio.create_subprocess_exec` in `run_model_router.py`.
+2. `road_workflow.py` calls `write_module_pages(outputs, dashboard_dir)` near the
+   end of the run, which writes new HTML files to
+   `results/<economy>/diagnostics/dashboard/`.
+3. The HTML served at `/road-results/<economy>/diagnostics/dashboard/module6.html`
+   is always from the **last completed pipeline run** for that economy — not from
+   a build step, not from a deploy artifact.
+
+If the dashboard still shows old results after a code change, the economy has not
+been re-run since the change. Re-run the economy through the interface (or directly
+via `road_workflow.py`) to regenerate the dashboard. Do not claim the dashboard
+reflects a code change until a fresh run has completed.
+
 ### Regenerate Module 1 build/static sync
 
 Use this when source files in the interface have changed:
