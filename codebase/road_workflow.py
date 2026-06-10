@@ -355,6 +355,12 @@ def parse_leap_format_inputs(
         melted.loc[nonzero, "value"] = 10_000.0 / melted.loc[nonzero, "value"]
         melted.loc[eff_mask, "Units"] = "km/GJ"
 
+    # Zero mileage or efficiency is physically impossible — treat as missing so
+    # the Module 2 vehicle-type fallback can fill it rather than propagating 0.
+    melted = melted[
+        ~(melted["variable"].isin(["mileage", "efficiency"]) & (melted["value"] == 0))
+    ]
+
     # Economy: apply optional name→code mapping, fall back to Region as-is
     region_col = melted["Region"] if "Region" in melted.columns else pd.Series("", index=melted.index)
     if region_to_economy:

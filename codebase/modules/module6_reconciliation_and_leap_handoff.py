@@ -908,6 +908,67 @@ def allocate_esto_fuel_to_branches(
 # Steps 5–7 — Simultaneous reconciliation
 # ===========================================================================
 
+def _repair_zero_stock_assumptions(t9: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill invalid mileage/efficiency on zero-stock T9 branches from reconciled peers.
+
+    Zero-stock branches (e.g. FCEV trucks with no base-year vehicles) participate
+    in reconciliation with ECF=1.0 so their adjusted values equal their T4 values.
+    When T4 had no valid efficiency (0 or NaN — because that drive type had no ESTO
+    data and the researcher's input didn't cover it), adjusted_efficiency ends up 0
+    or NaN after reconciliation even though sibling drive types do have valid values.
+
+    For each such branch we use the mean adjusted_mileage / adjusted_efficiency from
+    T9 peers with the same (economy, scenario, vehicle_type, size) group.  This is
+    equivalent to "initialise at the same level as peers were after reconciliation."
+    """
+    peer_keys = [k for k in ["economy", "scenario", "vehicle_type", "size"] if k in t9.columns]
+
+    def _invalid(col: str) -> pd.Series:
+        return t9[col].isna() | (pd.to_numeric(t9[col], errors="coerce").fillna(0.0) <= 0)
+
+    zero_stock = pd.to_numeric(t9["adjusted_stock"], errors="coerce").fillna(0.0) <= 0
+    need_mileage = zero_stock & _invalid("adjusted_mileage_km_per_year")
+    need_efficiency = zero_stock & _invalid("adjusted_efficiency_km_per_gj")
+
+    if not need_mileage.any() and not need_efficiency.any():
+        return t9
+
+    for col, need_mask in [
+        ("adjusted_mileage_km_per_year", need_mileage),
+        ("adjusted_efficiency_km_per_gj", need_efficiency),
+    ]:
+        if not need_mask.any():
+            continue
+
+        peer_mean = (
+            t9.loc[~_invalid(col), peer_keys + [col]]
+            .assign(**{col: pd.to_numeric(t9.loc[~_invalid(col), col], errors="coerce")})
+            .dropna(subset=[col])
+            .groupby(peer_keys, as_index=False)[col]
+            .mean()
+            .rename(columns={col: "_peer"})
+        )
+
+        t9 = t9.merge(peer_mean, on=peer_keys, how="left")
+        filled = need_mask & t9["_peer"].notna()
+        if filled.any():
+            label_cols = [c for c in ["economy", "scenario", "vehicle_type", "drive_type", "fuel", "size"] if c in t9.columns]
+            branch_lines = "\n".join(
+                f"  {r.to_dict()}" for _, r in t9.loc[filled, label_cols].drop_duplicates().iterrows()
+            )
+            short = col.replace("adjusted_", "").replace("_km_per_year", "").replace("_km_per_gj", "")
+            log.info(
+                "T9 repair: filled %s from peer-group mean for %d zero-stock branch row(s) "
+                "with no valid base-year value:\n%s",
+                short, int(filled.sum()), branch_lines,
+            )
+            t9[col] = t9[col].where(~filled, t9["_peer"])
+        t9 = t9.drop(columns=["_peer"])
+
+    return t9
+
+
 def reconcile_stock_mileage_efficiency(
     fuel_allocation: pd.DataFrame,
     base_year_branches: pd.DataFrame,
@@ -1057,6 +1118,7 @@ def reconcile_stock_mileage_efficiency(
             max_iteration_count,
             out_of_bounds_count,
         )
+    t9 = _repair_zero_stock_assumptions(t9)
     return t9
 
 
