@@ -22,6 +22,8 @@ push to leap_road_model (GitHub)
 
 The Dockerfile uses `LEAP_ROAD_MODEL_REF=main` — no SHA pinning. Every rebuild always picks up the latest `leap_road_model` main.
 
+**Important:** Docker caches build layers. The `git clone leap_road_model` step is only re-run when something before it in the Dockerfile changes. Without a cache-bust mechanism, HF would keep serving the old clone even after `leap_road_model` is updated. To prevent this, `sync_to_hf.yml` writes the current `leap_road_model` HEAD SHA into `leap_road_model_sha.txt` before each push. The Dockerfile COPYs that file immediately before the `git clone` step — when the SHA changes, Docker invalidates the clone layer and re-clones.
+
 ## Repo roles
 
 | Repo | Role |
@@ -77,6 +79,16 @@ If the error persists after a hard refresh, then it is a real server-side issue.
 ## Manual rebuild
 
 To trigger a rebuild without pushing new code, run `sync_to_hf.yml` manually from the GitHub Actions UI in the interface repo: Actions → Sync to Hugging Face Space → Run workflow.
+
+## Verifying a deployment
+
+After a rebuild and model run, use the diagnostic endpoint to confirm the container has fresh results:
+
+```text
+https://finbarmaunsell-leap-road-model.hf.space/api/v1/road-results-info/{economy}
+```
+
+Returns file existence and last-modified timestamps for the three key output files (`module6.html`, `T8_fuel_allocation.csv`, `T11_leap_ready.csv`). If `module6.html` shows `exists: false`, the model has not been run yet on this container. A recent timestamp confirms the run completed with the new code.
 
 ## Keys (stored in gitignored `keys.txt`)
 
