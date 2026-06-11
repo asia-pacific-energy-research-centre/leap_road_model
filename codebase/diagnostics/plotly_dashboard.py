@@ -1299,6 +1299,20 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
         )
         figs.append(("Base-year vintage profiles", fig))
 
+    if t6v is not None and not t6v.empty and {"vehicle_type", "age", "survival_probability"}.issubset(t6v.columns):
+        fig = go.Figure()
+        for i, (vt, grp) in enumerate(t6v.groupby("vehicle_type")):
+            g = grp.sort_values("age")
+            fig.add_trace(go.Scatter(
+                x=g["age"].tolist(), y=g["survival_probability"].tolist(), name=str(vt), mode="lines",
+                line=dict(color=_vehicle_type_colour(str(vt), i)),
+            ))
+        fig.update_layout(
+            **_layout("Module 4 — Base-year survival rates"),
+            xaxis_title="Age", yaxis_title="Annual survival probability",
+        )
+        figs.append(("Base-year survival rates", fig))
+
     if t6 is not None and not t6.empty and {"new_sales", "target_stock", "year"}.issubset(t6.columns):
         tmp = t6.groupby("year")[["new_sales", "target_stock"]].sum().sort_index()
         ratio = (tmp["new_sales"] / tmp["target_stock"].replace(0, float("nan"))).dropna()

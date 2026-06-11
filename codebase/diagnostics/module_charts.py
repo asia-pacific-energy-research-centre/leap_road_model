@@ -354,6 +354,18 @@ def write_module4_charts(t6: pd.DataFrame, t6v: pd.DataFrame, diagnostics_dir: s
         ax.grid(alpha=0.3)
         saved.append(_save(fig, out / "module4_vintage_profiles.png"))
 
+    if t6v is not None and not t6v.empty and {"vehicle_type", "age", "survival_probability"}.issubset(t6v.columns):
+        fig, ax = plt.subplots(figsize=(10, 4))
+        for vt, grp in t6v.groupby("vehicle_type"):
+            g = grp.sort_values("age")
+            ax.plot(g["age"], g["survival_probability"], label=vt)
+        ax.set_title("Module 4: Base-year survival rates")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Annual survival probability")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+        saved.append(_save(fig, out / "module4_survival_rates.png"))
+
     if t6 is not None and not t6.empty and {"new_sales", "target_stock", "year"}.issubset(t6.columns):
         tmp = t6.groupby("year")[["new_sales", "target_stock"]].sum().sort_index()
         tmp["sales_to_stock_ratio"] = np.where(tmp["target_stock"] > 0, tmp["new_sales"] / tmp["target_stock"], np.nan)
