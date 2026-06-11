@@ -1867,6 +1867,79 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 "Final allocated fuel energy mix after reconciliation. Each bar sums to 100%; fuels with the largest total allocation are stacked from the bottom.",
             ))
 
+    energy_cols = {"vehicle_type", "drive_type", "fuel", "final_branch_fuel_pj"}
+    if not t9.empty and energy_cols.issubset(t9.columns):
+        energy = t9.copy()
+        energy["final_branch_fuel_pj"] = pd.to_numeric(
+            energy["final_branch_fuel_pj"], errors="coerce"
+        ).fillna(0.0)
+        energy["initial_branch_energy_pj"] = pd.to_numeric(
+            energy.get("initial_branch_energy_pj", pd.Series(0.0, index=energy.index)),
+            errors="coerce",
+        ).fillna(0.0)
+        energy["vehicle_drive"] = (
+            energy["vehicle_type"].fillna("unknown")
+            + " | "
+            + energy["drive_type"].fillna("unknown")
+        )
+        grouped = (
+            energy.groupby(["vehicle_drive", "fuel"], dropna=False)
+            .agg(
+                final_energy_pj=("final_branch_fuel_pj", "sum"),
+                initial_energy_pj=("initial_branch_energy_pj", "sum"),
+            )
+            .reset_index()
+        )
+        grouped = grouped[grouped["final_energy_pj"] > 0].copy()
+        if not grouped.empty:
+            branch_totals = (
+                grouped.groupby("vehicle_drive")["final_energy_pj"]
+                .sum()
+                .sort_values(ascending=False)
+            )
+            fuel_order = (
+                grouped.groupby("fuel")["final_energy_pj"]
+                .sum()
+                .sort_values(ascending=False)
+                .index
+                .tolist()
+            )
+            x_order = branch_totals.index.tolist()
+            fig = go.Figure()
+            for i, fuel in enumerate(fuel_order):
+                fuel_rows = (
+                    grouped[grouped["fuel"].eq(fuel)]
+                    .set_index("vehicle_drive")
+                    .reindex(x_order)
+                    .reset_index()
+                )
+                fig.add_trace(go.Bar(
+                    x=x_order,
+                    y=fuel_rows["final_energy_pj"].fillna(0.0).tolist(),
+                    name=str(fuel),
+                    marker_color=_fuel_colour(str(fuel), i),
+                    customdata=fuel_rows[["initial_energy_pj"]].fillna(0.0).to_numpy(),
+                    hovertemplate=(
+                        "Vehicle/drive=%{x}<br>Fuel=" + str(fuel)
+                        + "<br>Final energy=%{y:.2f} PJ"
+                        + "<br>Initial energy=%{customdata[0]:.2f} PJ<extra></extra>"
+                    ),
+                ))
+            fig.update_layout(
+                **_layout("Module 6 - Final fuel energy by vehicle type and drive (2022)"),
+                barmode="stack",
+                height=660,
+                xaxis_title="Vehicle type | drive",
+                yaxis_title="Final reconciled energy use (PJ)",
+                legend_title_text="Fuel",
+            )
+            figs.append((
+                "Final fuel energy by vehicle type and drive (2022)",
+                fig,
+                True,
+                "Absolute post-reconciliation energy use from T9, grouped by vehicle type and drive type and stacked by fuel. This shows where the 2022 fuel energy actually sits after reconciliation.",
+            ))
+
     return figs
 
 
