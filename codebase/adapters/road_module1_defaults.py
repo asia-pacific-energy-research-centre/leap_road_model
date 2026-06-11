@@ -100,6 +100,8 @@ _VARIABLE_MAP = {
     "Reconciliation Bound Lower":   "reconciliation_bound_lower",
     "Reconciliation Bound Upper":   "reconciliation_bound_upper",
     "Reconciliation Weight":        "reconciliation_weight",
+    "Turnover Rate Bound Lower":     "turnover_rate_bound_lower",
+    "Turnover Rate Bound Upper":     "turnover_rate_bound_upper",
 }
 
 # Unit conversions: multinode uses MJ/100km; model uses km/GJ
@@ -649,6 +651,7 @@ def _load_single_economy(
             "passenger_stock_growth_rate_adjustment",
             "freight_gdp_elasticity_adjustment",
             "phev_electric_utilisation_rate",
+            "turnover_rate_bound_lower", "turnover_rate_bound_upper",
         ):
             continue
 
@@ -1352,7 +1355,53 @@ def load_module1_for_economy(
         "vehicle_equivalent_weights": get_vehicle_equivalent_weights(defaults_df, economy),
         "vehicle_equivalent_weight_bounds": get_vehicle_equivalent_weight_bounds(defaults_df, economy),
         "vehicle_type_stock_shares": get_vehicle_type_stock_shares(defaults_df, economy),
+        "lifecycle_factors": get_lifecycle_profile_factors_from_module1(defaults_df, economy),
     }
+
+
+def get_lifecycle_profile_factors_from_module1(defaults_df: pd.DataFrame, economy: str) -> pd.DataFrame:
+    """
+    Convert Module 1 turnover-bound rows to the lifecycle factors shape used by Module 4.
+
+    Module 1 stores rates as fractions, for example 0.05 for 5 percent per year.
+    """
+    if defaults_df.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    for transport_type in ("passenger", "freight"):
+        lower = defaults_df[
+            (defaults_df["economy"] == economy)
+            & (defaults_df["transport_type"] == transport_type)
+            & (defaults_df["variable"] == "turnover_rate_bound_lower")
+        ]["value"].dropna()
+        upper = defaults_df[
+            (defaults_df["economy"] == economy)
+            & (defaults_df["transport_type"] == transport_type)
+            & (defaults_df["variable"] == "turnover_rate_bound_upper")
+        ]["value"].dropna()
+        if lower.empty or upper.empty:
+            continue
+        rows.append(
+            {
+                "project_code": economy,
+                "economy": economy,
+                "transport_type": transport_type,
+                "data_year": 2022,
+                "turnover_rate_lower": float(lower.iloc[0]),
+                "turnover_rate_upper": float(upper.iloc[0]),
+                "fit_mode": "auto",
+                "scale_age_band_age_min": 4,
+                "scale_age_band_age_max": 15,
+                "scale_age_band_factor": 1.0,
+                "smoothing_window": 1,
+                "evidence_grade": "module1",
+                "estimation_status": "module1-row",
+                "source_note": "Configured via Module 1 turnover calibration rows",
+            }
+        )
+
+    return pd.DataFrame(rows)
 
 
 def load_lifecycle_profile_factors(

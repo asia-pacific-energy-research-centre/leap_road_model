@@ -935,34 +935,36 @@ def _calibrate_single(
             )
     else:
         # auto — binary search for scale factor
-        rate_at_low = _implied_turnover_rate(_apply_factor(annual, 0.1))
-        rate_at_high = _implied_turnover_rate(_apply_factor(annual, 10.0))
+        min_factor = 0.1
+        max_factor = 10.0
+        rate_at_min_factor = _implied_turnover_rate(_apply_factor(annual, min_factor))
+        rate_at_max_factor = _implied_turnover_rate(_apply_factor(annual, max_factor))
 
         if lower <= initial_rate <= upper:
             # Already in bounds — no adjustment needed
             calibrated = annual.copy()
             scale_factor_used = 1.0
-        elif rate_at_low > upper:
-            log.warning(
-                "auto: cannot reach turnover rate <= %.3f (min achievable %.4f); "
-                "using scale_factor=0.1",
-                upper, rate_at_low,
-            )
-            calibrated = _apply_factor(annual, 0.1)
-            scale_factor_used = 0.1
-        elif rate_at_high < lower:
+        elif rate_at_min_factor < lower:
             log.warning(
                 "auto: cannot reach turnover rate >= %.3f (max achievable %.4f); "
-                "using scale_factor=10.0",
-                lower, rate_at_high,
+                "using scale_factor=%.1f",
+                lower, rate_at_min_factor, min_factor,
             )
-            calibrated = _apply_factor(annual, 10.0)
-            scale_factor_used = 10.0
+            calibrated = _apply_factor(annual, min_factor)
+            scale_factor_used = min_factor
+        elif rate_at_max_factor > upper:
+            log.warning(
+                "auto: cannot reach turnover rate <= %.3f (min achievable %.4f); "
+                "using scale_factor=%.1f",
+                upper, rate_at_max_factor, max_factor,
+            )
+            calibrated = _apply_factor(annual, max_factor)
+            scale_factor_used = max_factor
         else:
             # Bisect: higher factor → lower turnover rate
             # We want lower <= rate <= upper
             # rate decreases as factor increases
-            lo_f, hi_f = 0.1, 10.0
+            lo_f, hi_f = min_factor, max_factor
             target = (lower + upper) / 2.0
             for _ in range(50):
                 mid_f = (lo_f + hi_f) / 2.0

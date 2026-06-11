@@ -779,6 +779,23 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
     except Exception as _lf_exc:
         logger.warning("lifecycle_factors_load_failed", error=str(_lf_exc))
 
+    module1_lifecycle_factors = m1.get("lifecycle_factors")
+    if isinstance(module1_lifecycle_factors, pd.DataFrame) and not module1_lifecycle_factors.empty:
+        if lifecycle_factors.empty:
+            lifecycle_factors = module1_lifecycle_factors.copy()
+        else:
+            override_types = set(module1_lifecycle_factors["transport_type"].dropna().astype(str))
+            lifecycle_factors = pd.concat(
+                [
+                    lifecycle_factors[
+                        ~lifecycle_factors["transport_type"].astype(str).isin(override_types)
+                    ],
+                    module1_lifecycle_factors,
+                ],
+                ignore_index=True,
+            )
+        logger.info("module1_lifecycle_factors_applied", row_count=len(module1_lifecycle_factors))
+
     _merged = parse_leap_format_inputs(
         m1["raw_leap_df"],
         base_year=config.base_year,
