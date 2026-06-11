@@ -387,6 +387,61 @@ def parse_leap_format_inputs(
     return melted[[c for c in keep if c in melted.columns]].reset_index(drop=True)
 
 
+def _extract_module1_correction_factors(
+    raw_module1_df: pd.DataFrame | None,
+    variable_name: str,
+    projection_years: list[int],
+    default_scenario: str,
+) -> pd.DataFrame:
+    """Extract LEAP correction-factor rows from the Module 1 package."""
+    columns = ["economy", "scenario", "year", "leap_branch_path", "value"]
+    if raw_module1_df is None or raw_module1_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    year_cols: list[tuple[int, str]] = []
+    valid_years = {int(year) for year in projection_years}
+    for col in raw_module1_df.columns:
+        try:
+            year = int(col)
+        except (TypeError, ValueError):
+            continue
+        if year in valid_years:
+            year_cols.append((year, str(col)))
+    if not year_cols:
+        return pd.DataFrame(columns=columns)
+
+    variable_series = raw_module1_df.get("Variable", pd.Series(dtype=str))
+    factor_source = raw_module1_df[
+        variable_series.astype(str).str.strip().eq(variable_name)
+    ].copy()
+    if factor_source.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict[str, object]] = []
+    for _, source_row in factor_source.iterrows():
+        numeric_values: dict[int, float] = {}
+        for year, col in year_cols:
+            value = pd.to_numeric(source_row.get(col), errors="coerce")
+            if pd.notna(value):
+                numeric_values[year] = float(value)
+        if not numeric_values:
+            continue
+        if len(numeric_values) == 1:
+            only_value = next(iter(numeric_values.values()))
+            numeric_values = {year: only_value for year, _ in year_cols}
+
+        for year, value in numeric_values.items():
+            rows.append({
+                "economy": source_row.get("Region") or source_row.get("Economy") or "",
+                "scenario": source_row.get("Scenario") or default_scenario,
+                "year": int(year),
+                "leap_branch_path": source_row.get("Branch Path", ""),
+                "value": value,
+            })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
 def _read_base_stocks_for_shares(base_year_branches: pd.DataFrame, base_year: int) -> dict[str, float]:
     if base_year_branches is None or base_year_branches.empty or "stock" not in base_year_branches.columns:
         return {}
@@ -835,6 +890,19 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         except Exception as exc:
             logger.warning("module1_diagnostics_failed", error=str(exc))
 
+    module1_mileage_correction_factors = _extract_module1_correction_factors(
+        m1.get("raw_leap_df"),
+        "Mileage Correction Factor",
+        config.projection_years(),
+        config.scenarios[0] if config.scenarios else "Target",
+    )
+    module1_fuel_economy_correction_factors = _extract_module1_correction_factors(
+        m1.get("raw_leap_df"),
+        "Fuel Economy Correction Factor",
+        config.projection_years(),
+        config.scenarios[0] if config.scenarios else "Target",
+    )
+
     # ------------------------ Module 2 ------------------------
     if config.run_m2:
         if _merged is None:
@@ -1058,6 +1126,8 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             sales_shares=t7f,
             esto_fuel_totals=inputs.esto_fuel_totals,
             projection_years=config.projection_years(),
+            mileage_correction_factors=module1_mileage_correction_factors,
+            fuel_economy_correction_factors=module1_fuel_economy_correction_factors,
             reconciliation_weights=m1.get("reconciliation_weights"),
             phev_electric_utilisation_rate=m1["phev_utilisation_rate"],
             scalar_bounds=m1["scalar_bounds"],
@@ -1106,6 +1176,8 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                     sales_shares=t7f,
                     esto_fuel_totals=inputs.esto_fuel_totals,
                     projection_years=config.projection_years(),
+                    mileage_correction_factors=module1_mileage_correction_factors,
+                    fuel_economy_correction_factors=module1_fuel_economy_correction_factors,
                     reconciliation_weights=m1.get("reconciliation_weights"),
                     phev_electric_utilisation_rate=m1["phev_utilisation_rate"],
                     scalar_bounds=m1["scalar_bounds"],

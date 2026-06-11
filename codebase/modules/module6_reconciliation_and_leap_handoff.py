@@ -299,6 +299,8 @@ def run_module6(
     sales_shares: pd.DataFrame,
     esto_fuel_totals: pd.DataFrame,
     projection_years: list[int],
+    mileage_correction_factors: pd.DataFrame | None = None,
+    fuel_economy_correction_factors: pd.DataFrame | None = None,
     reconciliation_weights: dict[str, float] | None = None,
     phev_electric_utilisation_rate: float = 0.50,
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]] | None = None,
@@ -378,7 +380,15 @@ def run_module6(
     )
 
     # Build LEAP-ready output
-    t11 = build_leap_ready_table(t9, t10, sales_turnover, sales_shares, projection_years)
+    t11 = build_leap_ready_table(
+        t9,
+        t10,
+        sales_turnover,
+        sales_shares,
+        projection_years,
+        mileage_correction_factors=mileage_correction_factors,
+        fuel_economy_correction_factors=fuel_economy_correction_factors,
+    )
 
     errors = validate_table(t11, "T11_leap_ready")
     for err in errors:
@@ -1666,6 +1676,8 @@ def build_leap_ready_table(
     sales_turnover: pd.DataFrame,
     sales_shares: pd.DataFrame,
     projection_years: list[int],
+    mileage_correction_factors: pd.DataFrame | None = None,
+    fuel_economy_correction_factors: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Combine all Module 6 outputs into the T11_leap_ready tidy table.
@@ -1867,6 +1879,38 @@ def build_leap_ready_table(
                         "year": yr, "leap_branch_path": row["_tech_path_lookup"],
                         "variable": "Sales Share", "value": row["sales_share"], "unit": "Share",
                     })
+
+    factor_specs = [
+        (mileage_correction_factors, "Mileage Correction Factor"),
+        (fuel_economy_correction_factors, "Fuel Economy Correction Factor"),
+    ]
+    valid_factor_paths = set(t9["leap_branch_path"].dropna().astype(str))
+    for factor_df, factor_variable in factor_specs:
+        if factor_df is None or factor_df.empty:
+            continue
+        factor_rows = factor_df.copy()
+        required_factor_cols = {"leap_branch_path", "year", "value"}
+        if not required_factor_cols.issubset(factor_rows.columns):
+            missing = sorted(required_factor_cols - set(factor_rows.columns))
+            raise ValueError(f"{factor_variable} rows are missing columns: {missing}")
+
+        factor_rows["year"] = pd.to_numeric(factor_rows["year"], errors="coerce")
+        factor_rows["value"] = pd.to_numeric(factor_rows["value"], errors="coerce")
+        factor_rows = factor_rows.dropna(subset=["year", "value", "leap_branch_path"])
+        factor_rows["year"] = factor_rows["year"].astype(int)
+        factor_rows = factor_rows[factor_rows["year"].isin(projection_years)].copy()
+        factor_rows = factor_rows[factor_rows["leap_branch_path"].astype(str).isin(valid_factor_paths)].copy()
+        if "scenario" not in factor_rows.columns:
+            factor_rows["scenario"] = scenario_col
+        if "economy" not in factor_rows.columns:
+            factor_rows["economy"] = economy_col
+
+        for _, row in factor_rows.iterrows():
+            rows.append({
+                "economy": row["economy"], "scenario": row["scenario"],
+                "year": int(row["year"]), "leap_branch_path": row["leap_branch_path"],
+                "variable": factor_variable, "value": row["value"], "unit": "Multiplier",
+            })
 
     t11 = pd.DataFrame(rows)
     # Drop rows with NaN values (e.g., Fuel Economy when efficiency is 0)

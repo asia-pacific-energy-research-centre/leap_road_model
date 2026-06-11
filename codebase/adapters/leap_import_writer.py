@@ -102,14 +102,14 @@ ACTIVE_IMPORT_VARIABLES = {
     "Stock Share",
     "Mileage",
     "Fuel Economy",
+    "Mileage Correction Factor",
+    "Fuel Economy Correction Factor",
     "Device Share",
 }
 IGNORED_REFERENCE_VARIABLES = {
     "Average Mileage",
     "Final On-Road Mileage",
     "Final On-Road Fuel Economy",
-    "Mileage Correction Factor",
-    "Fuel Economy Correction Factor",
     "Demand Cost",
     "First Sales Year",
     "Scrappage",
