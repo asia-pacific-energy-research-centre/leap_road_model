@@ -772,6 +772,16 @@ def get_vintage_profiles(
     return out.sort_values("age").reset_index(drop=True)
 
 
+def _cumulative_survival_to_annual(survival: pd.Series) -> pd.Series:
+    """Convert cumulative survival S(age) from Module 1 to annual survival p(age)."""
+    surv = pd.Series(survival, dtype=float).sort_index()
+    scale = 100.0 if surv.max() > 1.0 else 1.0
+    surv = (surv / scale).clip(lower=1e-9, upper=1.0)
+    annual = surv.shift(-1) / surv
+    annual.iloc[-1] = 0.0
+    return annual.clip(lower=0.0, upper=1.0)
+
+
 def build_survival_curves(defaults_df: pd.DataFrame, economy: str) -> dict[str, pd.Series]:
     """
     Build survival_curves dict for all vehicle types for the given economy.
@@ -798,7 +808,7 @@ def build_survival_curves(defaults_df: pd.DataFrame, economy: str) -> dict[str, 
         )
         if rows.empty:
             continue
-        series = rows.set_index("age")["survival_rate"]
+        series = _cumulative_survival_to_annual(rows.set_index("age")["survival_rate"])
         for vt in vehicle_types:
             result[vt] = series.copy()
 
@@ -815,7 +825,7 @@ def build_survival_curves(defaults_df: pd.DataFrame, economy: str) -> dict[str, 
         tt = tt_vals.iloc[0]
         rows = get_survival_curves(defaults_df, economy, tt, vt)
         if not rows.empty:
-            result[vt] = rows.set_index("age")["survival_rate"]
+            result[vt] = _cumulative_survival_to_annual(rows.set_index("age")["survival_rate"])
 
     if not result:
         log.warning("No survival curves found for economy %s", economy)

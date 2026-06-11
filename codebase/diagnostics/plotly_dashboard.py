@@ -86,6 +86,22 @@ def _collapse_age_series(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([non_profile, collapsed_df], ignore_index=True)
 
 
+def _annual_survival_to_cumulative_probability(annual_survival: pd.Series) -> pd.Series:
+    """Convert annual survival probabilities p(age) to cumulative survival S(age)."""
+    annual = pd.Series(annual_survival, dtype=float).sort_index().clip(0.0, 1.0)
+    if annual.empty:
+        return annual
+
+    cumulative_values: list[float] = []
+    current = 1.0
+    for idx, age in enumerate(annual.index):
+        if idx > 0:
+            previous_age = annual.index[idx - 1]
+            current *= float(annual.loc[previous_age])
+        cumulative_values.append(current)
+    return pd.Series(cumulative_values, index=annual.index, dtype=float)
+
+
 _COLOURS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
@@ -1297,21 +1313,32 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
             **_layout("Module 4 — Base-year vintage profiles"),
             xaxis_title="Age", yaxis_title="Vintage share",
         )
-        figs.append(("Base-year vintage profiles", fig))
+        figs.append((
+            "Base-year vintage profiles",
+            fig,
+            "Fleet age distribution in the base year after lifecycle calibration. Each line sums to 1 across ages; higher early-age shares mean a younger fleet."
+        ))
 
     if t6v is not None and not t6v.empty and {"vehicle_type", "age", "survival_probability"}.issubset(t6v.columns):
         fig = go.Figure()
         for i, (vt, grp) in enumerate(t6v.groupby("vehicle_type")):
             g = grp.sort_values("age")
+            cumulative = _annual_survival_to_cumulative_probability(
+                g.set_index("age")["survival_probability"]
+            )
             fig.add_trace(go.Scatter(
-                x=g["age"].tolist(), y=g["survival_probability"].tolist(), name=str(vt), mode="lines",
+                x=cumulative.index.tolist(), y=cumulative.tolist(), name=str(vt), mode="lines",
                 line=dict(color=_vehicle_type_colour(str(vt), i)),
             ))
         fig.update_layout(
-            **_layout("Module 4 — Base-year survival rates"),
-            xaxis_title="Age", yaxis_title="Annual survival probability",
+            **_layout("Module 4 — Base-year survival curves"),
+            xaxis_title="Age", yaxis_title="Cumulative survival probability",
         )
-        figs.append(("Base-year survival rates", fig))
+        figs.append((
+            "Base-year survival curves",
+            fig,
+            "Probability that a new vehicle is still in the fleet at each age after turnover calibration. This is derived from the annual survival probabilities used internally by Module 4."
+        ))
 
     if t6 is not None and not t6.empty and {"new_sales", "target_stock", "year"}.issubset(t6.columns):
         tmp = t6.groupby("year")[["new_sales", "target_stock"]].sum().sort_index()

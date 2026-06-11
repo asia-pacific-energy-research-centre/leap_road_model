@@ -30,6 +30,22 @@ def _safe_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").dropna()
 
 
+def _annual_survival_to_cumulative_probability(annual_survival: pd.Series) -> pd.Series:
+    """Convert annual survival probabilities p(age) to cumulative survival S(age)."""
+    annual = pd.Series(annual_survival, dtype=float).sort_index().clip(0.0, 1.0)
+    if annual.empty:
+        return annual
+
+    cumulative_values: list[float] = []
+    current = 1.0
+    for idx, age in enumerate(annual.index):
+        if idx > 0:
+            previous_age = annual.index[idx - 1]
+            current *= float(annual.loc[previous_age])
+        cumulative_values.append(current)
+    return pd.Series(cumulative_values, index=annual.index, dtype=float)
+
+
 def _can_plot() -> bool:
     return plt is not None
 
@@ -358,13 +374,16 @@ def write_module4_charts(t6: pd.DataFrame, t6v: pd.DataFrame, diagnostics_dir: s
         fig, ax = plt.subplots(figsize=(10, 4))
         for vt, grp in t6v.groupby("vehicle_type"):
             g = grp.sort_values("age")
-            ax.plot(g["age"], g["survival_probability"], label=vt)
-        ax.set_title("Module 4: Base-year survival rates")
+            cumulative = _annual_survival_to_cumulative_probability(
+                g.set_index("age")["survival_probability"]
+            )
+            ax.plot(cumulative.index, cumulative.values, label=vt)
+        ax.set_title("Module 4: Base-year survival curves")
         ax.set_xlabel("Age")
-        ax.set_ylabel("Annual survival probability")
+        ax.set_ylabel("Cumulative survival probability")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
-        saved.append(_save(fig, out / "module4_survival_rates.png"))
+        saved.append(_save(fig, out / "module4_survival_curves.png"))
 
     if t6 is not None and not t6.empty and {"new_sales", "target_stock", "year"}.issubset(t6.columns):
         tmp = t6.groupby("year")[["new_sales", "target_stock"]].sum().sort_index()

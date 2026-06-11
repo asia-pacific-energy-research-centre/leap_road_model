@@ -896,6 +896,7 @@ def _calibrate_single(
     Returns:
         (calibrated_annual, calibrated_vintage, diagnostics_dict)
     """
+    annual = _normalise_survival(pd.Series(annual, dtype=float).sort_index())
     fit_mode = str(factors_row.get("fit_mode", "auto") or "auto").strip().lower()
     lower = float(factors_row.get("turnover_rate_lower", 0.03) or 0.03)
     upper = float(factors_row.get("turnover_rate_upper", 0.07) or 0.07)

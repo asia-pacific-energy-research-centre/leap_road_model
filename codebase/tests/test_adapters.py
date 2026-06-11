@@ -28,6 +28,7 @@ from adapters.road_module1_defaults import (
     get_reconciliation_weights,
     get_vehicle_equivalent_weight_bounds,
     get_vehicle_type_stock_shares,
+    build_survival_curves,
     load_road_module1_defaults,
     load_module1_leap_df,
 )
@@ -54,6 +55,32 @@ class TestEstoInputs:
         assert default_path.name == "esto_transport_2000_2022.csv"
         assert default_path.parent.name == "input_data"
         assert default_path.exists()
+
+
+class TestRoadModule1Defaults:
+    def test_build_survival_curves_converts_cumulative_percent_to_annual_probability(self):
+        defaults_df = pd.DataFrame(
+            [
+                {
+                    "economy": "20_USA",
+                    "variable": "survival_rate",
+                    "transport_type": "passenger",
+                    "vehicle_type": None,
+                    "leap_branch_path": f"Demand\\Passenger road\\Age {age}",
+                    "value": value,
+                }
+                for age, value in [(0, 100.0), (1, 90.0), (2, 45.0), (3, 0.0)]
+            ]
+        )
+
+        curves = build_survival_curves(defaults_df, "20_USA")
+
+        assert curves["LPVs"].round(6).to_dict() == {
+            0: 0.9,
+            1: 0.5,
+            2: 0.0,
+            3: 0.0,
+        }
 
 
 class TestLeapFormatInputParsing:
