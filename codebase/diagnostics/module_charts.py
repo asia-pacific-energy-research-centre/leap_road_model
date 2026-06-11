@@ -169,11 +169,15 @@ def write_module3_charts(t5: pd.DataFrame, diagnostics_dir: str | Path) -> list[
         if not sub.empty:
             line = (sub.groupby("year")["motorisation_level"].mean() * 1000.0).dropna().sort_index()
             sat = (sub.groupby("year")["saturation_level"].mean() * 1000.0).dropna().sort_index() if "saturation_level" in sub.columns else pd.Series(dtype=float)
+            orig_sat = (sub.groupby("year")["original_saturation_level"].mean() * 1000.0).dropna().sort_index() if "original_saturation_level" in sub.columns else pd.Series(dtype=float)
+            sat_was_adjusted = bool(sub["saturation_was_adjusted"].fillna(False).any()) if "saturation_was_adjusted" in sub.columns else False
             fig, ax = plt.subplots(figsize=(9, 4))
             if not line.empty:
                 ax.plot(line.index, line.values, label="Projected X-LPV-equivalent vehicles", color="#6A1B9A")
             if not sat.empty:
                 ax.plot(sat.index, sat.values, label="Saturation level", color="#EF6C00", linestyle="--")
+            if sat_was_adjusted and not orig_sat.empty:
+                ax.plot(orig_sat.index, orig_sat.values, label="Original saturation level (reduced — calibration bounds exceeded)", color="#2E7D32", linestyle="--")
             ax.set_title("Module 3: Passenger X-LPV-equivalent vehicles")
             ax.set_xlabel("Year")
             ax.set_ylabel("X-LPV-equivalent vehicles per 1,000 people")
@@ -187,12 +191,14 @@ def write_module3_charts(t5: pd.DataFrame, diagnostics_dir: str | Path) -> list[
         "adjusted_vehicle_equivalent_weight",
     }
     if weight_cols.issubset(t5.columns):
+        bound_cols = [c for c in ["weight_lower_bound", "weight_upper_bound"] if c in t5.columns]
         weights_df = (
             t5[t5["transport_type"] == "passenger"]
-            [["vehicle_type", "original_vehicle_equivalent_weight", "adjusted_vehicle_equivalent_weight"]]
+            [["vehicle_type", "original_vehicle_equivalent_weight", "adjusted_vehicle_equivalent_weight"] + bound_cols]
             .dropna(subset=["vehicle_type"])
             .drop_duplicates("vehicle_type")
             .sort_values("vehicle_type")
+            .reset_index(drop=True)
         )
         if not weights_df.empty:
             fig, ax = plt.subplots(figsize=(7, 4))
@@ -212,6 +218,15 @@ def write_module3_charts(t5: pd.DataFrame, diagnostics_dir: str | Path) -> list[
                 label="Adjusted",
                 color="#EF6C00",
             )
+            # Draw dotted bound lines for each vehicle type that has bounds
+            if "weight_lower_bound" in weights_df.columns and "weight_upper_bound" in weights_df.columns:
+                for i, row_data in weights_df.iterrows():
+                    lb = row_data["weight_lower_bound"]
+                    ub = row_data["weight_upper_bound"]
+                    if pd.notna(lb) and pd.notna(ub):
+                        ax.plot([i - width, i + width], [lb, lb], color="black", linestyle=":", linewidth=1.2)
+                        ax.plot([i - width, i + width], [ub, ub], color="black", linestyle=":", linewidth=1.2)
+                        ax.plot([i, i], [lb, ub], color="black", linestyle=":", linewidth=1.2)
             ax.set_xticks(x)
             ax.set_xticklabels(weights_df["vehicle_type"])
             ax.set_title("Module 3: Passenger X-LPV weight calibration")

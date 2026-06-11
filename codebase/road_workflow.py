@@ -31,10 +31,14 @@ Input format:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 import os
+import re
+import shutil
 import time
 import json
+import traceback
 from typing import Any
 
 import numpy as np
@@ -1186,6 +1190,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             logger.warning("lifecycle_profile_export_failed", error=str(exc))
             outputs["lifecycle_profile_export_error"] = str(exc)
 
+    dashboard_dir: Path | None = None
     if diagnostics_dir is not None:
         try:
             t0 = time.perf_counter()
@@ -1201,7 +1206,11 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 
         try:
             t0 = time.perf_counter()
-            dashboard_dir = diagnostics_dir / "dashboard"
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dashboard_dir = diagnostics_dir / f"dashboard_{ts}"
+            # Purge old timestamped dashboards; keep recent ones so users can
+            # compare runs by switching between open browser tabs.
+            _purge_old_dashboards(diagnostics_dir)
             html_written = write_module_pages(
                 {**outputs, "timings": timings},
                 dashboard_dir=dashboard_dir,
@@ -1215,7 +1224,12 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 duration_sec=timings["dashboard_html_seconds"],
             )
         except Exception as exc:
-            logger.warning("workflow_dashboard_failed", error=str(exc))
+            logger.warning(
+                "workflow_dashboard_failed",
+                error=str(exc),
+                traceback=traceback.format_exc(),
+            )
+            dashboard_dir = None
 
     outputs["timings"] = timings
     outputs["workflow_meta"] = {
@@ -1225,6 +1239,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         "final_year": config.final_year,
         "enable_visualisations": config.enable_visualisations,
         "diagnostics_root": str(diagnostics_dir) if diagnostics_dir else None,
+        "dashboard_dir": str(dashboard_dir) if dashboard_dir else None,
         "output_root": str(output_root),
     }
     logger.info("workflow_complete", total_timings_sec=sum(timings.values()))
@@ -1611,20 +1626,65 @@ def _autodiscover_future_sales_shares(
     return None, None
 
 
+_DASHBOARD_TTL_HOURS: int = 48
+_DASHBOARD_MAX_KEEP: int = 3
+_DASHBOARD_DIR_RE = re.compile(r"^dashboard_\d{8}_\d{6}$")
+
+
+def _purge_old_dashboards(
+    diagnostics_dir: Path,
+    ttl_hours: int = _DASHBOARD_TTL_HOURS,
+    max_keep: int = _DASHBOARD_MAX_KEEP,
+) -> None:
+    """Delete timestamped dashboard dirs older than ttl_hours, keeping at most max_keep."""
+    if not diagnostics_dir.is_dir():
+        return
+    dirs = sorted(
+        (d for d in diagnostics_dir.iterdir() if d.is_dir() and _DASHBOARD_DIR_RE.match(d.name)),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    cutoff = time.time() - ttl_hours * 3600
+    for i, d in enumerate(dirs):
+        if i >= max_keep or d.stat().st_mtime < cutoff:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _latest_dashboard_dir(diagnostics_dir: Path) -> Path | None:
+    """Return the most recent dashboard_YYYYMMDD_HHMMSS dir, or None."""
+    if not diagnostics_dir.is_dir():
+        return None
+    candidates = sorted(
+        (d for d in diagnostics_dir.iterdir() if d.is_dir() and _DASHBOARD_DIR_RE.match(d.name)),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
 def _print_dashboard_link(outputs: dict[str, Any]) -> None:
     """Print a local file URL for the generated dashboard when available."""
     workflow_meta = outputs.get("workflow_meta") or {}
+    dashboard_dir_str = workflow_meta.get("dashboard_dir")
+    if dashboard_dir_str:
+        dashboard_dir = Path(dashboard_dir_str)
+        dashboard_index = dashboard_dir / "index.html"
+        if dashboard_index.exists():
+            print(f"Dashboard: {dashboard_index.resolve().as_uri()}")
+        elif dashboard_dir.exists():
+            print(f"Dashboard folder: {dashboard_dir.resolve().as_uri()}")
+        return
+    # Fallback: scan for latest timestamped dashboard dir
     diagnostics_root = workflow_meta.get("diagnostics_root")
     if not diagnostics_root:
         return
-
-    dashboard_dir = Path(diagnostics_root) / "dashboard"
-    dashboard_index = dashboard_dir / "index.html"
-
-    if dashboard_index.exists():
-        print(f"Dashboard: {dashboard_index.resolve().as_uri()}")
-    elif dashboard_dir.exists():
-        print(f"Dashboard folder: {dashboard_dir.resolve().as_uri()}")
+    dashboard_dir = _latest_dashboard_dir(Path(diagnostics_root))
+    if dashboard_dir:
+        dashboard_index = dashboard_dir / "index.html"
+        if dashboard_index.exists():
+            print(f"Dashboard: {dashboard_index.resolve().as_uri()}")
+        else:
+            print(f"Dashboard folder: {dashboard_dir.resolve().as_uri()}")
 
 
 # ---------------------------------------------------------------------------

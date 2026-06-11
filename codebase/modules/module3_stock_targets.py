@@ -41,6 +41,10 @@ _DEFAULTS = {
     "covid_exclude_years": [2020, 2021, 2022],
     "saturation_fallback_multiplier": 3.0,
     "saturation_already_reached_threshold": 0.95,
+    # If weight calibration falls short of M_sat by more than this fraction of
+    # the target, M_sat is reduced to M_base so the projection stays flat at the
+    # actual achieved level rather than projecting toward an unreachable ceiling.
+    "saturation_calibration_fallback_threshold": 0.05,
     "passenger_stock_growth_rate_adjustment": 1.2,
     "elasticity_min": 0.0,
     "elasticity_max": 2.0,
@@ -168,6 +172,8 @@ def run_module3(
                 if transport_type == "passenger":
                     row["motorisation_level"] = stocks_dict["M_envelope"].get(yr)
                     row["saturation_level"] = stocks_dict["M_sat"]
+                    row["original_saturation_level"] = stocks_dict["original_M_sat"]
+                    row["saturation_was_adjusted"] = stocks_dict["saturation_was_adjusted"]
                     row["k_raw"] = stocks_dict["k_raw"]
                     row["k_used"] = stocks_dict["k_used"]
                     row["k_clamped"] = stocks_dict["k_clamped"]
@@ -179,6 +185,9 @@ def run_module3(
                     row["weight_calibration_applied"] = stocks_dict["weight_calibration_applied"]
                     row["weight_calibration_target"] = stocks_dict["weight_calibration_target"]
                     row["weight_calibration_gap"] = stocks_dict["weight_calibration_gap"]
+                    vt_bounds = stocks_dict["weight_bounds_used"].get(vt, (None, None))
+                    row["weight_lower_bound"] = vt_bounds[0] if vt_bounds[0] is not None else pd.NA
+                    row["weight_upper_bound"] = vt_bounds[1] if vt_bounds[1] is not None else pd.NA
                 else:
                     row["gdp_elasticity_used"] = stocks_dict["elasticities"].get(vt)
                     diagnostics = stocks_dict.get("elasticity_diagnostics", {})
@@ -268,6 +277,23 @@ def project_passenger_stocks(
     )
     log.info("Base-year motorisation M_base=%.4f car-equiv/capita", M_base)
 
+    original_M_sat = M_sat
+    saturation_was_adjusted = False
+    if passenger_saturation_reached and calibration["applied"]:
+        target = calibration["target_weighted_stock"] or 1.0
+        gap_fraction = abs(calibration["gap"]) / target
+        fallback_threshold = cfg.get("saturation_calibration_fallback_threshold", 0.05)
+        if gap_fraction > fallback_threshold:
+            M_sat = M_base
+            saturation_was_adjusted = True
+            log.warning(
+                "Saturation weight calibration gap too large (%.1f%% of target) — "
+                "M_sat reduced from %.4f to M_base=%.4f; projection will be flat at current level.",
+                gap_fraction * 100,
+                original_M_sat,
+                M_base,
+            )
+
     is_saturated = M_base >= cfg["saturation_already_reached_threshold"] * M_sat
     growth_rate_adjustment = max(0.0, float(growth_rate_adjustment))
 
@@ -331,6 +357,8 @@ def project_passenger_stocks(
     return {
         "M_envelope": M_envelope,
         "M_sat": M_sat,
+        "original_M_sat": original_M_sat,
+        "saturation_was_adjusted": saturation_was_adjusted,
         "M_base": M_base,
         "k_raw": k_raw,
         "k_used": k,
@@ -345,6 +373,7 @@ def project_passenger_stocks(
         "weight_calibration_applied": calibration["applied"],
         "weight_calibration_target": calibration["target_weighted_stock"],
         "weight_calibration_gap": calibration["gap"],
+        "weight_bounds_used": calibration["bounds_used"],
     }
 
 
@@ -413,6 +442,7 @@ def calibrate_passenger_vehicle_equivalent_weights(
             "applied": False,
             "target_weighted_stock": target_weighted_stock,
             "gap": current_weighted_stock - target_weighted_stock,
+            "bounds_used": bounds,
         }
 
     adjusted_weights["LPVs"] = 1.0
@@ -457,6 +487,7 @@ def calibrate_passenger_vehicle_equivalent_weights(
             "applied": True,
             "target_weighted_stock": target_weighted_stock,
             "gap": clamped_weighted_stock - target_weighted_stock,
+            "bounds_used": bounds,
         }
 
     if motorcycle_stock <= 0 and bus_stock <= 0:
@@ -516,6 +547,7 @@ def calibrate_passenger_vehicle_equivalent_weights(
         "applied": True,
         "target_weighted_stock": target_weighted_stock,
         "gap": calibrated_weighted_stock - target_weighted_stock,
+        "bounds_used": bounds,
     }
 
 
@@ -627,7 +659,9 @@ def project_motorisation_envelope(
     """
     years = np.array(sorted(projection_years))
 
-    if k == 0.0 or M_sat <= 0:
+    if k == 0.0:
+        return pd.Series(M_sat if M_sat > 0 else M_base, index=years)
+    if M_sat <= 0:
         return pd.Series(M_base, index=years)
 
     # Solve for y0: M_base = M_sat / (1 + exp(-k * (base_year - y0)))

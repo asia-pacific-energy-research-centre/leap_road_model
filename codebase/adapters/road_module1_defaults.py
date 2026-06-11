@@ -1029,13 +1029,13 @@ def get_freight_gdp_elasticity_adjustment(defaults_df: pd.DataFrame, economy: st
             economy,
         )
         return 1.0
-    if value > 2:
+    if value > 5:
         log.warning(
-            "Freight GDP elasticity adjustment %.4f for %s exceeds 2.0; clamping to 2.0",
+            "Freight GDP elasticity adjustment %.4f for %s exceeds 5.0; clamping to 5.0",
             value,
             economy,
         )
-        return 2.0
+        return 5.0
     log.info("Module 1 freight GDP elasticity adjustment for %s: %.4f", economy, value)
     return value
 
@@ -1059,13 +1059,13 @@ def get_passenger_stock_growth_rate_adjustment(defaults_df: pd.DataFrame, econom
             economy,
         )
         return 1.2
-    if value > 2:
+    if value > 5:
         log.warning(
-            "Passenger stock growth rate adjustment %.4f for %s exceeds 2.0; clamping to 2.0",
+            "Passenger stock growth rate adjustment %.4f for %s exceeds 5.0; clamping to 5.0",
             value,
             economy,
         )
-        return 2.0
+        return 5.0
     log.info("Module 1 passenger stock growth rate adjustment for %s: %.4f", economy, value)
     return value
 

@@ -897,6 +897,14 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 (sub.groupby("year")["saturation_level"].mean() * 1000.0).dropna().sort_index()
                 if "saturation_level" in sub.columns else pd.Series(dtype=float)
             )
+            orig_sat = (
+                (sub.groupby("year")["original_saturation_level"].mean() * 1000.0).dropna().sort_index()
+                if "original_saturation_level" in sub.columns else pd.Series(dtype=float)
+            )
+            sat_was_adjusted = (
+                bool(sub["saturation_was_adjusted"].fillna(False).any())
+                if "saturation_was_adjusted" in sub.columns else False
+            )
             fig = go.Figure()
             if not line.empty:
                 fig.add_trace(go.Scatter(
@@ -909,14 +917,32 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     name="Saturation level", mode="lines+markers",
                     line=dict(dash="dash"),
                 ))
+            if sat_was_adjusted and not orig_sat.empty:
+                fig.add_trace(go.Scatter(
+                    x=orig_sat.index.tolist(), y=orig_sat.values.tolist(),
+                    name="Original saturation level (reduced — calibration bounds exceeded)",
+                    mode="lines",
+                    line=dict(dash="dash", color="#2E7D32"),
+                ))
             fig.update_layout(
                 **_layout("Module 3 - Passenger X-LPV-equivalent vehicles per 1,000 people"),
                 xaxis_title="Year", yaxis_title="X-LPV-equivalent vehicles per 1,000 people",
             )
+            caption = (
+                "Projected passenger stock converted to X-LPV-equivalent vehicles per 1,000 people, "
+                "compared with the saturation level."
+            )
+            if sat_was_adjusted:
+                caption += (
+                    ' <span style="color:#e65100;font-weight:500">The original saturation level (green dashed line) was reduced to the achieved '
+                    "motorisation level because passenger_saturation_reached=True was set but the "
+                    "vehicle weight calibration bounds were exceeded — the fleet cannot be weighted "
+                    "up to the original target.</span>"
+                )
             figs.append((
                 "Passenger X-LPV-equivalent vehicles vs saturation",
                 fig,
-                "Projected passenger stock converted to X-LPV-equivalent vehicles per 1,000 people, compared with the saturation level.",
+                caption,
             ))
 
     if population is not None and not population.empty:
@@ -951,14 +977,15 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
         "weight_calibration_applied",
     }
     if weight_cols.issubset(t5.columns):
+        extra_cols = [c for c in ["weight_lower_bound", "weight_upper_bound", "weight_calibration_applied"] if c in t5.columns]
         weights_df = (
             t5[t5["transport_type"] == "passenger"]
-            [["vehicle_type", "original_vehicle_equivalent_weight", "adjusted_vehicle_equivalent_weight", "weight_calibration_applied"]]
+            [["vehicle_type", "original_vehicle_equivalent_weight", "adjusted_vehicle_equivalent_weight"] + extra_cols]
             .dropna(subset=["vehicle_type"])
             .drop_duplicates("vehicle_type")
         )
         if not weights_df.empty:
-            weights_df = weights_df.sort_values("vehicle_type")
+            weights_df = weights_df.sort_values("vehicle_type").reset_index(drop=True)
             fig = go.Figure()
             fig.add_trace(go.Bar(
                 x=weights_df["vehicle_type"].tolist(),
@@ -972,7 +999,26 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 name="Adjusted X-LPV weight",
                 marker_color="#EF6C00",
             ))
-            applied = bool(weights_df["weight_calibration_applied"].fillna(False).any())
+            # Add bound whiskers (dotted vertical lines from lower to upper bound)
+            # for vehicle types that have calibration bounds
+            if "weight_lower_bound" in weights_df.columns and "weight_upper_bound" in weights_df.columns:
+                bounds_rows = weights_df[
+                    weights_df["weight_lower_bound"].notna() & weights_df["weight_upper_bound"].notna()
+                ]
+                for _, brow in bounds_rows.iterrows():
+                    vt = brow["vehicle_type"]
+                    lb = float(brow["weight_lower_bound"])
+                    ub = float(brow["weight_upper_bound"])
+                    fig.add_trace(go.Scatter(
+                        x=[vt, vt],
+                        y=[lb, ub],
+                        mode="lines+markers",
+                        name=f"{vt} weight bounds [{lb}–{ub}]",
+                        line=dict(color="rgba(0,0,0,0.55)", dash="dot", width=2),
+                        marker=dict(symbol="line-ew", size=12, color="black", line=dict(width=2)),
+                        showlegend=True,
+                    ))
+            applied = bool(weights_df["weight_calibration_applied"].fillna(False).any()) if "weight_calibration_applied" in weights_df.columns else False
             fig.update_layout(
                 **_layout("Module 3 - Passenger X-LPV weight calibration"),
                 barmode="group",
@@ -981,7 +1027,8 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
             )
             caption = (
                 "Original and adjusted passenger vehicle-equivalent weights. "
-                "Adjusted values are used only when Module 1 marks the economy as passenger-saturated."
+                "Adjusted values are used only when Module 1 marks the economy as passenger-saturated. "
+                "Dotted whiskers show the allowed calibration bounds for each vehicle type."
             )
             if not applied:
                 caption += " Calibration was not applied for this run."
@@ -2669,8 +2716,7 @@ def _transport_split_alert_html(t13: pd.DataFrame | None, tol: float = 0.75) -> 
     )
     # fail if any year drops the smaller type below 10 % absolute share
     severe = violations[violations < 0.10]
-    level = "alert--fail" if not severe.empty else "alert--warn"
-    return f'<div class="alert {level}">&#9888; Freight/passenger split out of bounds &mdash; {detail}</div>'
+    return f'<div class="alert alert--warn">&#9888; Freight/passenger split out of bounds &mdash; {detail}</div>'
 
 
 # ---------------------------------------------------------------------------
@@ -2728,7 +2774,7 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .no-data{padding:40px 24px;color:#999;font-style:italic}
 .alert{padding:12px 20px;margin:0 20px 16px;border-radius:6px;font-size:.9rem;line-height:1.5}
 .alert--ok{background:#e8f5e9;color:#1b5e20;border-left:4px solid #4caf50}
-.alert--warn{background:#fff8e1;color:#e65100;border-left:4px solid #ffa000}
+.alert--warn{background:#fff3e0;color:#e65100;border-left:4px solid #ff6d00}
 .alert--fail{background:#ffebee;color:#b71c1c;border-left:4px solid #e53935}
 footer{text-align:center;padding:20px;color:#aaa;font-size:.78rem}
 .module-grid--overview{grid-template-columns:repeat(6,1fr)}
@@ -2846,7 +2892,7 @@ def _dashboard_diagram_source(filename: str) -> Path | None:
 
 def _default_shared_dashboard_assets_dir(dashboard_dir: Path) -> Path:
     """Return the common asset directory for economy dashboard pages."""
-    if dashboard_dir.name == "dashboard" and dashboard_dir.parent.name == "diagnostics":
+    if dashboard_dir.name.startswith("dashboard") and dashboard_dir.parent.name == "diagnostics":
         return dashboard_dir.parents[2] / "shared" / "dashboard_assets"
     return dashboard_dir / "shared_assets"
 
