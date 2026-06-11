@@ -103,7 +103,7 @@ _VARIABLE_MAP = {
 }
 
 # Unit conversions: multinode uses MJ/100km; model uses km/GJ
-# km/GJ = 10_000 / (MJ/100km)
+# km/GJ = 100_000 / (MJ/100km)
 _EFFICIENCY_UNIT = "MJ/100 km"
 
 _PROFILE_PREFIXES = ("Age Profile", "Vintage Profile")
@@ -621,7 +621,7 @@ def _load_single_economy(
         # Convert efficiency: MJ/100km → km/GJ
         if unit == _EFFICIENCY_UNIT:
             if value_2022 > 0:
-                value_2022 = 10_000 / value_2022
+                value_2022 = 100_000 / value_2022
             unit = "km/GJ"
             variable = "efficiency"
 
@@ -1390,7 +1390,7 @@ def load_lifecycle_profile_factors(
         candidates = [
             Path(__file__).resolve().parents[3]
             / "road_model_inputs_interface" / "back-end" / "data" / "road_model"
-            / _LIFECYCLE_FACTORS_FILENAME,
+            / "supplemental_source_files" / _LIFECYCLE_FACTORS_FILENAME,
         ]
         source_path = next((p for p in candidates if p.exists()), None)
 

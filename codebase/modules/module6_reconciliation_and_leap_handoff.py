@@ -1674,7 +1674,7 @@ def build_leap_ready_table(
       Base year (from T9/T10):  Stock, Mileage, Fuel Economy, Device Share, Activity Level
       All years (from T6/T7):   Sales, Sales Share
 
-    Fuel Economy is converted from km/GJ → MJ/100km (= 10_000 / km_per_gj).
+    Fuel Economy is converted from km/GJ → MJ/100km (= 100_000 / km_per_gj).
     Activity Level = adjusted_stock × adjusted_mileage_km_per_year.
     """
     if "leap_branch_path" not in reconciliation_scalars.columns:
@@ -1762,7 +1762,7 @@ def build_leap_ready_table(
     # ── Fuel Economy (base year, fuel-level path) ─────────────────────────
     for _, row in t9.iterrows():
         eff = row["adjusted_efficiency_km_per_gj"]
-        fe = 10_000.0 / eff if eff > 0 else np.nan
+        fe = 100_000.0 / eff if eff > 0 else np.nan
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
             "year": base_year, "leap_branch_path": row["leap_branch_path"],

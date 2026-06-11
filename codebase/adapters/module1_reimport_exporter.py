@@ -88,14 +88,15 @@ def build_reconciled_module1_reimport(
     leap_ready: pd.DataFrame,
     base_year: int,
     reconciliation_scalars: pd.DataFrame | None = None,
+    stock_targets: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Return a canonical long Module 1 CSV with reconciled base-year values.
 
-    Only rows already present in ``source_long_df`` are written. This preserves
-    upload compatibility because the interface rejects unknown row keys. Stock
-    Share is included because Module 1 stores branch stock allocation separately
-    from aggregate stock totals.
+    Only rows already present in ``source_long_df`` are written for the standard
+    reconciled variables. Additionally, if ``stock_targets`` (T5 post-reconciliation)
+    is supplied, "Stock Target" rows are appended for every projection year so that
+    a second model run started from this CSV produces identical stock trajectories.
     """
     _validate_unique_keys(source_long_df, context="source Module 1")
 
@@ -130,6 +131,19 @@ def build_reconciled_module1_reimport(
         out.at[idx, "Value"] = replacement_values[key] / multiplier
 
     out = out[out["Shown In Interface"].astype(str).str.strip().str.lower().ne("false")]
+
+    if stock_targets is not None:
+        # Remove any stale "Stock Target" rows carried over from a previous reconciled CSV
+        # (they are replaced below with fresh values from the current T5).
+        out = out[out["Variable"] != "Stock Target"]
+        target_rows = _build_stock_target_rows(
+            stock_targets,
+            reconciliation_scalars=reconciliation_scalars,
+            source_long_df=source_long_df,
+        )
+        if not target_rows.empty:
+            out = pd.concat([out, target_rows], ignore_index=True)
+
     _validate_unique_keys(out, context="reconciled Module 1 re-import")
     return out[MODULE1_REIMPORT_COLUMNS].copy()
 
@@ -140,6 +154,7 @@ def write_reconciled_module1_reimport_csv(
     output_path: str | Path,
     base_year: int,
     reconciliation_scalars: pd.DataFrame | None = None,
+    stock_targets: pd.DataFrame | None = None,
 ) -> Path:
     """Build and write the reconciled Module 1 re-import CSV."""
     output_path = Path(output_path)
@@ -149,6 +164,7 @@ def write_reconciled_module1_reimport_csv(
         leap_ready=leap_ready,
         base_year=base_year,
         reconciliation_scalars=reconciliation_scalars,
+        stock_targets=stock_targets,
     )
     out.to_csv(output_path, index=False)
     return output_path
@@ -255,6 +271,77 @@ def _vehicle_path(branch_path: str) -> str:
 
 def _transport_path(branch_path: str) -> str:
     return "\\".join(str(branch_path).split("\\")[:2])
+
+
+def _build_stock_target_rows(
+    stock_targets: pd.DataFrame,
+    reconciliation_scalars: pd.DataFrame | None,
+    source_long_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build "Stock Target" rows for every (vehicle_type, scenario, year) in T5.
+
+    The LEAP branch path at vehicle-type level is derived from T9
+    (reconciliation_scalars) when available, otherwise inferred from the
+    source CSV's existing "Stock" rows at the same path depth.
+    """
+    required = {"vehicle_type", "year", "target_stock"}
+    if not required.issubset(stock_targets.columns):
+        return pd.DataFrame()
+
+    # Build vehicle_type → vehicle-level LEAP branch path mapping
+    vt_to_path: dict[str, str] = {}
+    if reconciliation_scalars is not None and "leap_branch_path" in reconciliation_scalars.columns and "vehicle_type" in reconciliation_scalars.columns:
+        for _, row in reconciliation_scalars.drop_duplicates("vehicle_type").iterrows():
+            vt = str(row["vehicle_type"])
+            path = _vehicle_path(str(row["leap_branch_path"]))
+            vt_to_path[vt] = path
+
+    # Fall back to deriving paths from source "Stock" rows at 3-level depth
+    if "Branch Path" in source_long_df.columns and "Variable" in source_long_df.columns:
+        for _, row in source_long_df[source_long_df["Variable"] == "Stock"].iterrows():
+            parts = str(row["Branch Path"]).split("\\")
+            if len(parts) == 3:
+                vt = parts[2]
+                if vt not in vt_to_path:
+                    vt_to_path[vt] = str(row["Branch Path"])
+
+    economy = str(source_long_df["Economy"].iloc[0]) if "Economy" in source_long_df.columns else ""
+
+    agg = (
+        stock_targets
+        .groupby(
+            [c for c in ["scenario", "vehicle_type", "year"] if c in stock_targets.columns],
+            dropna=False,
+        )["target_stock"]
+        .sum()
+        .reset_index()
+    )
+
+    rows = []
+    scenarios = agg["scenario"].dropna().unique().tolist() if "scenario" in agg.columns else ["Current Accounts"]
+    for _, row in agg.iterrows():
+        vt = str(row["vehicle_type"])
+        branch_path = vt_to_path.get(vt)
+        if branch_path is None:
+            continue
+        scenario = str(row.get("scenario", scenarios[0])) if "scenario" in row else scenarios[0]
+        rows.append({
+            "Economy": economy,
+            "Scenario": scenario,
+            "Branch Path": branch_path,
+            "Variable": "Stock Target",
+            "Year": int(row["year"]),
+            "Value": float(row["target_stock"]) / 1_000_000.0,
+            "Scale": "Millions",
+            "Units": "Device",
+            "Source": "reconciled",
+            "Comment": "",
+            "Input Status": "reconciled",
+            "Shown In Interface": "False",
+        })
+
+    return pd.DataFrame(rows, columns=MODULE1_REIMPORT_COLUMNS) if rows else pd.DataFrame()
 
 
 def _validate_unique_keys(df: pd.DataFrame, context: str) -> None:

@@ -59,6 +59,7 @@ from adapters.module1_reimport_exporter import (
 )
 from adapters.leap_workbook import write_leap_import_workbook
 from adapters.lifecycle_profile_exporter import export_lifecycle_profiles_from_t6v
+from adapters.road_module1_defaults import load_lifecycle_profile_factors
 
 # Canonical LEAP region name(s) per economy code.
 # One-to-one mapping from economy code to canonical LEAP region name.
@@ -268,6 +269,7 @@ def parse_leap_format_inputs(
         "Sales Share": "sales_share",
         "Stock Share": "stock_share",
         "Device Share": "device_share",
+        "Stock Target": "stock_target",
     }
     scale_multipliers = {
         "": 1.0,
@@ -350,13 +352,13 @@ def parse_leap_format_inputs(
         )
 
     # Unit conversion: efficiency in MJ/100 km → km/GJ
-    # km/GJ = 10_000 / (MJ/100 km)
+    # km/GJ = 100_000 / (MJ/100 km)
     if "Units" in melted.columns:
         eff_mask = (melted["variable"] == "efficiency") & (
             melted["Units"].str.strip().str.lower().isin(["mj/100 km", "mj/100km"])
         )
         nonzero = eff_mask & (melted["value"] != 0)
-        melted.loc[nonzero, "value"] = 10_000.0 / melted.loc[nonzero, "value"]
+        melted.loc[nonzero, "value"] = 100_000.0 / melted.loc[nonzero, "value"]
         melted.loc[eff_mask, "Units"] = "km/GJ"
 
     # Economy: apply optional name→code mapping, fall back to Region as-is
@@ -512,6 +514,7 @@ class RoadWorkflowConfig:
     )
 
     # Optional module settings
+    lifecycle_factors_path: str | Path | None = None
     leap_workbook_path: str | Path | None = None
     leap_reference_path: str | Path | None = None
     module3_config: dict[str, Any] | None = None
@@ -679,6 +682,58 @@ def build_post_reconciliation_stock_targets(
     return out.drop(columns=["_original_target_stock", "_reconciled_base_stock", "_original_base_stock"])
 
 
+def _extract_stock_target_overrides(
+    raw_leap_df: pd.DataFrame,
+) -> dict[str, pd.Series] | None:
+    """
+    Extract 'Stock Target' rows from a Module 1 LEAP-format DataFrame.
+
+    Returns a dict mapping vehicle_type → pd.Series[year → target_stock],
+    or None when no Stock Target rows are present.
+    """
+    if raw_leap_df is None or raw_leap_df.empty:
+        return None
+    parsed = parse_leap_format_inputs(raw_leap_df)
+    st = parsed[parsed["variable"] == "stock_target"].copy()
+    if st.empty:
+        return None
+    result: dict[str, pd.Series] = {}
+    for vt, grp in st.groupby("vehicle_type"):
+        result[str(vt)] = grp.set_index("year")["value"].sort_index()
+    return result or None
+
+
+def _apply_stock_target_overrides(
+    stock_targets: pd.DataFrame,
+    overrides: dict[str, pd.Series],
+    base_year: int,
+) -> pd.DataFrame:
+    """
+    Replace T5 target_stock values with pre-computed overrides for the
+    listed vehicle types.
+
+    Only vehicle types present in ``overrides`` are changed; others are left
+    as Module 3 computed them.  Years not covered by the override are left
+    unchanged (so a partial override is safe).
+    """
+    out = stock_targets.copy()
+    for vt, series in overrides.items():
+        mask = out["vehicle_type"] == vt
+        if not mask.any():
+            continue
+        years_covered = set(series.index)
+        year_mask = mask & out["year"].isin(years_covered)
+        out.loc[year_mask, "target_stock"] = out.loc[year_mask, "year"].map(series)
+        out.loc[
+            year_mask & out["year"].astype(int).eq(int(base_year)),
+            "reconciled_base_stock",
+        ] = out.loc[
+            year_mask & out["year"].astype(int).eq(int(base_year)),
+            "target_stock",
+        ]
+    return out
+
+
 def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> dict[str, Any]:
     """Run the road model workflow from one orchestrator.
 
@@ -714,6 +769,16 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         economy=config.economy,
         version=config.module1_defaults_version,
     )
+
+    lifecycle_factors = pd.DataFrame()
+    try:
+        lf_path = Path(config.lifecycle_factors_path) if config.lifecycle_factors_path else None
+        lifecycle_factors = load_lifecycle_profile_factors(source_path=lf_path, economy=config.economy)
+        if not lifecycle_factors.empty:
+            logger.info("lifecycle_factors_loaded", path=str(lf_path or "apec_default"), row_count=len(lifecycle_factors))
+    except Exception as _lf_exc:
+        logger.warning("lifecycle_factors_load_failed", error=str(_lf_exc))
+
     _merged = parse_leap_format_inputs(
         m1["raw_leap_df"],
         base_year=config.base_year,
@@ -835,6 +900,18 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         # beyond final_year.  Clamp to the intended projection window.
         _proj_years = set(config.projection_years())
         t5 = t5[t5["year"].isin(_proj_years)].copy()
+
+        # If the Module 1 CSV was a reconciled re-import containing "Stock Target"
+        # rows, use those pre-computed trajectories so that a second run from the
+        # reconciled CSV produces identical outputs to the first run.
+        _stock_target_overrides = _extract_stock_target_overrides(m1.get("raw_leap_df"))
+        if _stock_target_overrides:
+            t5 = _apply_stock_target_overrides(t5, _stock_target_overrides, config.base_year)
+            _print_progress(
+                config,
+                f"Module 3: applied stock-target overrides for {list(_stock_target_overrides)!r}.",
+            )
+
         _print_progress(config, f"Module 3 complete: {len(t5):,} stock target rows.")
         outputs["T5"] = t5
         if config.save_csv_outputs:
@@ -861,6 +938,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             stock_targets=t5,
             survival_curves=m1["survival_curves"],
             vintage_profiles=m1["vintage_profiles"],
+            lifecycle_factors=lifecycle_factors if not lifecycle_factors.empty else None,
             turnover_policies=inputs.turnover_policies,
             fleet_age_shift_years=inputs.fleet_age_shift_years,
             scrappage_years=inputs.scrappage_years,
@@ -996,6 +1074,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                     stock_targets=t5,
                     survival_curves=m1["survival_curves"],
                     vintage_profiles=m1["vintage_profiles"],
+                    lifecycle_factors=lifecycle_factors if not lifecycle_factors.empty else None,
                     turnover_policies=inputs.turnover_policies,
                     fleet_age_shift_years=inputs.fleet_age_shift_years,
                     scrappage_years=inputs.scrappage_years,
@@ -1088,6 +1167,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 output_path=module1_reimport_path,
                 base_year=config.base_year,
                 reconciliation_scalars=m6["T9"],
+                stock_targets=t5 if isinstance(t5, pd.DataFrame) else None,
             )
             outputs["module1_reimport_reconciled_path"] = module1_reimport_path
             leap_import_path = output_root / "module6" / f"{config.economy}_leap_import.xlsx"
@@ -1178,11 +1258,11 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 area_name=f"{ECONOMY_CODE_TO_LEAP_REGION_NAMES.get(config.economy, config.economy)} transport",
             )
             outputs["lifecycle_profile_manifest_path"] = lifecycle_result["manifest_path"]
-            outputs["lifecycle_profile_zip_path"] = lifecycle_result.get("zip_path")
+            outputs["lifecycle_profile_xlsx_path"] = lifecycle_result.get("xlsx_path")
             logger.info(
                 "lifecycle_profiles_exported",
                 manifest_path=str(lifecycle_result["manifest_path"]),
-                zip_path=str(lifecycle_result.get("zip_path", "")),
+                xlsx_path=str(lifecycle_result.get("xlsx_path", "")),
                 profile_count=len(lifecycle_result["manifest"]),
             )
             _print_progress(config, "Lifecycle profile export complete.")
@@ -1314,10 +1394,7 @@ def _extract_current_accounts_base_year(t11: pd.DataFrame, base_year: int) -> pd
 def _default_leap_reference_path() -> Path | None:
     repo_root = Path(__file__).resolve().parents[1]
     candidates = [
-        repo_root
-        / "input_data"
-        / "leap_import_templates"
-        / "DEFAULT_transport_leap_import_TGT_REF_CA.xlsx",
+        repo_root / "config" / "road model leap export.xlsx",
         repo_root.parent
         / "road_model_inputs_interface"
         / "back-end"
@@ -1876,6 +1953,8 @@ Examples:
                         help="Disable LEAP row coverage diagnostics CSV")
     parser.add_argument("--module6-match-tolerance", type=float, default=None, dest="module6_match_tolerance",
                         help="Module 6 fuel match tolerance fraction (default: workflow config)")
+    parser.add_argument("--lifecycle-factors-path", default=None, dest="lifecycle_factors_path",
+                        help="Path to lifecycle calibration factors CSV (default: APEC-wide defaults from back-end/data)")
     parser.set_defaults(leap_import_export_values_in_raw_units=None)
     parser.add_argument("--leap-import-raw-values", action="store_true", dest="leap_import_export_values_in_raw_units",
                         help="Write raw-unit values to the LEAP import workbook and clear numeric scale labels")
@@ -1897,6 +1976,7 @@ Examples:
             "show_progress": args.show_progress,
             "write_leap_row_diagnostics": args.write_leap_row_diagnostics,
             "module6_match_tolerance": args.module6_match_tolerance,
+            "lifecycle_factors_path": args.lifecycle_factors_path,
             "leap_import_export_values_in_raw_units": args.leap_import_export_values_in_raw_units,
             **{f"run_m{module_num}": getattr(args, f"run_m{module_num}") for module_num in range(2, 8)},
         }.items()

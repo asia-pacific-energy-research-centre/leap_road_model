@@ -847,9 +847,19 @@ T11 is written at LEAP-compatible variable levels:
 When a reference LEAP export is available, the final Excel workbook is written
 through `codebase/adapters/leap_import_writer.py`, which merges BranchID,
 VariableID, ScenarioID, and RegionID and returns structured warnings for
-unmatched rows. The workflow searches first for the repo-local reference
-template at
-`input_data/leap_import_templates/DEFAULT_transport_leap_import_TGT_REF_CA.xlsx`.
+unmatched rows. The workflow resolves a reference LEAP export via `_default_leap_reference_path()`
+and uses `config/road model leap export.xlsx` as its primary source. This file
+is a real export from a fully-configured road transport LEAP model and is the
+authoritative source of BranchID, VariableID, ScenarioID, and RegionID for
+every branch × variable × scenario combination. The ID columns must match LEAP's
+own internal IDs or the import will fail. The file must be regenerated from LEAP
+whenever the road transport branch structure is changed (branches added, renamed,
+or removed). All APEC economy LEAP models share the same "clean slate" road
+transport branch structure, so one export file covers all economies. If the
+reference file is missing, the workflow falls back to other candidates (e.g. a
+combined export in the sibling `road_model_inputs_interface` repo); if no
+candidate is found, the strict writer is bypassed and LEAP cannot import the
+output.
 The `LEAP` sheet keeps LEAP's import column structure: ID columns,
 `Branch Path`, `Variable`, `Scenario`, `Region`, `Scale`, `Units`, `Per...`,
 `Expression`, a blank spacer column, and `Level 1` through `Level 8...`. The
@@ -865,6 +875,7 @@ Open implementation item: a second-run calibration helper would be useful. It
 would export a Module 1-compatible CSV containing reconciled base-year stock,
 mileage, and fuel economy values so researchers can import those values into the
 interface and rerun the workflow with near-flat reconciliation adjustments.
+
 ## Module 7 - Optional Python Mirror and Post-LEAP Validation
 
 ### Purpose

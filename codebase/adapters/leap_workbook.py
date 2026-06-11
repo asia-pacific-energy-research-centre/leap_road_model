@@ -65,7 +65,7 @@ def load_leap_import_workbook_as_template(
     This defines what the new model must populate.
 
     Args:
-        path: Path to DEFAULT_transport_leap_import_TGT_REF_CA.xlsx.
+        path: Path to config/road model leap export.xlsx (canonical LEAP reference).
         road_only: If True, filter to road transport branches only.
 
     Returns:
@@ -125,7 +125,7 @@ def load_leap_id_lookup(
     (missing rows). Both are validation failures.
 
     Args:
-        path: Path to DEFAULT_transport_leap_import_TGT_REF_CA.xlsx.
+        path: Path to config/road model leap export.xlsx (canonical LEAP reference).
         road_only: If True, filter to road transport branches only.
 
     Returns:
@@ -274,7 +274,7 @@ def _convert_units_for_leap(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert internal units to LEAP-expected units.
 
-    Efficiency: km/GJ → MJ/100km: value = 10_000 / value
+    Efficiency: km/GJ → MJ/100km: value = 100_000 / value
     Energy: PJ → MJ: value = value × 1_000_000
     """
     if "variable" not in df.columns:
@@ -283,7 +283,7 @@ def _convert_units_for_leap(df: pd.DataFrame) -> pd.DataFrame:
     # Efficiency conversion
     eff_mask = df["variable"] == "Fuel Economy"
     if eff_mask.any():
-        df.loc[eff_mask, "value"] = 10_000 / df.loc[eff_mask, "value"].replace(0, float("nan"))
+        df.loc[eff_mask, "value"] = 100_000 / df.loc[eff_mask, "value"].replace(0, float("nan"))
         df.loc[eff_mask, "unit"] = "MJ/100 km"
 
     return df

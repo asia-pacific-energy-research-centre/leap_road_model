@@ -11,16 +11,14 @@ Area/Profile metadata rows, a blank separator, then Year/Value profile rows.
 from __future__ import annotations
 
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 import pandas as pd
 
 
 # Stable output settings
-LIFECYCLE_SHEET_NAME = "Lifecycle Profiles"
 MANIFEST_FILENAME = "lifecycle_profile_manifest.csv"
-ZIP_FILENAME_TEMPLATE = "{economy}_lifecycle_profiles.zip"
+XLSX_FILENAME_TEMPLATE = "{economy}_lifecycle_profiles.xlsx"
 
 
 #%%
@@ -166,7 +164,7 @@ def write_lifecycle_profile_excel(
     area_name: str,
     profile_name: str,
     profile: pd.Series,
-    sheet_name: str = LIFECYCLE_SHEET_NAME,
+    sheet_name: str = "Lifecycle Profiles",
 ) -> Path:
     """Write one LEAP-compatible lifecycle profile workbook."""
     path = Path(output_path)
@@ -183,16 +181,15 @@ def export_lifecycle_profiles_from_t6v(
     *,
     economy: str,
     area_name: str | None = None,
-    create_zip: bool = True,
 ) -> dict[str, Path | pd.DataFrame]:
-    """Export survival and vintage profiles from T6v, one file per transport type.
+    """Export survival and vintage profiles from T6v into a single multi-sheet workbook.
 
     Profiles are assumed to be identical across vehicle types within a transport
     type, so one representative vehicle type is used per group.
 
     Returns a dict with:
-    - ``manifest_path``: CSV manifest with one row per workbook
-    - ``zip_path``: ZIP file containing all workbooks and the manifest
+    - ``manifest_path``: CSV manifest with one row per sheet
+    - ``xlsx_path``: single XLSX workbook containing all profiles
     - ``manifest``: manifest DataFrame
     """
     _validate_t6v_columns(t6v)
@@ -201,7 +198,7 @@ def export_lifecycle_profiles_from_t6v(
     area = area_name or f"{economy} transport"
 
     manifest_rows: list[dict[str, object]] = []
-    workbook_paths: list[Path] = []
+    sheet_data: list[tuple[str, pd.DataFrame]] = []
 
     profile_specs = [
         ("vehicle_survival", "Vehicle Survival"),
@@ -228,14 +225,9 @@ def export_lifecycle_profiles_from_t6v(
                 profile_type=profile_type,
                 profile_name=profile_name,
             )
-            file_name = f"{economy}_{transport_type}_{profile_type}.xlsx"
-            workbook_path = write_lifecycle_profile_excel(
-                out_dir / file_name,
-                area_name=area,
-                profile_name=profile_name,
-                profile=profile,
-            )
-            workbook_paths.append(workbook_path)
+            sheet_name = f"{transport_type} {label}"[:31]
+            out_df = _profile_rows(area_name=area, profile_name=profile_name, profile=profile)
+            sheet_data.append((sheet_name, out_df))
             manifest_rows.append(
                 {
                     "economy": economy,
@@ -243,8 +235,7 @@ def export_lifecycle_profiles_from_t6v(
                     "profile_type": profile_type,
                     "profile_name": profile_name,
                     "area_name": area,
-                    "file_name": file_name,
-                    "sheet_name": LIFECYCLE_SHEET_NAME,
+                    "sheet_name": sheet_name,
                     **diagnostics,
                 }
             )
@@ -256,20 +247,16 @@ def export_lifecycle_profiles_from_t6v(
     manifest_path = out_dir / MANIFEST_FILENAME
     manifest.to_csv(manifest_path, index=False)
 
-    result: dict[str, Path | pd.DataFrame] = {
+    xlsx_path = out_dir / XLSX_FILENAME_TEMPLATE.format(economy=economy)
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        for sheet_name, out_df in sheet_data:
+            out_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+
+    return {
         "manifest_path": manifest_path,
         "manifest": manifest,
+        "xlsx_path": xlsx_path,
     }
-
-    if create_zip:
-        zip_path = out_dir / ZIP_FILENAME_TEMPLATE.format(economy=economy)
-        with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zf:
-            for workbook_path in workbook_paths:
-                zf.write(workbook_path, arcname=workbook_path.name)
-            zf.write(manifest_path, arcname=manifest_path.name)
-        result["zip_path"] = zip_path
-
-    return result
 
 
 #%%
@@ -290,6 +277,6 @@ if __name__ == "__main__" and RUN_EXPORT_FROM_SAVED_T6V:
         economy=ECONOMY,
     )
     print(f"Manifest: {export_result['manifest_path']}")
-    print(f"ZIP: {export_result.get('zip_path')}")
+    print(f"XLSX: {export_result.get('xlsx_path')}")
 
 #%%

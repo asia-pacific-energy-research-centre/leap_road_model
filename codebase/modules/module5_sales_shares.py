@@ -134,8 +134,11 @@ def run_module5(
     flagged = scaling_flags[scaling_flags["fallback_used"]] if not scaling_flags.empty else pd.DataFrame()
     if not flagged.empty:
         log.warning(
-            "%s: %d economy×vehicle×scenario combinations used fallback interpolation "
-            "(ICE would have gone negative):\n%s",
+            "%s: %d economy×vehicle×scenario combination(s) switched to linear "
+            "interpolation because the shape-preserving method produced a negative ICE "
+            "share (non-ICE targets exceed 100%%). Each affected combination linearly "
+            "interpolates all drive-type shares from base year to their target-year "
+            "values instead:\n%s",
             economy, len(flagged),
             flagged[["economy", "scenario", "vehicle_type"]].to_string(index=False),
         )

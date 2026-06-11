@@ -265,7 +265,71 @@ def test_reconciled_reimport_loads_with_module1_adapter(tmp_path: Path):
     assert stock_parsed["value"] == pytest.approx(2_500_000.0)
     assert stock_share_parsed["value"] == pytest.approx(60.0)
     assert mileage_parsed["value"] == pytest.approx(12_500.0)
-    assert efficiency_parsed["value"] == pytest.approx(10_000.0 / 7.5)
+    assert efficiency_parsed["value"] == pytest.approx(100_000.0 / 7.5)
+
+
+def _t5_rows() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"economy": "20_USA", "scenario": "Current Accounts", "transport_type": "passenger",
+         "vehicle_type": "LPVs", "year": 2022, "target_stock": 2_500_000.0},
+        {"economy": "20_USA", "scenario": "Current Accounts", "transport_type": "passenger",
+         "vehicle_type": "LPVs", "year": 2030, "target_stock": 3_000_000.0},
+        {"economy": "20_USA", "scenario": "Current Accounts", "transport_type": "passenger",
+         "vehicle_type": "LPVs", "year": 2040, "target_stock": 3_500_000.0},
+    ])
+
+
+def test_stock_target_rows_written_and_round_trip(tmp_path: Path):
+    """Stock Target rows written to reconciled CSV are parsed back as stock_target overrides."""
+    out = build_reconciled_module1_reimport(
+        _source_rows(),
+        _t11_rows(),
+        base_year=2022,
+        stock_targets=_t5_rows(),
+    )
+
+    # Stock Target rows are present (Shown In Interface = False so interface won't show them)
+    st_rows = out[out["Variable"] == "Stock Target"]
+    assert len(st_rows) == 3
+    assert set(st_rows["Year"].astype(int)) == {2022, 2030, 2040}
+    lpv_2030 = st_rows[st_rows["Year"] == 2030].iloc[0]
+    assert lpv_2030["Value"] == pytest.approx(3.0)  # 3_000_000 / 1e6
+    assert lpv_2030["Scale"] == "Millions"
+    assert lpv_2030["Branch Path"] == "Demand\\Passenger road\\LPVs"
+
+    # Round-trip: write CSV, reload via adapter, parse stock_target variable
+    package_dir = tmp_path / "vtest" / "20USA"
+    package_dir.mkdir(parents=True)
+    out.to_csv(package_dir / "road_module1_values_20USA.csv", index=False)
+
+    loaded = load_module1_for_economy(tmp_path, economy="20_USA", version="vtest")
+    all_parsed = parse_leap_format_inputs(loaded["raw_leap_df"])  # no base_year filter
+    st_parsed = all_parsed[all_parsed["variable"] == "stock_target"]
+
+    assert not st_parsed.empty
+    lpv_targets = st_parsed[st_parsed["vehicle_type"] == "LPVs"].set_index("year")["value"]
+    assert lpv_targets[2022] == pytest.approx(2_500_000.0)
+    assert lpv_targets[2030] == pytest.approx(3_000_000.0)
+    assert lpv_targets[2040] == pytest.approx(3_500_000.0)
+
+
+def test_stock_target_rows_replaced_on_second_write(tmp_path: Path):
+    """Writing the reconciled CSV twice replaces, not duplicates, Stock Target rows."""
+    first = build_reconciled_module1_reimport(
+        _source_rows(), _t11_rows(), base_year=2022, stock_targets=_t5_rows(),
+    )
+
+    # Use the first output as the source for a second write with updated targets
+    updated_t5 = _t5_rows().copy()
+    updated_t5.loc[updated_t5["year"] == 2030, "target_stock"] = 4_000_000.0
+    second = build_reconciled_module1_reimport(
+        first, _t11_rows(), base_year=2022, stock_targets=updated_t5,
+    )
+
+    st_rows = second[second["Variable"] == "Stock Target"]
+    assert not st_rows.duplicated(subset=["Branch Path", "Variable", "Scenario", "Year"]).any()
+    lpv_2030 = st_rows[st_rows["Year"] == 2030].iloc[0]
+    assert lpv_2030["Value"] == pytest.approx(4.0)  # updated value, not original 3.0
 
 
 #%%

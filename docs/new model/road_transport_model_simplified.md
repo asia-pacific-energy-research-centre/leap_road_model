@@ -334,8 +334,14 @@ for unmatched rows before writing the `LEAP` and `FOR_VIEWING` sheets. The
 logical row-key columns, metadata columns, `Expression`, a blank spacer column,
 and `Level 1` through `Level 8...`. The Level columns are generated from
 `Branch Path` by splitting on `\`; blank hierarchy levels remain blank. The
-repo-local reference template is
-`input_data/leap_import_templates/DEFAULT_transport_leap_import_TGT_REF_CA.xlsx`.
+canonical reference template is `config/road model leap export.xlsx`. This
+file is a real LEAP export from a fully-configured road transport model and is
+the source of BranchID, VariableID, ScenarioID, and RegionID for every
+branch × variable × scenario combination. It must be kept current whenever the
+LEAP model branch structure changes. If it is missing or outdated, the strict
+writer is bypassed and LEAP cannot import the output. All economy LEAP models
+share the same "clean slate" road transport branch structure, so the IDs in
+this file are valid across economies.
 
 The package should preserve enough metadata to trace whether values came from researcher input, defaults, scaling, reconciliation, or fallback logic.
 
