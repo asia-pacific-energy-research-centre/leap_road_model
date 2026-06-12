@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from diagnostics.plotly_dashboard import _can_plot, module3_figures, module5_figures, write_module_pages
+from diagnostics.plotly_dashboard import _can_plot, module3_figures, module5_figures, module6_figures, write_module_pages
 from road_workflow import run_for_economy
 
 
@@ -103,6 +103,48 @@ def test_module5_base_sales_share_chart_is_horizontal_and_largest_first():
 
     assert fig.data[0].orientation == "h"
     assert list(fig.data[0].y) == ["Large", "Small"]
+
+
+@pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
+def test_module6_final_fuel_share_chart_uses_t9_final_energy():
+    t8 = pd.DataFrame(
+        [
+            {
+                "vehicle_type": "LPVs",
+                "drive_type": "ICE",
+                "fuel": "Motor gasoline",
+                "allocated_branch_fuel_pj": 99.0,
+            },
+            {
+                "vehicle_type": "LPVs",
+                "drive_type": "ICE",
+                "fuel": "Electricity",
+                "allocated_branch_fuel_pj": 1.0,
+            },
+        ]
+    )
+    t9 = pd.DataFrame(
+        [
+            {
+                "vehicle_type": "LPVs",
+                "drive_type": "ICE",
+                "fuel": "Motor gasoline",
+                "final_branch_fuel_pj": 25.0,
+            },
+            {
+                "vehicle_type": "LPVs",
+                "drive_type": "ICE",
+                "fuel": "Electricity",
+                "final_branch_fuel_pj": 75.0,
+            },
+        ]
+    )
+
+    figs = module6_figures({"T8": t8, "T9": t9})
+    fig = next(item[1] for item in figs if item[0] == "Final fuel allocation share by vehicle type and drive (2022)")
+
+    shares = {trace.name: list(trace.y)[0] for trace in fig.data}
+    assert shares == pytest.approx({"Electricity": 75.0, "Motor gasoline": 25.0})
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")

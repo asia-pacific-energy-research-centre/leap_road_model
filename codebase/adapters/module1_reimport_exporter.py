@@ -99,6 +99,10 @@ def build_reconciled_module1_reimport(
     a second model run started from this CSV produces identical stock trajectories.
     """
     source_long_df = source_long_df.drop_duplicates().copy()
+    source_long_df = source_long_df.drop_duplicates(
+        subset=["Branch Path", "Variable", "Scenario", "Year"],
+        keep="first",
+    ).copy()
     _validate_unique_keys(source_long_df, context="source Module 1")
 
     out = _ensure_reimport_columns(source_long_df)

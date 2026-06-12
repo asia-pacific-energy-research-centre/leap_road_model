@@ -1855,11 +1855,11 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 "Average fuel split used inside multi-fuel drive types (mainly ICE/PHEV branches).",
             ))
 
-    allocation_cols = {"vehicle_type", "drive_type", "fuel", "allocated_branch_fuel_pj"}
-    if not t8.empty and allocation_cols.issubset(t8.columns):
-        alloc = t8.copy()
-        alloc["allocated_branch_fuel_pj"] = pd.to_numeric(
-            alloc["allocated_branch_fuel_pj"], errors="coerce"
+    allocation_cols = {"vehicle_type", "drive_type", "fuel", "final_branch_fuel_pj"}
+    if not t9.empty and allocation_cols.issubset(t9.columns):
+        alloc = t9.copy()
+        alloc["final_branch_fuel_pj"] = pd.to_numeric(
+            alloc["final_branch_fuel_pj"], errors="coerce"
         ).fillna(0.0)
         alloc["vehicle_drive"] = (
             alloc["vehicle_type"].fillna("unknown")
@@ -1867,7 +1867,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             + alloc["drive_type"].fillna("unknown")
         )
         heat = (
-            alloc.groupby(["vehicle_drive", "fuel"])["allocated_branch_fuel_pj"]
+            alloc.groupby(["vehicle_drive", "fuel"])["final_branch_fuel_pj"]
             .sum()
             .unstack(fill_value=0.0)
         )

@@ -23,6 +23,7 @@ from modules.module6_reconciliation_and_leap_handoff import (
     apply_scalars,
     apply_scalars_with_cumulative_bounds,
     build_phev_utilisation_diagnostics,
+    bootstrap_zero_stock_fuel_branches,
     build_leap_ready_table,
     calculate_device_shares,
     calculate_initial_branch_energy,
@@ -596,6 +597,28 @@ class TestPHEVLiquidDistribution:
 # ---------------------------------------------------------------------------
 
 class TestAllocateFuelToBranches:
+    def test_zero_stock_positive_electricity_target_is_bootstrapped(self):
+        t4 = _make_t4(
+            _branch("LPVs", "BEV", "Electricity", stock=0, mileage=12000, efficiency=300),
+        )
+        esto = pd.DataFrame([{"fuel": "Electricity", "energy_pj": 0.02}])
+        branch_energy = calculate_initial_branch_energy(t4)
+
+        bootstrapped = bootstrap_zero_stock_fuel_branches(branch_energy, esto)
+        remaining = calculate_remaining_esto(esto, pd.DataFrame())
+        t8 = allocate_esto_fuel_to_branches(bootstrapped, remaining, bootstrapped)
+        t9 = reconcile_stock_mileage_efficiency(
+            t8,
+            bootstrapped,
+            weights={"stock": 1.0, "mileage": 0.0, "efficiency": 0.0},
+            scalar_bounds={"stock": (0.0, float("inf")), "mileage": (1.0, 1.0), "efficiency": (1.0, 1.0)},
+        )
+
+        row = t9.iloc[0]
+        assert row["stock_bootstrapped_for_reconciliation"]
+        assert row["adjusted_stock"] > 0
+        assert pytest.approx(row["final_branch_fuel_pj"], rel=1e-6) == 0.02
+
     def test_single_branch_gets_all_fuel(self):
         t4 = _make_t4(
             _branch("LPVs", "BEV", "Electricity", stock=500, mileage=12000, efficiency=300),

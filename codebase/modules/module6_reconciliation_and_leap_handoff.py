@@ -351,6 +351,7 @@ def run_module6(
         base_year_branches,
         phev_electric_utilisation_rate,
     )
+    branch_energy = bootstrap_zero_stock_fuel_branches(branch_energy, esto_fuel_totals)
 
     # Step 2: BEV/PHEV electricity reconciliation
     electricity_esto = _get_esto_fuel(esto_fuel_totals, "Electricity")
@@ -431,6 +432,73 @@ def calculate_initial_branch_energy(
         df["stock"] * df["mileage_km_per_year"] / df["efficiency_km_per_gj"] / 1_000_000
     )
     return df
+
+
+def bootstrap_zero_stock_fuel_branches(
+    branch_energy: pd.DataFrame,
+    esto_fuel_totals: pd.DataFrame,
+    seed_stock: float = 1.0,
+) -> pd.DataFrame:
+    """
+    Seed eligible zero-stock branches when a fuel has a positive ESTO target.
+
+    Reconciliation can scale positive stock, mileage, and efficiency, but a
+    branch with zero stock has zero initial energy and receives no allocation.
+    This bootstrap gives Module 6 a small positive starting point only for fuels
+    where every eligible branch has zero initial energy.
+    """
+    if branch_energy.empty or esto_fuel_totals.empty:
+        return branch_energy
+
+    required = {"drive_type", "fuel", "stock", "mileage_km_per_year", "efficiency_km_per_gj", "initial_energy_pj"}
+    if not required.issubset(branch_energy.columns) or {"fuel", "energy_pj"}.difference(esto_fuel_totals.columns):
+        return branch_energy
+
+    out = branch_energy.copy()
+    eligibility = _get_fuel_eligibility()
+    out["_module6_fuel_eligible"] = out.apply(
+        lambda row: row["fuel"] in eligibility.get(row["drive_type"], []),
+        axis=1,
+    )
+    if "stock_bootstrapped_for_reconciliation" not in out.columns:
+        out["stock_bootstrapped_for_reconciliation"] = False
+
+    positive_esto = esto_fuel_totals.copy()
+    positive_esto["energy_pj"] = pd.to_numeric(positive_esto["energy_pj"], errors="coerce").fillna(0.0)
+    positive_fuels = positive_esto.loc[positive_esto["energy_pj"] > 0, "fuel"].dropna().astype(str).unique()
+
+    for fuel in positive_fuels:
+        fuel_mask = out["_module6_fuel_eligible"] & out["fuel"].astype(str).eq(fuel)
+        if not fuel_mask.any():
+            continue
+        initial_total = pd.to_numeric(out.loc[fuel_mask, "initial_energy_pj"], errors="coerce").fillna(0.0).sum()
+        if initial_total > 0:
+            continue
+
+        seed_mask = (
+            fuel_mask
+            & pd.to_numeric(out["stock"], errors="coerce").fillna(0.0).le(0)
+            & pd.to_numeric(out["mileage_km_per_year"], errors="coerce").fillna(0.0).gt(0)
+            & pd.to_numeric(out["efficiency_km_per_gj"], errors="coerce").fillna(0.0).gt(0)
+        )
+        if not seed_mask.any():
+            continue
+
+        out.loc[seed_mask, "stock"] = float(seed_stock)
+        out.loc[seed_mask, "stock_bootstrapped_for_reconciliation"] = True
+        out.loc[seed_mask, "initial_energy_pj"] = (
+            out.loc[seed_mask, "stock"]
+            * out.loc[seed_mask, "mileage_km_per_year"]
+            / out.loc[seed_mask, "efficiency_km_per_gj"]
+            / 1_000_000
+        )
+        log.info(
+            "Module 6 bootstrapped %d zero-stock branch(es) for positive %s ESTO target.",
+            int(seed_mask.sum()),
+            fuel,
+        )
+
+    return out.drop(columns=["_module6_fuel_eligible"])
 
 
 def apply_phev_mileage_split(
@@ -530,8 +598,18 @@ def reconcile_electricity(
 
     phev_electric_pj = float(df.loc[phev_elec_mask, "initial_energy_pj"].sum())
     total_initial_elec = df.loc[non_phev_elec_mask, "initial_energy_pj"].sum()
+    bootstrapped_electric = (
+        "stock_bootstrapped_for_reconciliation" in df.columns
+        and df.loc[elec_mask, "stock_bootstrapped_for_reconciliation"].fillna(False).astype(bool).any()
+    )
 
-    if phev_electric_pj > electricity_esto_pj:
+    if bootstrapped_electric:
+        total_all_elec = phev_electric_pj + total_initial_elec
+        if total_all_elec <= 0:
+            return df, _build_phev_liquid(df)
+        ecf = electricity_esto_pj / total_all_elec
+        adjust_mask = elec_mask
+    elif phev_electric_pj > electricity_esto_pj:
         # PHEV stock alone implies more electricity than ESTO records — scale all
         # electricity branches (PHEV + BEV) together so the fleet size lands at a
         # value consistent with ESTO, rather than clamping BEVs to zero.
@@ -1025,6 +1103,8 @@ def reconcile_stock_mileage_efficiency(
         base_cols.append("leap_branch_path")
     if "base_year" in base_year_branches.columns:
         base_cols.append("base_year")
+    if "stock_bootstrapped_for_reconciliation" in base_year_branches.columns:
+        base_cols.append("stock_bootstrapped_for_reconciliation")
 
     base_cols = [c for c in base_cols if c in base_year_branches.columns]
 
