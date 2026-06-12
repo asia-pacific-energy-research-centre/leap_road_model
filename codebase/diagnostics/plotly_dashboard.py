@@ -1100,6 +1100,7 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 if "freight_elasticity_adjustment" not in diag.columns:
                     diag["freight_elasticity_adjustment"] = 1.0
             fig = go.Figure()
+            gdp_index = pd.Series(dtype=float)
             if "gdp_index" in freight_sub.columns:
                 gdp_index = (
                     freight_sub.groupby("year")["gdp_index"]
@@ -1143,6 +1144,18 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     return "n/a"
                 return f"{float(value):.{decimals}f}{suffix}"
 
+            def _cagr_from_index(index_series: pd.Series) -> float | None:
+                if index_series.empty or len(index_series) < 2:
+                    return None
+                first_year = int(index_series.index.min())
+                last_year = int(index_series.index.max())
+                periods = last_year - first_year
+                first_value = float(index_series.loc[first_year])
+                last_value = float(index_series.loc[last_year])
+                if periods <= 0 or first_value <= 0 or last_value <= 0:
+                    return None
+                return (last_value / first_value) ** (1 / periods) - 1
+
             kpi_parts: list[str] = []
             kpi_source = diag if not diag.empty else (
                 el_map.reset_index()
@@ -1162,6 +1175,13 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
 
             energy_growth = _first_numeric(diag["freight_energy_growth_rate"]) if not diag.empty else None
             gdp_growth = _first_numeric(diag["freight_gdp_growth_rate"]) if not diag.empty else None
+            projected_gdp_growth = _cagr_from_index(gdp_index)
+            selected_elasticities = pd.to_numeric(el_map, errors="coerce").dropna()
+            implied_projected_growth = (
+                selected_elasticities * projected_gdp_growth
+                if projected_gdp_growth is not None and not selected_elasticities.empty
+                else pd.Series(dtype=float)
+            )
             clamped = False
             if not diag.empty:
                 clamped_values = diag["freight_elasticity_clamped"].fillna(False).map(
@@ -1184,11 +1204,31 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 f'<strong>{_fmt_num(energy_growth * 100 if energy_growth is not None else None, suffix="%/yr")}</strong></div>',
                 '<div class="kpi-item"><span>Historical GDP growth</span>'
                 f'<strong>{_fmt_num(gdp_growth * 100 if gdp_growth is not None else None, suffix="%/yr")}</strong></div>',
+                '<div class="kpi-item"><span>Projected GDP growth</span>'
+                f'<strong>{_fmt_num(projected_gdp_growth * 100 if projected_gdp_growth is not None else None, suffix="%/yr")}</strong></div>',
+            ])
+            if not implied_projected_growth.empty and implied_projected_growth.round(6).nunique() == 1:
+                kpi_parts.append(
+                    '<div class="kpi-item"><span>Implied projected freight stock growth</span>'
+                    f'<strong>{_fmt_num(float(implied_projected_growth.iloc[0]) * 100, suffix="%/yr")}</strong></div>'
+                )
+            elif not implied_projected_growth.empty:
+                for vt, value in implied_projected_growth.items():
+                    vt_label = _freight_vehicle_label(str(vt))
+                    kpi_parts.append(
+                        f'<div class="kpi-item"><span>Implied projected {escape(vt_label)} stock growth</span>'
+                        f'<strong>{_fmt_num(float(value) * 100, suffix="%/yr")}</strong></div>'
+                    )
+            else:
+                kpi_parts.append(
+                    '<div class="kpi-item"><span>Implied projected freight stock growth</span>'
+                    '<strong>n/a</strong></div>'
+                )
+            kpi_parts.extend([
                 '<div class="kpi-item"><span>Clamp/override applied</span>'
                 f'<strong>{"Yes" if override_applied else "No"}</strong></div>',
             ])
 
-            selected_elasticities = pd.to_numeric(el_map, errors="coerce").dropna()
             equal_elasticities = (
                 len(selected_elasticities) > 1
                 and selected_elasticities.round(6).nunique() == 1

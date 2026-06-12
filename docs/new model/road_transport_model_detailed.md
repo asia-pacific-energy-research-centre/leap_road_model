@@ -210,28 +210,61 @@ The runtime parser ignores unrelated metadata columns, but the diagnostics shoul
 
 The road branch hierarchy is:
 
+
 ```text
 Demand
   Passenger road
-    LPVs
-      ICE small/medium/large
-      HEV small/medium/large
-      PHEV small/medium/large
-      EREV small/medium/large
-      BEV small/medium/large
-      FCEV small/medium/large
+    LPVs                                 [sizes: small, medium, large]
+      ICE <size>
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      HEV <size>
+        Motor gasoline, Gas and diesel oil, Biogasoline, Biodiesel, Efuel
+      EREV <size>
+        Electricity, Motor gasoline, Biogasoline, Efuel
+      PHEV <size>
+        Electricity, Motor gasoline, Biogasoline, Efuel
+      BEV <size>
+        Electricity
+      FCEV <size>
+        Hydrogen
     Motorcycles
-      ICE / BEV / FCEV
+      ICE
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      BEV
+        Electricity
+      FCEV
+        Hydrogen
     Buses
-      ICE / BEV / FCEV
+      ICE
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      BEV
+        Electricity
+      FCEV
+        Hydrogen
   Freight road
-    Trucks
-      ICE medium/heavy
-      BEV medium/heavy
-      FCEV medium/heavy
+    Trucks                               [sizes: medium, heavy]
+      ICE <size>
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      BEV <size>
+        Electricity
+      FCEV <size>
+        Hydrogen
     LCVs
-      ICE / BEV / FCEV / PHEV
+      ICE
+        Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
+        Biogasoline, Biodiesel, Biogas, Efuel
+      PHEV
+        Electricity, Motor gasoline, Biogasoline, Efuel
+      BEV
+        Electricity
+      FCEV
+        Hydrogen
 ```
+
 
 Current scope rules (important when comparing to the 9th edition and earlier 10th edition LEAP models):
 
