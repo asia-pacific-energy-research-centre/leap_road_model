@@ -881,7 +881,11 @@ def module2_figures(t4: pd.DataFrame) -> list[tuple[str, Any]]:
 # Module 3 — stock targets
 # ---------------------------------------------------------------------------
 
-def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> list[tuple[str, Any]]:
+def module3_figures(
+    t5: pd.DataFrame,
+    population: pd.Series | None = None,
+    show_freight_energy_context: bool = False,
+) -> list[tuple[str, Any]]:
     """Interactive QA figures for Module 3 stock targets (T5)."""
     if not _can_plot() or t5 is None or t5.empty:
         return []
@@ -1204,7 +1208,7 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
             historical_gdp_index = _indexed_growth_line(gdp_growth, historical_years)
             implied_projected_energy_index = _indexed_growth_line(implied_projected_energy_growth, projection_years)
 
-            if historical_gdp_index is not None:
+            if show_freight_energy_context and historical_gdp_index is not None:
                 fig.add_trace(go.Scatter(
                     x=historical_years,
                     y=historical_gdp_index,
@@ -1213,7 +1217,7 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     line=dict(color="#263238", width=2, dash="dot"),
                     opacity=0.65,
                 ))
-            if historical_energy_index is not None:
+            if show_freight_energy_context and historical_energy_index is not None:
                 fig.add_trace(go.Scatter(
                     x=historical_years,
                     y=historical_energy_index,
@@ -1222,7 +1226,7 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     line=dict(color="#C26A00", width=2, dash="dot"),
                     opacity=0.75,
                 ))
-            if implied_projected_energy_index is not None and len(projection_years) >= 2:
+            if show_freight_energy_context and implied_projected_energy_index is not None and len(projection_years) >= 2:
                 fig.add_trace(go.Scatter(
                     x=projection_years,
                     y=implied_projected_energy_index,
@@ -1230,14 +1234,15 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     name="Implied projected freight energy index",
                     line=dict(color="#C26A00", width=3, dash="dash"),
                 ))
-            fig.add_vline(
-                x=base_year,
-                line_width=2,
-                line_dash="dot",
-                line_color="#7A869A",
-                annotation_text="Base year",
-                annotation_position="top",
-            )
+            if show_freight_energy_context:
+                fig.add_vline(
+                    x=base_year,
+                    line_width=2,
+                    line_dash="dot",
+                    line_color="#7A869A",
+                    annotation_text="Base year",
+                    annotation_position="top",
+                )
             clamped = False
             if not diag.empty:
                 clamped_values = diag["freight_elasticity_clamped"].fillna(False).map(
@@ -1280,10 +1285,11 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     '<div class="kpi-item"><span>Implied projected freight stock growth</span>'
                     '<strong>n/a</strong></div>'
                 )
-            kpi_parts.append(
-                '<div class="kpi-item"><span>Implied projected freight energy growth</span>'
-                f'<strong>{_fmt_num(implied_projected_energy_growth * 100 if implied_projected_energy_growth is not None else None, suffix="%/yr")}</strong></div>'
-            )
+            if show_freight_energy_context:
+                kpi_parts.append(
+                    '<div class="kpi-item"><span>Implied projected freight energy growth</span>'
+                    f'<strong>{_fmt_num(implied_projected_energy_growth * 100 if implied_projected_energy_growth is not None else None, suffix="%/yr")}</strong></div>'
+                )
             kpi_parts.extend([
                 '<div class="kpi-item"><span>Clamp/override applied</span>'
                 f'<strong>{"Yes" if override_applied else "No"}</strong></div>',
@@ -1297,14 +1303,27 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 "<p>LCV and Truck use the same freight elasticity, so their indexed stock lines may overlap.</p>"
                 if equal_elasticities else ""
             )
+            freight_energy_context_note = (
+                "<p>Post-reconciliation results include a base-year energy calibration, so the dashed freight energy line "
+                "shows the projected freight energy growth implied by the selected elasticity and projected GDP growth. "
+                "Use it as a comparison against the historical freight energy and GDP growth rates, not as a replacement "
+                "for the detailed Module 6 fuel reconciliation outputs.</p>"
+                "<p>Dotted lines before the base year show the historical growth rates used to estimate elasticity. "
+                "The dashed freight energy line after the base year shows the projected growth implied by the selected elasticity.</p>"
+                if show_freight_energy_context
+                else (
+                    "<p>At this pre-reconciliation stage, the dashboard only knows the freight stock trajectory. "
+                    "Projected freight energy use is not shown because the base year has not yet been reconciled to ESTO fuel energy. "
+                    "Use the post-reconciliation stock page to compare implied projected freight energy growth with historical rates.</p>"
+                )
+            )
             caption = (
                 '<p class="chart-subtitle">Freight stock growth compared with GDP</p>'
                 f"<p>Freight stock is indexed to {base_year} = 100. "
                 "The gap between GDP and freight stock shows the effect of the selected freight elasticity.</p>"
-                "<p>Dotted lines before the base year show the historical growth rates used to estimate elasticity. "
-                "The dashed freight energy line after the base year shows the projected growth implied by the selected elasticity.</p>"
-                f"{overlap_note}"
-                f'<div class="kpi-grid">{"".join(kpi_parts)}</div>'
+                + freight_energy_context_note
+                + f"{overlap_note}"
+                + f'<div class="kpi-grid">{"".join(kpi_parts)}</div>'
             )
 
             if selected_elasticities.empty:
@@ -1422,6 +1441,8 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
         fig = go.Figure()
         for i, (vt, grp) in enumerate(t6.groupby("vehicle_type")):
             s = grp.groupby("year")["new_sales"].sum().sort_index()
+            if len(s) > 1:
+                s = s.iloc[1:]
             fig.add_trace(go.Scatter(
                 x=s.index.tolist(), y=s.values.tolist(), name=str(vt), mode="lines",
                 line=dict(color=_vehicle_type_colour(str(vt), i)),
@@ -1448,6 +1469,8 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
 
     if t6 is not None and not t6.empty and {"year", "natural_retirements", "additional_retirements"}.issubset(t6.columns):
         rr = t6.groupby("year")[["natural_retirements", "additional_retirements"]].sum().sort_index()
+        if len(rr) > 1:
+            rr = rr.iloc[1:]
         fig = go.Figure()
         for ret_name, ret_col, ret_color in [
             ("natural", "natural_retirements", "#5E6AD2"),
@@ -1506,6 +1529,8 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
 
     if t6 is not None and not t6.empty and {"new_sales", "target_stock", "year"}.issubset(t6.columns):
         tmp = t6.groupby("year")[["new_sales", "target_stock"]].sum().sort_index()
+        if len(tmp) > 1:
+            tmp = tmp.iloc[1:]
         ratio = (tmp["new_sales"] / tmp["target_stock"].replace(0, float("nan"))).dropna()
         if not ratio.empty:
             fig = go.Figure(go.Scatter(
@@ -1521,25 +1546,6 @@ def module4_figures(t6: pd.DataFrame, t6v: pd.DataFrame) -> list[tuple[str, Any]
     event_cols = {"year", "vehicle_type", "stock_above_target", "scale_factor_applied"}
     if t6 is not None and not t6.empty and event_cols.issubset(t6.columns):
         events = t6[t6["stock_above_target"].fillna(False).astype(bool)].copy()
-        event_count = len(events)
-        affected_vehicle_types = events["vehicle_type"].nunique() if "vehicle_type" in events.columns else 0
-        affected_years = events["year"].nunique() if "year" in events.columns else 0
-        summary = go.Figure(go.Indicator(
-            mode="number",
-            value=event_count,
-            title={
-                "text": (
-                    "Stock-above-target events<br>"
-                    f"<span style='font-size:0.72em;color:#666'>{affected_vehicle_types} vehicle type(s), {affected_years} year(s)</span>"
-                )
-            },
-        ))
-        summary.update_layout(**_layout("Module 4 - Stock above target summary"))
-        figs.append((
-            "Stock above target summary",
-            summary,
-            "Counts years where surviving cohorts exceeded target stock and were scaled down. A zero means no natural-shrink adjustment was applied.",
-        ))
         if not events.empty:
             counts = events.groupby(["year", "vehicle_type"]).size().reset_index(name="event_count")
             fig = go.Figure()
@@ -2775,8 +2781,13 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         else _t5_pre if isinstance(_t5_pre, pd.DataFrame) and not _t5_pre.empty
         else workflow_outputs.get("T5")
     )
+    t5_is_post_reconciliation = isinstance(_t5_post, pd.DataFrame) and not _t5_post.empty
     m3_raw = (
-        module3_figures(t5, population=workflow_outputs.get("population"))
+        module3_figures(
+            t5,
+            population=workflow_outputs.get("population"),
+            show_freight_energy_context=t5_is_post_reconciliation,
+        )
         if isinstance(t5, pd.DataFrame) and not t5.empty
         else []
     )
@@ -3454,7 +3465,11 @@ def write_module_pages(
     post_stock_figures: list[tuple[str, Any]] = []
     if isinstance(t5_post, pd.DataFrame) and not t5_post.empty:
         post_stock_figures.extend(_filter_figures_by_title(
-            module3_figures(t5_post, population=workflow_outputs.get("population")),
+            module3_figures(
+                t5_post,
+                population=workflow_outputs.get("population"),
+                show_freight_energy_context=True,
+            ),
             {
                 "Target stock trajectories",
                 "Freight stock growth assumption",

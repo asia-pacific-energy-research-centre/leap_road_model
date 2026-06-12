@@ -222,8 +222,11 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
     post_html = (dashboard_dir / "module3_post_reconciliation.html").read_text(encoding="utf-8")
     assert "Post-reconciliation stocks" in module3_html
     assert "Post-reconciliation stocks & turnover" in post_html
+    assert "Implied projected freight energy growth" not in module3_html
+    assert "Projected freight energy use is not shown because the base year has not yet been reconciled" in module3_html
     assert "Freight stock growth assumption" in post_html
     assert "Freight stock growth compared with GDP" in post_html
+    assert "Post-reconciliation results include a base-year energy calibration" in post_html
     assert "Projected GDP growth" in post_html
     assert "Implied projected freight stock growth" in post_html
     assert "Implied projected freight energy growth" in post_html
