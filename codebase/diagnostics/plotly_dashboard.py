@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -220,6 +221,17 @@ _VT_ALIASES: dict[str, str] = {
 def _vehicle_type_colour(vt: str, idx: int) -> str:
     normalized = _VT_ALIASES.get(str(vt), str(vt))
     return _VEHICLE_TYPE_COLOURS.get(normalized, _COLOURS[idx % len(_COLOURS)])
+
+
+def _freight_vehicle_label(vehicle_type: str) -> str:
+    """Return a concise modeller-facing label for common freight vehicle types."""
+    normalized = _VT_ALIASES.get(str(vehicle_type), str(vehicle_type))
+    lowered = normalized.lower()
+    if "commercial" in lowered:
+        return "LCV"
+    if "truck" in lowered:
+        return "Truck"
+    return normalized
 
 
 def _transport_mode_colour(mode: str, idx: int) -> str:
@@ -1050,19 +1062,6 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 caption += " Calibration was not applied for this run."
             figs.append(("Passenger X-LPV weight calibration", fig, caption))
 
-    if {"vehicle_type", "gdp_elasticity_used"}.issubset(t5.columns):
-        el = t5[["vehicle_type", "gdp_elasticity_used"]].dropna().drop_duplicates()
-        if not el.empty:
-            fig = go.Figure(go.Bar(
-                x=el["vehicle_type"].tolist(), y=el["gdp_elasticity_used"].tolist(),
-                marker_color="#00897B",
-            ))
-            fig.update_layout(
-                **_layout("Module 3 — Freight GDP elasticity by vehicle type"),
-                yaxis_title="Elasticity",
-            )
-            figs.append(("Freight elasticity by vehicle type", fig))
-
     if {"year", "transport_type", "vehicle_type", "target_stock", "gdp_elasticity_used"}.issubset(t5.columns):
         freight_sub = t5[t5["transport_type"] == "freight"].copy()
         if not freight_sub.empty:
@@ -1077,6 +1076,29 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 .drop_duplicates("vehicle_type")
                 .set_index("vehicle_type")["gdp_elasticity_used"]
             )
+            diag = pd.DataFrame()
+            diag_cols = {
+                "vehicle_type",
+                "gdp_elasticity_used",
+                "freight_raw_elasticity",
+                "freight_elasticity_clamped",
+                "freight_energy_growth_rate",
+                "freight_gdp_growth_rate",
+                "freight_elasticity_data_source",
+                "freight_elasticity_note",
+            }
+            if diag_cols.issubset(t5.columns):
+                diag_select_cols = [*diag_cols]
+                if "freight_elasticity_adjustment" in t5.columns:
+                    diag_select_cols.append("freight_elasticity_adjustment")
+                diag = (
+                    freight_sub[diag_select_cols]
+                    .drop_duplicates("vehicle_type")
+                    .sort_values("vehicle_type")
+                    .reset_index(drop=True)
+                )
+                if "freight_elasticity_adjustment" not in diag.columns:
+                    diag["freight_elasticity_adjustment"] = 1.0
             fig = go.Figure()
             if "gdp_index" in freight_sub.columns:
                 gdp_index = (
@@ -1086,12 +1108,6 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     .sort_index()
                 )
                 if not gdp_index.empty:
-                    selected_elasticities = pd.to_numeric(el_map, errors="coerce").dropna()
-                    selected_elasticity = (
-                        float(selected_elasticities.mean())
-                        if not selected_elasticities.empty
-                        else None
-                    )
                     fig.add_trace(go.Scatter(
                         x=gdp_index.index.tolist(),
                         y=gdp_index.tolist(),
@@ -1099,145 +1115,191 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                         name="GDP index",
                         line=dict(color="#263238", width=3),
                     ))
-                    if selected_elasticity is not None:
-                        sensitivity_specs = [
-                            ("-50% sensitivity", 0.50, "dot", 0.45),
-                            ("-25% sensitivity", 0.75, "dashdot", 0.65),
-                            ("+25% sensitivity", 1.25, "dashdot", 0.65),
-                            ("+50% sensitivity", 1.50, "dot", 0.45),
-                        ]
-                        seen_elasticities: set[float] = set()
-                        for label, multiplier, dash_style, opacity in sensitivity_specs:
-                            e_val = float(max(0.0, min(2.0, selected_elasticity * multiplier)))
-                            rounded_e = round(e_val, 6)
-                            if rounded_e in seen_elasticities:
-                                continue
-                            seen_elasticities.add(rounded_e)
-                            fig.add_trace(go.Scatter(
-                                x=gdp_index.index.tolist(),
-                                y=(100 * ((gdp_index / 100) ** e_val)).tolist(),
-                                mode="lines",
-                                name=f"{label} (ε={e_val:.2f})",
-                                line=dict(color="#00897B", dash=dash_style, width=1.5),
-                                opacity=opacity,
-                            ))
             for i, (vt, grp) in enumerate(freight_sub.groupby("vehicle_type")):
                 series = grp.groupby("year")["target_stock"].sum().sort_index()
                 base = base_stocks.get(vt)
                 indexed = (series / base * 100).tolist() if (base is not None and base > 0) else series.tolist()
                 el_val = el_map.get(vt)
                 el_str = f" (ε={el_val:.2f})" if el_val is not None and not pd.isna(el_val) else ""
+                label = _freight_vehicle_label(str(vt))
                 fig.add_trace(go.Scatter(
                     x=series.index.tolist(), y=indexed,
                     mode="lines+markers",
-                    name=f"{vt}{el_str}",
+                    name=f"{label} stock index{el_str}",
                     line=dict(color=_vehicle_type_colour(str(vt), i)),
                 ))
             fig.update_layout(
-                **_layout("Module 3 — Freight stock growth index"),
+                **_layout("Freight stock growth compared with GDP"),
                 yaxis_title=f"Stock index ({base_year} = 100)",
                 xaxis_title="Year",
             )
-            figs.append((
-                "Freight stock growth index",
-                fig,
-                f"Freight stock indexed to {base_year} = 100. Elasticity (ε) in the legend shows GDP sensitivity. Dotted sensitivity lines show ±25% and ±50% elasticity multipliers around the selected value, clamped to the model bounds.",
-            ))
 
-    diag_cols = {
-        "vehicle_type",
-        "gdp_elasticity_used",
-        "freight_raw_elasticity",
-        "freight_elasticity_clamped",
-        "freight_energy_growth_rate",
-        "freight_gdp_growth_rate",
-        "freight_elasticity_data_source",
-        "freight_elasticity_note",
-    }
-    if diag_cols.issubset(t5.columns):
-        diag_select_cols = [*diag_cols]
-        if "freight_elasticity_adjustment" in t5.columns:
-            diag_select_cols.append("freight_elasticity_adjustment")
-        diag = (
-            t5[t5["transport_type"] == "freight"]
-            [diag_select_cols]
-            .drop_duplicates("vehicle_type")
-            .sort_values("vehicle_type")
-        )
-        if "freight_elasticity_adjustment" not in diag.columns:
-            diag["freight_elasticity_adjustment"] = 1.0
-        if not diag.empty:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=diag["vehicle_type"].astype(str).tolist(),
-                y=pd.to_numeric(diag["freight_raw_elasticity"], errors="coerce").tolist(),
-                name="Raw elasticity",
-                marker_color="#B0BEC5",
-            ))
-            fig.add_trace(go.Bar(
-                x=diag["vehicle_type"].astype(str).tolist(),
-                y=pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce").tolist(),
-                name="Final elasticity",
-                marker_color="#00897B",
-            ))
-            fig.update_layout(
-                **_layout("Module 3 - Freight elasticity diagnostics"),
-                barmode="group",
-                yaxis_title="Elasticity",
+            def _first_numeric(series: pd.Series) -> float | None:
+                values = pd.to_numeric(series, errors="coerce").dropna()
+                return float(values.iloc[0]) if not values.empty else None
+
+            def _fmt_num(value: float | None, decimals: int = 2, suffix: str = "") -> str:
+                if value is None or pd.isna(value):
+                    return "n/a"
+                return f"{float(value):.{decimals}f}{suffix}"
+
+            kpi_parts: list[str] = []
+            kpi_source = diag if not diag.empty else (
+                el_map.reset_index()
+                .rename(columns={"index": "vehicle_type", "gdp_elasticity_used": "gdp_elasticity_used"})
             )
+            for _, row in kpi_source.iterrows():
+                vt_label = _freight_vehicle_label(str(row.get("vehicle_type", "")))
+                el_value = pd.to_numeric(pd.Series([row.get("gdp_elasticity_used")]), errors="coerce").dropna()
+                display_value = float(el_value.iloc[0]) if not el_value.empty else None
+                if vt_label:
+                    kpi_parts.append(
+                        '<div class="kpi-item">'
+                        f'<span>{escape(vt_label)} elasticity</span>'
+                        f'<strong>{_fmt_num(display_value)}</strong>'
+                        '</div>'
+                    )
+
+            energy_growth = _first_numeric(diag["freight_energy_growth_rate"]) if not diag.empty else None
+            gdp_growth = _first_numeric(diag["freight_gdp_growth_rate"]) if not diag.empty else None
+            clamped = False
+            if not diag.empty:
+                clamped_values = diag["freight_elasticity_clamped"].fillna(False).map(
+                    lambda value: str(value).strip().lower() in {"true", "1", "yes", "y"}
+                )
+                clamped = bool(clamped_values.any())
+            adjusted = False
+            if not diag.empty and "freight_elasticity_adjustment" in diag.columns:
+                adjustment_values = pd.to_numeric(diag["freight_elasticity_adjustment"], errors="coerce").dropna()
+                adjusted = bool((adjustment_values.sub(1.0).abs() > 1e-9).any())
+            override_text = ""
+            if not diag.empty:
+                override_text = " ".join(
+                    diag.get("freight_elasticity_data_source", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+                    + diag.get("freight_elasticity_note", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+                ).lower()
+            override_applied = clamped or adjusted or ("override" in override_text)
+            kpi_parts.extend([
+                '<div class="kpi-item"><span>Historical freight energy growth</span>'
+                f'<strong>{_fmt_num(energy_growth * 100 if energy_growth is not None else None, suffix="%/yr")}</strong></div>',
+                '<div class="kpi-item"><span>Historical GDP growth</span>'
+                f'<strong>{_fmt_num(gdp_growth * 100 if gdp_growth is not None else None, suffix="%/yr")}</strong></div>',
+                '<div class="kpi-item"><span>Clamp/override applied</span>'
+                f'<strong>{"Yes" if override_applied else "No"}</strong></div>',
+            ])
+
+            selected_elasticities = pd.to_numeric(el_map, errors="coerce").dropna()
+            equal_elasticities = (
+                len(selected_elasticities) > 1
+                and selected_elasticities.round(6).nunique() == 1
+            )
+            overlap_note = (
+                "<p>LCV and Truck use the same freight elasticity, so their indexed stock lines may overlap.</p>"
+                if equal_elasticities else ""
+            )
+            caption = (
+                '<p class="chart-subtitle">Freight stock growth compared with GDP</p>'
+                f"<p>Freight stock is indexed to {base_year} = 100. "
+                "The gap between GDP and freight stock shows the effect of the selected freight elasticity.</p>"
+                f"{overlap_note}"
+                f'<div class="kpi-grid">{"".join(kpi_parts)}</div>'
+            )
+
+            if selected_elasticities.empty:
+                interpretation = (
+                    "Review whether the freight stock trajectory is plausible for the economy. "
+                    "Low freight growth may be reasonable for mature economies, but may understate freight growth where "
+                    "construction, manufacturing, logistics, mining, or road freight activity is expected to expand strongly."
+                )
+            elif selected_elasticities.round(2).nunique() == 1:
+                interpretation = (
+                    f"An elasticity of around {selected_elasticities.iloc[0]:.2f} means freight stock grows more slowly than GDP. "
+                    "Review whether this is plausible for the economy: low values may be reasonable for mature economies, "
+                    "but may understate freight growth where construction, manufacturing, logistics, mining, or road freight activity "
+                    "is expected to expand strongly."
+                )
+            else:
+                el_summary = ", ".join(
+                    f"{_freight_vehicle_label(str(vt))}: {float(val):.2f}"
+                    for vt, val in selected_elasticities.items()
+                )
+                interpretation = (
+                    f"The selected freight elasticities ({el_summary}) determine how quickly each freight stock line grows relative to GDP. "
+                    "Review whether these trajectories are plausible for the economy: low values may be reasonable for mature economies, "
+                    "but may understate freight growth where construction, manufacturing, logistics, mining, or road freight activity "
+                    "is expected to expand strongly."
+                )
+
+            after_html = f'<div class="interpretation-note">{escape(interpretation)}</div>'
+
+            if not diag.empty:
+                _el_num = pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce")
+                _gdp_gr = pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce")
+                _implied_growth = (_el_num * _gdp_gr * 100).round(2)
+                _implied_growth_str = _implied_growth.where(_implied_growth.notna(), other=pd.NA).astype(str).replace("<NA>", "").replace("nan", "").tolist()
+
+                table = go.Figure(data=[go.Table(
+                    header=dict(
+                        values=[
+                            "Vehicle type",
+                            "Final elasticity",
+                            "Raw elasticity",
+                            "Clamped",
+                            "Energy growth %/yr",
+                            "GDP growth %/yr",
+                            "Elasticity adjustment",
+                            "Implied freight growth %/yr",
+                            "Source",
+                            "Note",
+                        ],
+                        fill_color="#E8EDF7",
+                        align="left",
+                    ),
+                    cells=dict(
+                        values=[
+                            diag["vehicle_type"].astype(str).tolist(),
+                            pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce").round(4).astype(str).tolist(),
+                            pd.to_numeric(diag["freight_raw_elasticity"], errors="coerce").round(4).astype(str).replace("nan", "").tolist(),
+                            diag["freight_elasticity_clamped"].fillna(False).map(
+                                lambda value: "Yes" if str(value).strip().lower() in {"true", "1", "yes", "y"} else "No"
+                            ).tolist(),
+                            (pd.to_numeric(diag["freight_energy_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
+                            (pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
+                            pd.to_numeric(diag["freight_elasticity_adjustment"], errors="coerce").round(4).astype(str).replace("nan", "").tolist(),
+                            _implied_growth_str,
+                            diag["freight_elasticity_data_source"].fillna("").astype(str).tolist(),
+                            diag["freight_elasticity_note"].fillna("").astype(str).tolist(),
+                        ],
+                        fill_color="white",
+                        align="left",
+                        height=24,
+                    ),
+                )])
+                table.update_layout(**_layout("Freight elasticity calculation details"))
+                table_html = pio.to_html(
+                    _apply_dashboard_layout(table, wide=True),
+                    full_html=False,
+                    include_plotlyjs=False,
+                    config={"responsive": True, "displaylogo": False},
+                )
+                details_intro = (
+                    "Elasticity is estimated as historical freight energy growth divided by historical GDP growth. "
+                    "It is then adjusted, clamped, or overridden only where configured."
+                )
+                after_html += (
+                    '<details class="details-panel">'
+                    '<summary>Show elasticity calculation details</summary>'
+                    f'<p>{escape(details_intro)}</p>'
+                    f'{table_html}'
+                    '</details>'
+                )
+
             figs.append((
-                "Freight elasticity diagnostics",
+                "Freight stock growth assumption",
                 fig,
-                "Raw and final freight GDP elasticities. Final values include clamping or default/override logic.",
-            ))
-
-            _el_num = pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce")
-            _gdp_gr = pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce")
-            _implied_growth = (_el_num * _gdp_gr * 100).round(2)
-            _implied_growth_str = _implied_growth.where(_implied_growth.notna(), other=pd.NA).astype(str).replace("<NA>", "").replace("nan", "").tolist()
-
-            table = go.Figure(data=[go.Table(
-                header=dict(
-                    values=[
-                        "Vehicle type",
-                        "Final elasticity",
-                        "Raw elasticity",
-                        "Clamped",
-                        "Energy growth %/yr",
-                        "GDP growth %/yr",
-                        "Elasticity adjustment",
-                        "Implied freight growth %/yr",
-                        "Source",
-                        "Note",
-                    ],
-                    fill_color="#E8EDF7",
-                    align="left",
-                ),
-                cells=dict(
-                    values=[
-                        diag["vehicle_type"].astype(str).tolist(),
-                        pd.to_numeric(diag["gdp_elasticity_used"], errors="coerce").round(4).astype(str).tolist(),
-                        pd.to_numeric(diag["freight_raw_elasticity"], errors="coerce").round(4).astype(str).replace("nan", "").tolist(),
-                        diag["freight_elasticity_clamped"].fillna(False).astype(str).tolist(),
-                        (pd.to_numeric(diag["freight_energy_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
-                        (pd.to_numeric(diag["freight_gdp_growth_rate"], errors="coerce") * 100).round(2).astype(str).replace("nan", "").tolist(),
-                        pd.to_numeric(diag["freight_elasticity_adjustment"], errors="coerce").round(4).astype(str).replace("nan", "").tolist(),
-                        _implied_growth_str,
-                        diag["freight_elasticity_data_source"].fillna("").astype(str).tolist(),
-                        diag["freight_elasticity_note"].fillna("").astype(str).tolist(),
-                    ],
-                    fill_color="white",
-                    align="left",
-                    height=24,
-                ),
-            )])
-            table.update_layout(**_layout("Module 3 - Freight elasticity diagnostic table"))
-            figs.append((
-                "Freight elasticity diagnostic table",
-                table,
                 True,
-                "Energy and GDP growth rates are annual percentages over the configured lookback window. "
-                "Implied freight growth = elasticity × historical GDP growth rate — the freight growth rate you'd expect if GDP continues at the same pace.",
+                caption,
+                after_html,
             ))
 
     return figs
@@ -2603,7 +2665,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     m7_raw = module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4"))
     m7_by_title = {item[0]: item for item in m7_raw if item[0] in _INCLUDE_M7}
 
-    # Module 3 figures — Passenger X-LPV and Freight stock growth index.
+    # Module 3 figures — Passenger X-LPV and freight stock growth assumption.
     _t5_post = workflow_outputs.get("T5_post_reconciliation")
     _t5_pre = workflow_outputs.get("T5_pre_reconciliation")
     t5 = (
@@ -2702,7 +2764,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         "New sales by vehicle type",
         "Stock trajectory by vehicle type",
         "Passenger X-LPV-equivalent vehicles vs saturation",
-        "Freight stock growth index",
+        "Freight stock growth assumption",
         "Adjustment scalars by branch",
         "Final fuel allocation share by vehicle type and drive (2022)",
         "Mileage distribution",
@@ -2882,6 +2944,16 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .charts-pair{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .chart-title{font-size:1.15rem;font-weight:700;color:#1a237e;margin-bottom:6px;text-align:center}
 .chart-caption{font-size:.84rem;color:#666;line-height:1.45;margin:4px 0 8px}
+.chart-caption p{margin:4px 0 8px}
+.chart-subtitle{font-size:.98rem!important;color:#263238!important;font-weight:700;text-align:center;margin:2px 0 8px!important}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:10px 0 4px}
+.kpi-item{border:1px solid #e4e7ef;border-radius:8px;background:#fafbff;padding:9px 10px;min-width:0}
+.kpi-item span{display:block;font-size:.76rem;color:#667085;line-height:1.25;margin-bottom:4px}
+.kpi-item strong{display:block;font-size:1rem;color:#263238;font-weight:700;line-height:1.2}
+.interpretation-note{font-size:.88rem;line-height:1.5;color:#3f4d5a;background:#f8fafc;border-left:4px solid #1a237e;border-radius:6px;margin:10px 0 12px;padding:10px 12px}
+.details-panel{border:1px solid #e0e4ec;border-radius:8px;background:#fbfcff;margin-top:10px;padding:10px 12px}
+.details-panel summary{cursor:pointer;color:#1a237e;font-weight:700;font-size:.9rem}
+.details-panel p{font-size:.86rem;color:#555;line-height:1.45;margin:10px 0}
 .chart-card .plotly-graph-div,.chart-card .js-plotly-plot,.chart-card .plot-container,.chart-card .svg-container{width:100%!important;max-width:100%!important}
 .chart-card .plotly-graph-div{min-height:340px}
 .chart-card--wide .plotly-graph-div{min-height:400px}
@@ -3127,17 +3199,24 @@ def _build_html_page(
             half = False
             explicit_wide = False
             caption = ""
+            after_html = ""
             if len(item) > 2:
                 if isinstance(item[2], bool):
                     explicit_wide = bool(item[2])
                     if len(item) > 3 and isinstance(item[3], str):
                         caption = item[3]
+                    if len(item) > 4 and isinstance(item[4], str):
+                        after_html = item[4]
                 elif item[2] == "half":
                     half = True
                     if len(item) > 3 and isinstance(item[3], str):
                         caption = item[3]
+                    if len(item) > 4 and isinstance(item[4], str):
+                        after_html = item[4]
                 elif isinstance(item[2], str):
                     caption = item[2]
+                    if len(item) > 3 and isinstance(item[3], str):
+                        after_html = item[3]
 
             wide = not half and _should_render_wide(fig, explicit_wide=explicit_wide)
             fig = _apply_dashboard_layout(fig, wide=wide)
@@ -3148,7 +3227,7 @@ def _build_html_page(
                 config={"responsive": True, "displaylogo": False},
             )
             caption_html = f'<div class="chart-caption">{caption}</div>' if caption else ""
-            card_html = f'<div class="chart-card"><div class="chart-title">{title}</div>{caption_html}{fig_html}</div>'
+            card_html = f'<div class="chart-card"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
 
             if half:
                 half_buffer.append(card_html)
@@ -3161,7 +3240,7 @@ def _build_html_page(
                     half_buffer = []
                 css = "chart-card chart-card--wide" if wide else "chart-card"
                 rendered.append(
-                    f'<div class="{css}"><div class="chart-title">{title}</div>{caption_html}{fig_html}</div>'
+                    f'<div class="{css}"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
                 )
 
         if half_buffer:
@@ -3276,7 +3355,7 @@ def write_module_pages(
             module3_figures(t5_post, population=workflow_outputs.get("population")),
             {
                 "Target stock trajectories",
-                "Freight stock growth index",
+                "Freight stock growth assumption",
                 "Passenger X-LPV-equivalent vehicles vs saturation",
                 "Passenger X-LPV weight calibration",
             },

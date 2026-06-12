@@ -176,6 +176,13 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
                 "target_stock": 100.0,
                 "gdp_elasticity_used": 0.8,
                 "gdp_index": 100.0,
+                "freight_raw_elasticity": 0.75,
+                "freight_elasticity_clamped": False,
+                "freight_energy_growth_rate": 0.015,
+                "freight_gdp_growth_rate": 0.02,
+                "freight_elasticity_adjustment": 1.0,
+                "freight_elasticity_data_source": "historical",
+                "freight_elasticity_note": "",
             },
             {
                 "year": 2023,
@@ -184,6 +191,13 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
                 "target_stock": 110.0,
                 "gdp_elasticity_used": 0.8,
                 "gdp_index": 112.0,
+                "freight_raw_elasticity": 0.75,
+                "freight_elasticity_clamped": False,
+                "freight_energy_growth_rate": 0.015,
+                "freight_gdp_growth_rate": 0.02,
+                "freight_elasticity_adjustment": 1.0,
+                "freight_elasticity_data_source": "historical",
+                "freight_elasticity_note": "",
             },
         ]
     )
@@ -208,7 +222,11 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
     post_html = (dashboard_dir / "module3_post_reconciliation.html").read_text(encoding="utf-8")
     assert "Post-reconciliation stocks" in module3_html
     assert "Post-reconciliation stocks & turnover" in post_html
-    assert "Freight stock growth index" in post_html
+    assert "Freight stock growth assumption" in post_html
+    assert "Freight stock growth compared with GDP" in post_html
+    assert "Show elasticity calculation details" in post_html
+    assert "Freight elasticity by vehicle type" not in post_html
+    assert "Freight elasticity diagnostics" not in post_html
 
 
 def test_run_for_economy_defaults_to_visualisations():
