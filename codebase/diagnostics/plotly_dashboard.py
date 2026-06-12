@@ -1182,6 +1182,62 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 if projected_gdp_growth is not None and not selected_elasticities.empty
                 else pd.Series(dtype=float)
             )
+            implied_projected_energy_growth = (
+                float(implied_projected_growth.mean())
+                if not implied_projected_growth.empty
+                else None
+            )
+            lookback_years = 10
+
+            def _indexed_growth_line(growth_rate: float | None, years: list[int]) -> list[float] | None:
+                if growth_rate is None or pd.isna(growth_rate):
+                    return None
+                return [100 * ((1 + float(growth_rate)) ** (year - base_year)) for year in years]
+
+            historical_years = list(range(base_year - lookback_years, base_year + 1))
+            projection_years = (
+                sorted(int(year) for year in gdp_index.index.tolist())
+                if not gdp_index.empty
+                else sorted(int(year) for year in freight_sub["year"].dropna().unique().tolist())
+            )
+            historical_energy_index = _indexed_growth_line(energy_growth, historical_years)
+            historical_gdp_index = _indexed_growth_line(gdp_growth, historical_years)
+            implied_projected_energy_index = _indexed_growth_line(implied_projected_energy_growth, projection_years)
+
+            if historical_gdp_index is not None:
+                fig.add_trace(go.Scatter(
+                    x=historical_years,
+                    y=historical_gdp_index,
+                    mode="lines",
+                    name="Historical GDP index",
+                    line=dict(color="#263238", width=2, dash="dot"),
+                    opacity=0.65,
+                ))
+            if historical_energy_index is not None:
+                fig.add_trace(go.Scatter(
+                    x=historical_years,
+                    y=historical_energy_index,
+                    mode="lines",
+                    name="Historical freight energy index",
+                    line=dict(color="#C26A00", width=2, dash="dot"),
+                    opacity=0.75,
+                ))
+            if implied_projected_energy_index is not None and len(projection_years) >= 2:
+                fig.add_trace(go.Scatter(
+                    x=projection_years,
+                    y=implied_projected_energy_index,
+                    mode="lines",
+                    name="Implied projected freight energy index",
+                    line=dict(color="#C26A00", width=3, dash="dash"),
+                ))
+            fig.add_vline(
+                x=base_year,
+                line_width=2,
+                line_dash="dot",
+                line_color="#7A869A",
+                annotation_text="Base year",
+                annotation_position="top",
+            )
             clamped = False
             if not diag.empty:
                 clamped_values = diag["freight_elasticity_clamped"].fillna(False).map(
@@ -1224,6 +1280,10 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                     '<div class="kpi-item"><span>Implied projected freight stock growth</span>'
                     '<strong>n/a</strong></div>'
                 )
+            kpi_parts.append(
+                '<div class="kpi-item"><span>Implied projected freight energy growth</span>'
+                f'<strong>{_fmt_num(implied_projected_energy_growth * 100 if implied_projected_energy_growth is not None else None, suffix="%/yr")}</strong></div>'
+            )
             kpi_parts.extend([
                 '<div class="kpi-item"><span>Clamp/override applied</span>'
                 f'<strong>{"Yes" if override_applied else "No"}</strong></div>',
@@ -1241,6 +1301,8 @@ def module3_figures(t5: pd.DataFrame, population: pd.Series | None = None) -> li
                 '<p class="chart-subtitle">Freight stock growth compared with GDP</p>'
                 f"<p>Freight stock is indexed to {base_year} = 100. "
                 "The gap between GDP and freight stock shows the effect of the selected freight elasticity.</p>"
+                "<p>Dotted lines before the base year show the historical growth rates used to estimate elasticity. "
+                "The dashed freight energy line after the base year shows the projected growth implied by the selected elasticity.</p>"
                 f"{overlap_note}"
                 f'<div class="kpi-grid">{"".join(kpi_parts)}</div>'
             )

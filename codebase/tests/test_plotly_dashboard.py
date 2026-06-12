@@ -226,6 +226,10 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
     assert "Freight stock growth compared with GDP" in post_html
     assert "Projected GDP growth" in post_html
     assert "Implied projected freight stock growth" in post_html
+    assert "Implied projected freight energy growth" in post_html
+    assert "Historical freight energy index" in post_html
+    assert "Historical GDP index" in post_html
+    assert "Implied projected freight energy index" in post_html
     assert "Show elasticity calculation details" in post_html
     assert "Freight elasticity by vehicle type" not in post_html
     assert "Freight elasticity diagnostics" not in post_html
