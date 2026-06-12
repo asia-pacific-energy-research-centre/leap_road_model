@@ -161,7 +161,12 @@ def test_dashboard_diagrams_are_written_to_shared_assets(tmp_path):
     index_html = (dashboard_dir / "index.html").read_text(encoding="utf-8")
     assert "../../../shared/dashboard_assets/end_to_end_road_model_workflow.png" in index_html
     assert "../../../shared/dashboard_assets/road_transport_model_researcher_detail.png" in index_html
+    assert "/road-model-docs/road_transport_model_overview.md" in index_html
     assert "/road-model-docs/road_transport_model_simplified.md" in index_html
+    assert "/road-model-docs/road_transport_model_detailed.md" in index_html
+    assert "Open road model overview" in index_html
+    assert "Open road model guide" in index_html
+    assert "Open detailed road model workflow" in index_html
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
@@ -199,16 +204,92 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
                 "freight_elasticity_data_source": "historical",
                 "freight_elasticity_note": "",
             },
+            {
+                "year": 2022,
+                "transport_type": "passenger",
+                "vehicle_type": "Light private vehicle",
+                "target_stock": 200.0,
+                "motorisation_level": 0.2,
+                "saturation_level": 0.6,
+                "original_saturation_level": 0.6,
+                "saturation_was_adjusted": False,
+                "original_vehicle_equivalent_weight": 1.0,
+                "adjusted_vehicle_equivalent_weight": 1.0,
+                "weight_calibration_applied": False,
+            },
+            {
+                "year": 2023,
+                "transport_type": "passenger",
+                "vehicle_type": "Light private vehicle",
+                "target_stock": 210.0,
+                "motorisation_level": 0.21,
+                "saturation_level": 0.6,
+                "original_saturation_level": 0.6,
+                "saturation_was_adjusted": False,
+                "original_vehicle_equivalent_weight": 1.0,
+                "adjusted_vehicle_equivalent_weight": 1.0,
+                "weight_calibration_applied": False,
+            },
         ]
     )
     t5_post = t5_pre.copy()
-    t5_post["target_stock"] = [80.0, 88.0]
+    t5_post["target_stock"] = [80.0, 88.0, 190.0, 195.0]
+    t13 = pd.DataFrame(
+        [
+            {
+                "year": 2022,
+                "transport_type": "freight",
+                "vehicle_type": "Trucks",
+                "drive_type": "ICE",
+                "mirror_stock": 80.0,
+                "mirror_energy_pj": 100.0,
+            },
+            {
+                "year": 2023,
+                "transport_type": "freight",
+                "vehicle_type": "Trucks",
+                "drive_type": "BEV",
+                "mirror_stock": 88.0,
+                "mirror_energy_pj": 102.0,
+            },
+            {
+                "year": 2022,
+                "transport_type": "passenger",
+                "vehicle_type": "Light private vehicle",
+                "drive_type": "ICE",
+                "mirror_stock": 190.0,
+                "mirror_energy_pj": 200.0,
+            },
+            {
+                "year": 2023,
+                "transport_type": "passenger",
+                "vehicle_type": "Light private vehicle",
+                "drive_type": "BEV",
+                "mirror_stock": 195.0,
+                "mirror_energy_pj": 190.0,
+            },
+        ]
+    )
+    gdp = pd.Series({2012: 80.0, 2022: 100.0, 2023: 105.0})
+    population = pd.Series({2012: 40.0, 2022: 50.0, 2023: 51.0})
+    esto_road_energy = pd.DataFrame(
+        [
+            {"year": 2012, "transport_type": "passenger", "energy_pj": 180.0},
+            {"year": 2022, "transport_type": "passenger", "energy_pj": 200.0},
+            {"year": 2012, "transport_type": "freight", "energy_pj": 80.0},
+            {"year": 2022, "transport_type": "freight", "energy_pj": 100.0},
+        ]
+    )
 
     written = write_module_pages(
         {
             "T5_pre_reconciliation": t5_pre,
             "T5_post_reconciliation": t5_post,
             "T5": t5_post,
+            "T13": t13,
+            "gdp": gdp,
+            "population": population,
+            "esto_road_energy_pj": esto_road_energy,
         },
         dashboard_dir=dashboard_dir,
         economy="01_AUS",
@@ -224,15 +305,20 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
     assert "Post-reconciliation stocks & turnover" in post_html
     assert "Implied projected freight energy growth" not in module3_html
     assert "Projected freight energy use is not shown because the base year has not yet been reconciled" in module3_html
+    assert "Passenger energy growth context" not in module3_html
     assert "Freight stock growth assumption" in post_html
     assert "Freight stock growth compared with GDP" in post_html
+    assert "Passenger energy growth context" in post_html
+    assert "Simulated projected passenger energy growth" in post_html
+    assert "Historical passenger energy index" in post_html
+    assert "Historical GDP per capita index" in post_html
     assert "Post-reconciliation results include a base-year energy calibration" in post_html
     assert "Projected GDP growth" in post_html
     assert "Implied projected freight stock growth" in post_html
-    assert "Implied projected freight energy growth" in post_html
+    assert "Simulated projected freight energy growth" in post_html
     assert "Historical freight energy index" in post_html
     assert "Historical GDP index" in post_html
-    assert "Implied projected freight energy index" in post_html
+    assert "Simulated projected freight energy index" in post_html
     assert "Show elasticity calculation details" in post_html
     assert "Freight elasticity by vehicle type" not in post_html
     assert "Freight elasticity diagnostics" not in post_html

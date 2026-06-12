@@ -3,7 +3,7 @@
 # Road transport model workflow guide
 
 > **Purpose note**  
-> This document is the implementation-oriented workflow guide for the road transport model in `leap_road_model`. It defines module boundaries, required logic, and expected outputs for the current codebase. For a shorter conceptual summary of the model, use `road_transport_model_simplified.md`
+> This document is the implementation-oriented workflow guide for the road transport model in `leap_road_model`. It defines module boundaries, required logic, and expected outputs for the current codebase. For a shorter conceptual guide to the model, use `road_transport_model_simplified.md`
 .
 
 This guide describes the Python-side workflow needed to prepare the road transport model before it is passed into LEAP.
@@ -1028,7 +1028,7 @@ Support files:
 
 Use this guide for implementation sequence and module responsibilities for Modules 2-7. It is the source of truth for Module 2-7 behavior.
 
-Use `road_transport_model_simplified.md` for the shorter conceptual explanation.
+Use `road_transport_model_simplified.md` for the shorter conceptual guide.
 
 Use `multinode_road_module1_repo_guide.md` in `road_model_inputs_interface/docs/new model/` for Module 1 behavior. That guide is the source of truth for Module 1 data sourcing, the CSV contract, the static row contract, researcher UI workflow, and versioning. The Module 1 sections in this document summarize the handoff contract only; always check that guide for full Module 1 details.
 

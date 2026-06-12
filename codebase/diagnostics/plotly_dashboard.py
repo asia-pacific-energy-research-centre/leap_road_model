@@ -885,6 +885,10 @@ def module3_figures(
     t5: pd.DataFrame,
     population: pd.Series | None = None,
     show_freight_energy_context: bool = False,
+    t13: pd.DataFrame | None = None,
+    show_passenger_energy_context: bool = False,
+    gdp: pd.Series | None = None,
+    esto_road_energy_pj: pd.DataFrame | None = None,
 ) -> list[tuple[str, Any]]:
     """Interactive QA figures for Module 3 stock targets (T5)."""
     if not _can_plot() or t5 is None or t5.empty:
@@ -1066,6 +1070,177 @@ def module3_figures(
                 caption += " Calibration was not applied for this run."
             figs.append(("Passenger X-LPV weight calibration", fig, caption))
 
+    if show_passenger_energy_context:
+        base_year = int(pd.to_numeric(t5["year"], errors="coerce").dropna().min()) if "year" in t5.columns else None
+
+        def _clean_year_series(series: pd.Series | None) -> pd.Series:
+            if series is None:
+                return pd.Series(dtype=float)
+            cleaned = pd.to_numeric(series, errors="coerce").dropna().sort_index()
+            cleaned.index = pd.to_numeric(cleaned.index, errors="coerce")
+            cleaned = cleaned[cleaned.index.notna()]
+            if cleaned.empty:
+                return pd.Series(dtype=float)
+            cleaned.index = cleaned.index.astype(int)
+            return cleaned.sort_index()
+
+        def _cagr_from_index(index_series: pd.Series) -> float | None:
+            if index_series.empty or len(index_series) < 2:
+                return None
+            first_year = int(index_series.index.min())
+            last_year = int(index_series.index.max())
+            periods = last_year - first_year
+            first_value = float(index_series.loc[first_year])
+            last_value = float(index_series.loc[last_year])
+            if periods <= 0 or first_value <= 0 or last_value <= 0:
+                return None
+            return (last_value / first_value) ** (1 / periods) - 1
+
+        def _index_to_base(series: pd.Series, base: int | None) -> pd.Series:
+            if base is None or series.empty:
+                return pd.Series(dtype=float)
+            base_value = series.get(base)
+            if base_value is None or pd.isna(base_value) or float(base_value) <= 0:
+                return pd.Series(dtype=float)
+            return series / float(base_value) * 100
+
+        def _fmt_rate(value: float | None) -> str:
+            if value is None or pd.isna(value):
+                return "n/a"
+            return f"{float(value) * 100:.2f}%/yr"
+
+        passenger_energy_index = pd.Series(dtype=float)
+        projected_passenger_energy_growth = None
+        if (
+            base_year is not None
+            and isinstance(t13, pd.DataFrame)
+            and not t13.empty
+            and {"year", "transport_type", "mirror_energy_pj"}.issubset(t13.columns)
+        ):
+            t13_passenger = t13[t13["transport_type"].astype(str).str.lower() == "passenger"].copy()
+            if not t13_passenger.empty:
+                projected_energy = (
+                    t13_passenger.groupby("year")["mirror_energy_pj"]
+                    .sum()
+                    .sort_index()
+                )
+                projected_energy = pd.to_numeric(projected_energy, errors="coerce").dropna()
+                passenger_energy_index = _index_to_base(projected_energy, base_year)
+                projected_passenger_energy_growth = _cagr_from_index(passenger_energy_index)
+
+        historical_energy_index = pd.Series(dtype=float)
+        historical_passenger_energy_growth = None
+        if (
+            base_year is not None
+            and
+            isinstance(esto_road_energy_pj, pd.DataFrame)
+            and not esto_road_energy_pj.empty
+            and {"year", "transport_type", "energy_pj"}.issubset(esto_road_energy_pj.columns)
+        ):
+            energy_df = esto_road_energy_pj[
+                esto_road_energy_pj["transport_type"].astype(str).str.lower() == "passenger"
+            ].copy()
+            if not energy_df.empty:
+                historical_energy = (
+                    energy_df.groupby("year")["energy_pj"]
+                    .sum()
+                    .sort_index()
+                )
+                historical_energy = pd.to_numeric(historical_energy, errors="coerce").dropna()
+                historical_energy = historical_energy[historical_energy.index <= base_year]
+                historical_energy_index = _index_to_base(historical_energy, base_year)
+                historical_passenger_energy_growth = _cagr_from_index(historical_energy_index.tail(11))
+
+        gdp_per_capita_index = pd.Series(dtype=float)
+        historical_gdp_per_capita_growth = None
+        projected_gdp_per_capita_growth = None
+        gdp_series = _clean_year_series(gdp)
+        population_series_for_gdp = _clean_year_series(population)
+        if base_year is not None and not gdp_series.empty and not population_series_for_gdp.empty:
+            common_years = gdp_series.index.intersection(population_series_for_gdp.index)
+            gdp_pc = gdp_series.loc[common_years] / population_series_for_gdp.loc[common_years].replace(0.0, float("nan"))
+            gdp_pc = gdp_pc.dropna().sort_index()
+            gdp_per_capita_index = _index_to_base(gdp_pc, base_year)
+            historical_gdp_per_capita_growth = _cagr_from_index(gdp_per_capita_index[gdp_per_capita_index.index <= base_year].tail(11))
+            projected_gdp_per_capita_growth = _cagr_from_index(gdp_per_capita_index[gdp_per_capita_index.index >= base_year])
+
+        if not passenger_energy_index.empty or not historical_energy_index.empty or not gdp_per_capita_index.empty:
+            fig = go.Figure()
+            if not historical_energy_index.empty:
+                fig.add_trace(go.Scatter(
+                    x=historical_energy_index.index.tolist(),
+                    y=historical_energy_index.tolist(),
+                    mode="lines",
+                    name="Historical passenger energy index",
+                    line=dict(color="#C26A00", width=2, dash="dot"),
+                    opacity=0.75,
+                ))
+            historical_gdp_pc = gdp_per_capita_index[gdp_per_capita_index.index <= base_year] if base_year is not None else pd.Series(dtype=float)
+            projected_gdp_pc = gdp_per_capita_index[gdp_per_capita_index.index >= base_year] if base_year is not None else pd.Series(dtype=float)
+            if not historical_gdp_pc.empty:
+                fig.add_trace(go.Scatter(
+                    x=historical_gdp_pc.index.tolist(),
+                    y=historical_gdp_pc.tolist(),
+                    mode="lines",
+                    name="Historical GDP per capita index",
+                    line=dict(color="#263238", width=2, dash="dot"),
+                    opacity=0.65,
+                ))
+            if not projected_gdp_pc.empty:
+                fig.add_trace(go.Scatter(
+                    x=projected_gdp_pc.index.tolist(),
+                    y=projected_gdp_pc.tolist(),
+                    mode="lines",
+                    name="Projected GDP per capita index",
+                    line=dict(color="#263238", width=3),
+                ))
+            if not passenger_energy_index.empty:
+                fig.add_trace(go.Scatter(
+                    x=passenger_energy_index.index.tolist(),
+                    y=passenger_energy_index.tolist(),
+                    mode="lines",
+                    name="Simulated projected passenger energy index",
+                    line=dict(color="#C26A00", width=3, dash="dash"),
+                ))
+            if base_year is not None:
+                fig.add_vline(
+                    x=base_year,
+                    line_width=2,
+                    line_dash="dot",
+                    line_color="#7A869A",
+                    annotation_text="Base year",
+                    annotation_position="top",
+                )
+            fig.update_layout(
+                **_layout("Passenger energy growth compared with GDP per capita"),
+                yaxis_title=f"Index ({base_year} = 100)" if base_year is not None else "Index",
+                xaxis_title="Year",
+            )
+            kpis = [
+                ("Historical passenger energy growth", _fmt_rate(historical_passenger_energy_growth)),
+                ("Historical GDP per capita growth", _fmt_rate(historical_gdp_per_capita_growth)),
+                ("Projected GDP per capita growth", _fmt_rate(projected_gdp_per_capita_growth)),
+                ("Simulated projected passenger energy growth", _fmt_rate(projected_passenger_energy_growth)),
+            ]
+            kpi_html = "".join(
+                '<div class="kpi-item">'
+                f'<span>{escape(label)}</span>'
+                f'<strong>{escape(value)}</strong>'
+                '</div>'
+                for label, value in kpis
+            )
+            caption = (
+                f"<p>Passenger energy and GDP per capita are indexed to {base_year} = 100. "
+                "Dotted lines show historical growth before the base year; the dashed passenger energy line uses Module 7 simulated energy, "
+                "so it reflects stock, mileage, efficiency, turnover, and drive-mix changes.</p>"
+                f'<div class="kpi-grid">{kpi_html}</div>'
+            )
+            figs.append((
+                "Passenger energy growth context",
+                fig,
+                caption,
+            ))
+
     if {"year", "transport_type", "vehicle_type", "target_stock", "gdp_elasticity_used"}.issubset(t5.columns):
         freight_sub = t5[t5["transport_type"] == "freight"].copy()
         if not freight_sub.empty:
@@ -1120,15 +1295,17 @@ def module3_figures(
                         name="GDP index",
                         line=dict(color="#263238", width=3),
                     ))
+            indexed_stock_series_by_label: dict[str, pd.Series] = {}
             for i, (vt, grp) in enumerate(freight_sub.groupby("vehicle_type")):
                 series = grp.groupby("year")["target_stock"].sum().sort_index()
                 base = base_stocks.get(vt)
-                indexed = (series / base * 100).tolist() if (base is not None and base > 0) else series.tolist()
+                indexed_series = (series / base * 100) if (base is not None and base > 0) else series
                 el_val = el_map.get(vt)
                 el_str = f" (ε={el_val:.2f})" if el_val is not None and not pd.isna(el_val) else ""
                 label = _freight_vehicle_label(str(vt))
+                indexed_stock_series_by_label[label] = indexed_series
                 fig.add_trace(go.Scatter(
-                    x=series.index.tolist(), y=indexed,
+                    x=series.index.tolist(), y=indexed_series.tolist(),
                     mode="lines+markers",
                     name=f"{label} stock index{el_str}",
                     line=dict(color=_vehicle_type_colour(str(vt), i)),
@@ -1186,17 +1363,33 @@ def module3_figures(
                 if projected_gdp_growth is not None and not selected_elasticities.empty
                 else pd.Series(dtype=float)
             )
-            implied_projected_energy_growth = (
-                float(implied_projected_growth.mean())
-                if not implied_projected_growth.empty
-                else None
-            )
             lookback_years = 10
 
             def _indexed_growth_line(growth_rate: float | None, years: list[int]) -> list[float] | None:
                 if growth_rate is None or pd.isna(growth_rate):
                     return None
                 return [100 * ((1 + float(growth_rate)) ** (year - base_year)) for year in years]
+
+            simulated_freight_energy_index = pd.Series(dtype=float)
+            simulated_projected_energy_growth = None
+            if (
+                show_freight_energy_context
+                and isinstance(t13, pd.DataFrame)
+                and not t13.empty
+                and {"year", "transport_type", "mirror_energy_pj"}.issubset(t13.columns)
+            ):
+                t13_freight = t13[t13["transport_type"].astype(str).str.lower() == "freight"].copy()
+                if not t13_freight.empty:
+                    freight_energy = (
+                        t13_freight.groupby("year")["mirror_energy_pj"]
+                        .sum()
+                        .sort_index()
+                    )
+                    freight_energy = pd.to_numeric(freight_energy, errors="coerce").dropna()
+                    base_energy = freight_energy.get(base_year)
+                    if base_energy is not None and pd.notna(base_energy) and float(base_energy) > 0:
+                        simulated_freight_energy_index = freight_energy / float(base_energy) * 100
+                        simulated_projected_energy_growth = _cagr_from_index(simulated_freight_energy_index)
 
             historical_years = list(range(base_year - lookback_years, base_year + 1))
             projection_years = (
@@ -1206,7 +1399,6 @@ def module3_figures(
             )
             historical_energy_index = _indexed_growth_line(energy_growth, historical_years)
             historical_gdp_index = _indexed_growth_line(gdp_growth, historical_years)
-            implied_projected_energy_index = _indexed_growth_line(implied_projected_energy_growth, projection_years)
 
             if show_freight_energy_context and historical_gdp_index is not None:
                 fig.add_trace(go.Scatter(
@@ -1226,12 +1418,12 @@ def module3_figures(
                     line=dict(color="#C26A00", width=2, dash="dot"),
                     opacity=0.75,
                 ))
-            if show_freight_energy_context and implied_projected_energy_index is not None and len(projection_years) >= 2:
+            if show_freight_energy_context and not simulated_freight_energy_index.empty and len(simulated_freight_energy_index) >= 2:
                 fig.add_trace(go.Scatter(
-                    x=projection_years,
-                    y=implied_projected_energy_index,
+                    x=simulated_freight_energy_index.index.tolist(),
+                    y=simulated_freight_energy_index.tolist(),
                     mode="lines",
-                    name="Implied projected freight energy index",
+                    name="Simulated projected freight energy index",
                     line=dict(color="#C26A00", width=3, dash="dash"),
                 ))
             if show_freight_energy_context:
@@ -1287,8 +1479,8 @@ def module3_figures(
                 )
             if show_freight_energy_context:
                 kpi_parts.append(
-                    '<div class="kpi-item"><span>Implied projected freight energy growth</span>'
-                    f'<strong>{_fmt_num(implied_projected_energy_growth * 100 if implied_projected_energy_growth is not None else None, suffix="%/yr")}</strong></div>'
+                    '<div class="kpi-item"><span>Simulated projected freight energy growth</span>'
+                    f'<strong>{_fmt_num(simulated_projected_energy_growth * 100 if simulated_projected_energy_growth is not None else None, suffix="%/yr")}</strong></div>'
                 )
             kpi_parts.extend([
                 '<div class="kpi-item"><span>Clamp/override applied</span>'
@@ -1299,24 +1491,50 @@ def module3_figures(
                 len(selected_elasticities) > 1
                 and selected_elasticities.round(6).nunique() == 1
             )
-            overlap_note = (
-                "<p>LCV and Truck use the same freight elasticity, so their indexed stock lines may overlap.</p>"
-                if equal_elasticities else ""
-            )
-            freight_energy_context_note = (
-                "<p>Post-reconciliation results include a base-year energy calibration, so the dashed freight energy line "
-                "shows the projected freight energy growth implied by the selected elasticity and projected GDP growth. "
-                "Use it as a comparison against the historical freight energy and GDP growth rates, not as a replacement "
-                "for the detailed Module 6 fuel reconciliation outputs.</p>"
-                "<p>Dotted lines before the base year show the historical growth rates used to estimate elasticity. "
-                "The dashed freight energy line after the base year shows the projected growth implied by the selected elasticity.</p>"
-                if show_freight_energy_context
-                else (
-                    "<p>At this pre-reconciliation stage, the dashboard only knows the freight stock trajectory. "
-                    "Projected freight energy use is not shown because the base year has not yet been reconciled to ESTO fuel energy. "
-                    "Use the post-reconciliation stock page to compare implied projected freight energy growth with historical rates.</p>"
+            lcv_stock_index = indexed_stock_series_by_label.get("LCV")
+            truck_stock_index = indexed_stock_series_by_label.get("Truck")
+            lcv_truck_overlap = False
+            if lcv_stock_index is not None and truck_stock_index is not None:
+                common_years = lcv_stock_index.index.intersection(truck_stock_index.index)
+                if len(common_years) > 0:
+                    lcv_truck_overlap = bool(np.allclose(
+                        lcv_stock_index.loc[common_years].astype(float).to_numpy(),
+                        truck_stock_index.loc[common_years].astype(float).to_numpy(),
+                        equal_nan=True,
+                    ))
+            overlap_note = ""
+            if lcv_truck_overlap:
+                overlap_note = (
+                    "<p>LCV and Truck have the same indexed stock trajectory in this chart, "
+                    "so one line may sit directly on top of the other.</p>"
                 )
-            )
+            elif equal_elasticities and lcv_stock_index is not None and truck_stock_index is not None:
+                overlap_note = (
+                    "<p>LCV and Truck use the same freight elasticity, but this chart reflects the rendered stock trajectories. "
+                    "If post-reconciliation adjustments differ by vehicle type, their indexed lines can still diverge.</p>"
+                )
+            if show_freight_energy_context and not simulated_freight_energy_index.empty:
+                freight_energy_context_note = (
+                    "<p>Post-reconciliation results include a base-year energy calibration and Module 7 simulation, "
+                    "so the dashed freight energy line uses simulated freight energy from stock, mileage, efficiency, "
+                    "turnover, and drive-mix assumptions. Use it to compare projected freight energy growth against "
+                    "historical freight energy and GDP growth rates.</p>"
+                    "<p>Dotted lines before the base year show the historical growth rates used to estimate elasticity. "
+                    "The dashed freight energy line after the base year shows simulated projected freight energy indexed "
+                    "to the reconciled base year.</p>"
+                )
+            elif show_freight_energy_context:
+                freight_energy_context_note = (
+                    "<p>Post-reconciliation stock results are available, but Module 7 simulated freight energy is not available "
+                    "in this dashboard run. Energy growth is therefore not plotted here; use the Module 7 page after simulation "
+                    "outputs are generated.</p>"
+                )
+            else:
+                freight_energy_context_note = (
+                    "<p>At this pre-reconciliation stage, the dashboard only knows the freight stock trajectory. "
+                    "Projected freight energy use is not shown because the base year has not yet been reconciled to ESTO fuel energy "
+                    "and Module 7 has not simulated stock, mileage, efficiency, turnover, and drive mix.</p>"
+                )
             caption = (
                 '<p class="chart-subtitle">Freight stock growth compared with GDP</p>'
                 f"<p>Freight stock is indexed to {base_year} = 100. "
@@ -2787,6 +3005,10 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
             t5,
             population=workflow_outputs.get("population"),
             show_freight_energy_context=t5_is_post_reconciliation,
+            t13=workflow_outputs.get("T13"),
+            show_passenger_energy_context=t5_is_post_reconciliation,
+            gdp=workflow_outputs.get("gdp"),
+            esto_road_energy_pj=workflow_outputs.get("esto_road_energy_pj"),
         )
         if isinstance(t5, pd.DataFrame) and not t5.empty
         else []
@@ -2878,6 +3100,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         "Stock trajectory by vehicle type",
         "Passenger X-LPV-equivalent vehicles vs saturation",
         "Freight stock growth assumption",
+        "Passenger energy growth context",
         "Adjustment scalars by branch",
         "Final fuel allocation share by vehicle type and drive (2022)",
         "Mileage distribution",
@@ -3022,7 +3245,9 @@ _NAV_LINKS: list[tuple[str, str]] = [
     ("workflow_summary.html", "Summary"),
 ]
 
-_ROAD_MODEL_DOC_HREF = "/road-model-docs/road_transport_model_simplified.md"
+_ROAD_MODEL_OVERVIEW_HREF = "/road-model-docs/road_transport_model_overview.md"
+_ROAD_MODEL_GUIDE_HREF = "/road-model-docs/road_transport_model_simplified.md"
+_ROAD_MODEL_DETAILED_HREF = "/road-model-docs/road_transport_model_detailed.md"
 
 _CSS = """
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:0;background:#f5f5f5;color:#333}
@@ -3276,7 +3501,11 @@ def _index_extra_html(
         '<p>This dashboard is a quality-check guide for the road model. It helps you move through the modelling outputs in the same order that it is completed, to help you better understand the model itself too.</p>'
         '<p style="margin:8px 0 4px 0;font-size:.9rem;color:#4a4a4a"><b>Recommended review order:</b> '
         'Inputs &amp; branches → Stocks &amp; sales → Reconciliation → Post-Reconciliation stocks → Outputs → Summary</p>'
-        f'<a class="doc-link" href="{_ROAD_MODEL_DOC_HREF}" target="_blank" rel="noopener">Open simplified road model documentation</a>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;margin-top:10px">'
+        f'<a class="doc-link" href="{_ROAD_MODEL_OVERVIEW_HREF}" target="_blank" rel="noopener">Open road model overview</a>'
+        f'<a class="doc-link" href="{_ROAD_MODEL_GUIDE_HREF}" target="_blank" rel="noopener">Open road model guide</a>'
+        f'<a class="doc-link" href="{_ROAD_MODEL_DETAILED_HREF}" target="_blank" rel="noopener">Open detailed road model workflow</a>'
+        f'</div>'
         '</div>'
     )
 
@@ -3469,12 +3698,17 @@ def write_module_pages(
                 t5_post,
                 population=workflow_outputs.get("population"),
                 show_freight_energy_context=True,
+                t13=workflow_outputs.get("T13"),
+                show_passenger_energy_context=True,
+                gdp=workflow_outputs.get("gdp"),
+                esto_road_energy_pj=workflow_outputs.get("esto_road_energy_pj"),
             ),
             {
                 "Target stock trajectories",
                 "Freight stock growth assumption",
                 "Passenger X-LPV-equivalent vehicles vs saturation",
                 "Passenger X-LPV weight calibration",
+                "Passenger energy growth context",
             },
         ))
     if isinstance(t6_post, pd.DataFrame) and not t6_post.empty:

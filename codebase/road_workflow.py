@@ -893,6 +893,8 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
     outputs["module1_merged"] = _merged
     outputs["module1_raw_df"] = m1["raw_leap_df"]
     outputs["population"] = inputs.population
+    outputs["gdp"] = inputs.gdp
+    outputs["esto_road_energy_pj"] = inputs.esto_road_energy_pj
 
     if diagnostics_dir is not None:
         try:
