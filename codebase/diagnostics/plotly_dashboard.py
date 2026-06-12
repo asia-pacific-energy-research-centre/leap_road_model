@@ -1109,6 +1109,19 @@ def module3_figures(
                 return "n/a"
             return f"{float(value) * 100:.2f}%/yr"
 
+        passenger_stock_index = pd.Series(dtype=float)
+        projected_passenger_stock_growth = None
+        if base_year is not None and {"year", "transport_type", "target_stock"}.issubset(t5.columns):
+            passenger_stock = (
+                t5[t5["transport_type"].astype(str).str.lower() == "passenger"]
+                .groupby("year")["target_stock"]
+                .sum()
+                .sort_index()
+            )
+            passenger_stock = pd.to_numeric(passenger_stock, errors="coerce").dropna()
+            passenger_stock_index = _index_to_base(passenger_stock, base_year)
+            projected_passenger_stock_growth = _cagr_from_index(passenger_stock_index)
+
         passenger_energy_index = pd.Series(dtype=float)
         projected_passenger_energy_growth = None
         if (
@@ -1164,7 +1177,12 @@ def module3_figures(
             historical_gdp_per_capita_growth = _cagr_from_index(gdp_per_capita_index[gdp_per_capita_index.index <= base_year].tail(11))
             projected_gdp_per_capita_growth = _cagr_from_index(gdp_per_capita_index[gdp_per_capita_index.index >= base_year])
 
-        if not passenger_energy_index.empty or not historical_energy_index.empty or not gdp_per_capita_index.empty:
+        if (
+            not passenger_stock_index.empty
+            or not passenger_energy_index.empty
+            or not historical_energy_index.empty
+            or not gdp_per_capita_index.empty
+        ):
             fig = go.Figure()
             if not historical_energy_index.empty:
                 fig.add_trace(go.Scatter(
@@ -1194,6 +1212,14 @@ def module3_figures(
                     name="Projected GDP per capita index",
                     line=dict(color="#263238", width=3),
                 ))
+            if not passenger_stock_index.empty:
+                fig.add_trace(go.Scatter(
+                    x=passenger_stock_index.index.tolist(),
+                    y=passenger_stock_index.tolist(),
+                    mode="lines+markers",
+                    name="Projected passenger stock index",
+                    line=dict(color="#1565C0", width=3),
+                ))
             if not passenger_energy_index.empty:
                 fig.add_trace(go.Scatter(
                     x=passenger_energy_index.index.tolist(),
@@ -1220,6 +1246,7 @@ def module3_figures(
                 ("Historical passenger energy growth", _fmt_rate(historical_passenger_energy_growth)),
                 ("Historical GDP per capita growth", _fmt_rate(historical_gdp_per_capita_growth)),
                 ("Projected GDP per capita growth", _fmt_rate(projected_gdp_per_capita_growth)),
+                ("Projected passenger stock growth", _fmt_rate(projected_passenger_stock_growth)),
                 ("Simulated projected passenger energy growth", _fmt_rate(projected_passenger_energy_growth)),
             ]
             kpi_html = "".join(
@@ -1231,6 +1258,7 @@ def module3_figures(
             )
             caption = (
                 f"<p>Passenger energy and GDP per capita are indexed to {base_year} = 100. "
+                "The passenger stock line is the Module 3/4 stock trajectory, which is driven by the GDP-per-capita motorisation envelope. "
                 "Dotted lines show historical growth before the base year; the dashed passenger energy line uses Module 7 simulated energy, "
                 "so it reflects stock, mileage, efficiency, turnover, and drive-mix changes.</p>"
                 f'<div class="kpi-grid">{kpi_html}</div>'
@@ -1312,7 +1340,7 @@ def module3_figures(
                 ))
             fig.update_layout(
                 **_layout("Freight stock growth compared with GDP"),
-                yaxis_title=f"Stock index ({base_year} = 100)",
+                yaxis_title=f"Index ({base_year} = 100)",
                 xaxis_title="Year",
             )
 
@@ -1397,6 +1425,29 @@ def module3_figures(
                 if not gdp_index.empty
                 else sorted(int(year) for year in freight_sub["year"].dropna().unique().tolist())
             )
+            if not gdp_index.empty and not selected_elasticities.empty:
+                if selected_elasticities.round(6).nunique() == 1:
+                    elasticity = float(selected_elasticities.iloc[0])
+                    estimate = 100 * ((gdp_index / 100) ** elasticity)
+                    fig.add_trace(go.Scatter(
+                        x=estimate.index.tolist(),
+                        y=estimate.tolist(),
+                        mode="lines",
+                        name=f"Freight stock estimate from elasticity (epsilon={elasticity:.2f})",
+                        line=dict(color="#00897B", width=3, dash="dash"),
+                    ))
+                else:
+                    for idx, (vt, elasticity) in enumerate(selected_elasticities.items()):
+                        estimate = 100 * ((gdp_index / 100) ** float(elasticity))
+                        label = _freight_vehicle_label(str(vt))
+                        fig.add_trace(go.Scatter(
+                            x=estimate.index.tolist(),
+                            y=estimate.tolist(),
+                            mode="lines",
+                            name=f"{label} stock estimate from elasticity (epsilon={float(elasticity):.2f})",
+                            line=dict(color=_vehicle_type_colour(str(vt), idx), width=2, dash="dash"),
+                            opacity=0.8,
+                        ))
             historical_energy_index = _indexed_growth_line(energy_growth, historical_years)
             historical_gdp_index = _indexed_growth_line(gdp_growth, historical_years)
 
@@ -1538,7 +1589,8 @@ def module3_figures(
             caption = (
                 '<p class="chart-subtitle">Freight stock growth compared with GDP</p>'
                 f"<p>Freight stock is indexed to {base_year} = 100. "
-                "The gap between GDP and freight stock shows the effect of the selected freight elasticity.</p>"
+                "Solid stock lines show the rendered freight stock trajectory. The green dashed stock estimate shows the "
+                "GDP-elasticity calculation that drives the freight stock growth assumption before any later adjustments.</p>"
                 + freight_energy_context_note
                 + f"{overlap_note}"
                 + f'<div class="kpi-grid">{"".join(kpi_parts)}</div>'
