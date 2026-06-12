@@ -314,6 +314,8 @@ def _populate_base_year_values(
         t4 = branches.merge(wide, on=base_join_keys, how="left")
         t4 = _split_stock_equally_across_sizes(t4)
 
+    t4 = _apply_technology_stock_shares(t4, base_data, base_year)
+
     # Fallback: distribute vehicle_type-level stock equally across all branches.
     # Module 1 provides stock only at vehicle_type level (e.g. Demand\Passenger road\LPVs),
     # with no drive_type or size qualifier. The drive_type-keyed join above misses these rows.
@@ -449,6 +451,80 @@ def _split_stock_equally_across_sizes(t4: pd.DataFrame) -> pd.DataFrame:
         )
 
     return t4.drop(columns=["n_sizes"])
+
+
+def _apply_technology_stock_shares(
+    t4: pd.DataFrame,
+    base_data: pd.DataFrame,
+    base_year: int,
+) -> pd.DataFrame:
+    """
+    Use technology-level Stock Share rows to distribute vehicle-level Stock.
+
+    Module 1 stores physical stock at vehicle-type level and technology shares
+    at the drive/size level. Without this step, vehicle-level stock is spread
+    equally across technologies, so reconciled Stock Share rows from the
+    reimport CSV have no effect on the next model run.
+    """
+    required = {
+        "economy",
+        "scenario",
+        "transport_type",
+        "vehicle_type",
+        "drive_type",
+        "variable",
+        "value",
+    }
+    if not required.issubset(base_data.columns) or "stock" not in t4.columns:
+        return t4
+
+    stock_rows = base_data[
+        (base_data["year"].astype(int) == int(base_year))
+        & (base_data["variable"] == "stock")
+        & base_data["vehicle_type"].notna()
+        & base_data["drive_type"].isna()
+    ].copy()
+    share_rows = base_data[
+        (base_data["year"].astype(int) == int(base_year))
+        & (base_data["variable"] == "stock_share")
+        & base_data["vehicle_type"].notna()
+        & base_data["drive_type"].notna()
+    ].copy()
+    if stock_rows.empty or share_rows.empty:
+        return t4
+
+    vehicle_keys = ["economy", "scenario", "transport_type", "vehicle_type"]
+    tech_keys = vehicle_keys + ["drive_type"]
+    if "size" in t4.columns and "size" in share_rows.columns:
+        tech_keys.append("size")
+
+    stock_lookup = (
+        stock_rows[vehicle_keys + ["value", "source_flag"]]
+        .dropna(subset=["value"])
+        .groupby(vehicle_keys, dropna=False)
+        .agg(_vehicle_stock=("value", "first"), _stock_source_flag=("source_flag", "first"))
+        .reset_index()
+    )
+    share_lookup = (
+        share_rows[tech_keys + ["value", "source_flag"]]
+        .dropna(subset=["value"])
+        .groupby(tech_keys, dropna=False)
+        .agg(_tech_stock_share=("value", "first"), _share_source_flag=("source_flag", "first"))
+        .reset_index()
+    )
+    if stock_lookup.empty or share_lookup.empty:
+        return t4
+
+    out = t4.merge(stock_lookup, on=vehicle_keys, how="left").merge(share_lookup, on=tech_keys, how="left")
+    has_share = out["_vehicle_stock"].notna() & out["_tech_stock_share"].notna()
+    if has_share.any():
+        out.loc[has_share, "stock"] = out.loc[has_share, "_vehicle_stock"] * out.loc[has_share, "_tech_stock_share"] / 100.0
+        out.loc[has_share, "stock_source_flag"] = out.loc[has_share, "_share_source_flag"].fillna(out.loc[has_share, "_stock_source_flag"])
+        out["stock_granularity"] = out.get("stock_granularity", pd.Series("branch_level", index=out.index))
+        out.loc[has_share, "stock_granularity"] = "technology_stock_share"
+        log.info("Distributed vehicle_type-level stock using technology Stock Share for %d branch rows", int(has_share.sum()))
+
+    return out.drop(columns=["_vehicle_stock", "_stock_source_flag", "_tech_stock_share", "_share_source_flag"])
 
 
 def _join_leap_ids(t4: pd.DataFrame, leap_workbook_path: str | Path) -> pd.DataFrame:

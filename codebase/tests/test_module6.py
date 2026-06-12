@@ -827,3 +827,55 @@ class TestBuildLeapReadyTable:
         assert not t11[(t11["variable"] == "Stock Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")].empty
         assert not t11[(t11["variable"] == "Sales Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")].empty
         assert not t11[(t11["variable"] == "Sales Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs\\BEV")].empty
+
+    def test_leap_ready_table_exports_correction_factors(self):
+        t9 = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "scenario": "Target",
+                "base_year": 2022,
+                "transport_type": "freight",
+                "vehicle_type": "LCVs",
+                "drive_type": "BEV",
+                "size": None,
+                "fuel": "Electricity",
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV\\Electricity",
+                "adjusted_stock": 300.0,
+                "adjusted_mileage_km_per_year": 8000.0,
+                "adjusted_efficiency_km_per_gj": 200.0,
+                "final_branch_fuel_pj": 0.012,
+            },
+        ])
+        t10 = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "scenario": "Target",
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV\\Electricity",
+                "device_share": 1.0,
+            }
+        ])
+        factors = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "scenario": "Target",
+                "year": 2030,
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV\\Electricity",
+                "value": 0.95,
+            }
+        ])
+
+        t11 = build_leap_ready_table(
+            t9,
+            t10,
+            pd.DataFrame(),
+            pd.DataFrame(),
+            projection_years=[2022, 2030],
+            mileage_correction_factors=factors,
+            fuel_economy_correction_factors=factors.assign(value=1.05),
+        )
+
+        mileage_factor = t11[t11["variable"].eq("Mileage Correction Factor")].iloc[0]
+        efficiency_factor = t11[t11["variable"].eq("Fuel Economy Correction Factor")].iloc[0]
+        assert mileage_factor["year"] == 2030
+        assert mileage_factor["value"] == pytest.approx(0.95)
+        assert efficiency_factor["value"] == pytest.approx(1.05)

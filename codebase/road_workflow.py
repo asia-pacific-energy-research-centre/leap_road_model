@@ -859,10 +859,21 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
     # The base year is scenario-agnostic — replicate rows for every requested scenario
     # so Module 2's cross-join finds matching data regardless of which scenario is run.
     if "scenario" in _merged.columns and config.scenarios:
-        existing = set(_merged["scenario"].dropna().unique())
+        core_base_vars = {"stock", "mileage", "efficiency"}
+        core_base_rows = _merged[_merged["variable"].isin(core_base_vars)]
+        existing = {
+            str(scenario_name)
+            for scenario_name, rows in core_base_rows.groupby("scenario")
+            if core_base_vars.issubset(set(rows["variable"].dropna().astype(str)))
+        }
         missing = [s for s in config.scenarios if s not in existing]
         if missing:
-            base_rows = _merged[_merged["scenario"].isin(existing)].copy()
+            if "Current Accounts" in set(_merged["scenario"].dropna().unique()):
+                base_rows = _merged[_merged["scenario"].eq("Current Accounts")].copy()
+            else:
+                base_rows = _merged[~_merged["scenario"].isin(config.scenarios)].copy()
+            if base_rows.empty:
+                base_rows = _merged.copy()
             extras = [base_rows.assign(scenario=s) for s in missing]
             _merged = pd.concat([_merged] + extras, ignore_index=True)
     logger.info(
@@ -931,6 +942,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         t4 = outputs.get("T4")
 
     # ------------------------ Module 3 ------------------------
+    stock_target_overrides_applied = False
     if config.run_m3:
         if t4 is None:
             t4 = outputs.get("T4")
@@ -990,6 +1002,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         # rows, use those pre-computed trajectories so that a second run from the
         # reconciled CSV produces identical outputs to the first run.
         _stock_target_overrides = _extract_stock_target_overrides(m1.get("raw_leap_df"))
+        stock_target_overrides_applied = bool(_stock_target_overrides)
         if _stock_target_overrides:
             t5 = _apply_stock_target_overrides(t5, _stock_target_overrides, config.base_year)
             _print_progress(
@@ -1139,7 +1152,11 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         t6_pre_reconciliation = t6.copy() if isinstance(t6, pd.DataFrame) else None
         t6v_pre_reconciliation = t6v.copy() if isinstance(t6v, pd.DataFrame) else None
 
-        if config.adjust_stock_targets_after_reconciliation and isinstance(t5, pd.DataFrame):
+        if (
+            config.adjust_stock_targets_after_reconciliation
+            and isinstance(t5, pd.DataFrame)
+            and not stock_target_overrides_applied
+        ):
             t5_post_reconciliation = build_post_reconciliation_stock_targets(
                 t5,
                 m6["T9"],
@@ -1484,13 +1501,6 @@ def _default_leap_reference_path() -> Path | None:
     repo_root = Path(__file__).resolve().parents[1]
     candidates = [
         repo_root / "config" / "road model leap export.xlsx",
-        repo_root.parent
-        / "road_model_inputs_interface"
-        / "back-end"
-        / "data"
-        / "road_model"
-        / "leap_import_workbooks"
-        / "transport_leap_export_combined_ALL_ECONS_domestic_international_Target_20260526.xlsx",
         Path(r"C:\Users\Work\github\leap_utilities\data\full model export.xlsx"),
     ]
     return next((path for path in candidates if path.exists()), None)

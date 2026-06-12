@@ -98,6 +98,7 @@ def build_reconciled_module1_reimport(
     is supplied, "Stock Target" rows are appended for every projection year so that
     a second model run started from this CSV produces identical stock trajectories.
     """
+    source_long_df = source_long_df.drop_duplicates().copy()
     _validate_unique_keys(source_long_df, context="source Module 1")
 
     out = _ensure_reimport_columns(source_long_df)

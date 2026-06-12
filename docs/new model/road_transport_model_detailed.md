@@ -856,10 +856,9 @@ own internal IDs or the import will fail. The file must be regenerated from LEAP
 whenever the road transport branch structure is changed (branches added, renamed,
 or removed). All APEC economy LEAP models share the same "clean slate" road
 transport branch structure, so one export file covers all economies. If the
-reference file is missing, the workflow falls back to other candidates (e.g. a
-combined export in the sibling `road_model_inputs_interface` repo); if no
-candidate is found, the strict writer is bypassed and LEAP cannot import the
-output.
+repo-local reference file is missing, the workflow can fall back only to the
+reviewed full-model export under `leap_utilities`; if no candidate is found, the
+strict writer is bypassed and LEAP cannot import the output.
 The `LEAP` sheet keeps LEAP's import column structure: ID columns,
 `Branch Path`, `Variable`, `Scenario`, `Region`, `Scale`, `Units`, `Per...`,
 `Expression`, a blank spacer column, and `Level 1` through `Level 8...`. The
