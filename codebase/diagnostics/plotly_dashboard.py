@@ -3414,6 +3414,10 @@ nav a:hover,nav a.active{background:rgba(255,255,255,.2);color:white}
 .page-wrap{max-width:1760px;margin:0 auto}
 .page-title{padding:20px 24px 4px;font-size:1.35rem;font-weight:600;color:#1a237e}
 .page-desc{padding:0 24px 16px;color:#666;font-size:.9rem}
+.scenario-control{display:flex;align-items:center;gap:8px;margin:0 20px 16px;padding:10px 12px;background:white;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);width:max-content;max-width:calc(100% - 40px)}
+.scenario-control label{font-size:.82rem;font-weight:700;color:#1a237e;white-space:nowrap}
+.scenario-select{font-size:.86rem;border:1px solid #d7dbe7;border-radius:6px;background:white;color:#263238;padding:5px 28px 5px 8px;min-width:150px}
+.scenario-hidden{display:none!important}
 .intro-card{background:white;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);margin:8px 20px 18px;padding:16px}
 .intro-card h3{margin:0 0 10px 0;color:#1a237e;font-size:1rem}
 .intro-card p,.intro-card li{font-size:.9rem;color:#4a4a4a;line-height:1.55}
@@ -3469,6 +3473,7 @@ footer{text-align:center;padding:20px;color:#aaa;font-size:.78rem}
 .intro-card{margin:8px 16px 14px;padding:14px}
 .page-title{padding:18px 16px 4px}
 .page-desc,.alert{margin-left:16px;margin-right:16px;padding-left:0;padding-right:0}
+.scenario-control{margin-left:16px;margin-right:16px;max-width:calc(100% - 32px)}
 }
 .density-toggle{display:flex;align-items:center;gap:4px;margin-left:auto}
 .density-label{font-size:.78rem;color:#bbdefb;margin-right:2px;white-space:nowrap}
@@ -3568,7 +3573,7 @@ _DENSITY_SCRIPT = """
         });
         document.querySelectorAll('.charts-pair').forEach(function (pair) {
             var anyVisible = Array.from(pair.children).some(function (c) {
-                return c.style.display !== 'none';
+                return c.style.display !== 'none' && !c.classList.contains('scenario-hidden');
             });
             pair.style.display = anyVisible ? '' : 'none';
         });
@@ -3584,6 +3589,45 @@ _DENSITY_SCRIPT = """
         applyDensity(saved && LEVELS.indexOf(saved) !== -1 ? saved : DEFAULT);
         document.querySelectorAll('.density-btn').forEach(function (btn) {
             btn.addEventListener('click', function () { applyDensity(btn.dataset.level); });
+        });
+    });
+})();
+</script>
+"""
+
+_SCENARIO_SCRIPT = """
+<script>
+(function () {
+    function resizeVisiblePlots() {
+        if (!window.Plotly || !window.Plotly.Plots || !window.Plotly.Plots.resize) return;
+        document.querySelectorAll('.chart-card .plotly-graph-div').forEach(function (el) {
+            if (el.offsetParent === null) return;
+            try { window.Plotly.Plots.resize(el); } catch (_err) {}
+        });
+    }
+
+    function updatePairs() {
+        document.querySelectorAll('.charts-pair').forEach(function (pair) {
+            var anyVisible = Array.from(pair.children).some(function (card) {
+                return !card.classList.contains('scenario-hidden') && card.style.display !== 'none';
+            });
+            pair.style.display = anyVisible ? '' : 'none';
+        });
+    }
+
+    function applyScenario(scenario) {
+        document.querySelectorAll('[data-scenario]').forEach(function (card) {
+            card.classList.toggle('scenario-hidden', card.getAttribute('data-scenario') !== scenario);
+        });
+        updatePairs();
+        window.setTimeout(resizeVisiblePlots, 40);
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('.scenario-select').forEach(function (select) {
+            if (!select.value && select.options.length) select.value = select.options[0].value;
+            applyScenario(select.value);
+            select.addEventListener('change', function () { applyScenario(select.value); });
         });
     });
 })();
@@ -3733,8 +3777,16 @@ def _build_html_page(
     if figures:
         rendered: list[str] = []
         half_buffer: list[str] = []
+        scenario_labels: list[str] = []
+        seen_scenarios: set[str] = set()
         for idx, item in enumerate(figures):
             title, fig = item[0], item[1]
+            metadata = item[-1] if len(item) > 2 and isinstance(item[-1], dict) else {}
+            scenario_label = str(metadata.get("scenario", "")).strip()
+            scenario_attr = f' data-scenario="{escape(scenario_label)}"' if scenario_label else ""
+            if scenario_label and scenario_label not in seen_scenarios:
+                seen_scenarios.add(scenario_label)
+                scenario_labels.append(scenario_label)
             half = False
             explicit_wide = False
             caption = ""
@@ -3767,7 +3819,8 @@ def _build_html_page(
             )
             caption_html = f'<div class="chart-caption">{caption}</div>' if caption else ""
             density = _chart_density_level(title)
-            card_html = f'<div class="chart-card" data-density="{density}"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
+            title_html = escape(str(title))
+            card_html = f'<div class="chart-card" data-density="{density}"{scenario_attr}><div class="chart-title">{title_html}</div>{caption_html}{fig_html}{after_html}</div>'
 
             if half:
                 half_buffer.append(card_html)
@@ -3780,13 +3833,25 @@ def _build_html_page(
                     half_buffer = []
                 css = "chart-card chart-card--wide" if wide else "chart-card"
                 rendered.append(
-                    f'<div class="{css}" data-density="{density}"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
+                    f'<div class="{css}" data-density="{density}"{scenario_attr}><div class="chart-title">{title_html}</div>{caption_html}{fig_html}{after_html}</div>'
                 )
 
         if half_buffer:
             rendered.append(f'<div class="charts-pair">{"".join(half_buffer)}</div>')
 
-        charts_section = f'<div class="charts-grid">{"".join(rendered)}</div>'
+        scenario_control = ""
+        if len(scenario_labels) > 1:
+            options = "".join(
+                f'<option value="{escape(label)}">{escape(label)}</option>'
+                for label in scenario_labels
+            )
+            scenario_control = (
+                '<div class="scenario-control">'
+                '<label for="scenario-select">Scenario</label>'
+                f'<select id="scenario-select" class="scenario-select">{options}</select>'
+                '</div>'
+            )
+        charts_section = scenario_control + f'<div class="charts-grid">{"".join(rendered)}</div>'
     else:
         charts_section = ""
 
@@ -3816,9 +3881,57 @@ def _build_html_page(
         + f'<footer>Generated by leap_road_model — road_workflow diagnostic dashboard</footer>\n'
         + f'{_RESIZE_SCRIPT}\n'
         + f'{_DENSITY_SCRIPT}\n'
+        + f'{_SCENARIO_SCRIPT}\n'
         + f'</div>'
         + f'</body></html>'
     )
+
+
+def _scenario_sort_key(label: str) -> tuple[int, str]:
+    """Keep Target first, then sort the remaining configured scenario labels."""
+    return (0 if label == "Target" else 1, label)
+
+
+def _scenario_labels_from_frames(*frames: Any) -> list[str]:
+    """Collect projection scenario labels from output frames."""
+    labels: set[str] = set()
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame) or "scenario" not in frame.columns:
+            continue
+        values = frame["scenario"].dropna().astype(str).str.strip()
+        labels.update(label for label in values if label and label != "Current Accounts")
+    return sorted(labels, key=_scenario_sort_key)
+
+
+def _filter_frame_scenario(frame: Any, scenario: str) -> Any:
+    """Return one scenario slice when the frame has a scenario column."""
+    if not isinstance(frame, pd.DataFrame) or "scenario" not in frame.columns:
+        return frame
+    return frame[frame["scenario"].astype(str) == str(scenario)].copy()
+
+
+def _with_scenario(
+    figures: list[tuple[str, Any]],
+    scenario: str,
+) -> list[tuple[str, Any]]:
+    """Attach dashboard-only scenario metadata to figure tuples."""
+    tagged: list[tuple[str, Any]] = []
+    for item in figures:
+        if len(item) > 2 and isinstance(item[-1], dict):
+            metadata = dict(item[-1])
+            metadata["scenario"] = scenario
+            tagged.append((*item[:-1], metadata))
+        else:
+            tagged.append((*item, {"scenario": scenario}))
+    return tagged
+
+
+def _filter_outputs_scenario(workflow_outputs: dict[str, Any], scenario: str) -> dict[str, Any]:
+    """Return a workflow output dict where scenario-aware frames are sliced."""
+    filtered: dict[str, Any] = {}
+    for key, value in workflow_outputs.items():
+        filtered[key] = _filter_frame_scenario(value, scenario)
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -3888,57 +4001,139 @@ def write_module_pages(
     t6v = t6v_pre if isinstance(t6v_pre, pd.DataFrame) and not t6v_pre.empty else workflow_outputs.get("T6v")
     t7 = workflow_outputs.get("T7")
     t7f = workflow_outputs.get("T7f")
-    stock_sales_figures = module3_figures(
-        t5_for_main,
-        population=workflow_outputs.get("population"),
-    )
-    stock_sales_figures.extend(module4_figures(t6, t6v))
-    stock_sales_figures.extend(module5_figures(t7, t7f))
+    stock_sales_scenarios = _scenario_labels_from_frames(t5_for_main, t6, t6v, t7, t7f)
+    stock_sales_figures: list[tuple[str, Any]] = []
+    if stock_sales_scenarios:
+        for scenario in stock_sales_scenarios:
+            scenario_figures = module3_figures(
+                _filter_frame_scenario(t5_for_main, scenario),
+                population=workflow_outputs.get("population"),
+            )
+            scenario_figures.extend(module4_figures(
+                _filter_frame_scenario(t6, scenario),
+                _filter_frame_scenario(t6v, scenario),
+            ))
+            scenario_figures.extend(module5_figures(
+                _filter_frame_scenario(t7, scenario),
+                _filter_frame_scenario(t7f, scenario),
+            ))
+            stock_sales_figures.extend(_with_scenario(scenario_figures, scenario))
+    else:
+        stock_sales_figures = module3_figures(
+            t5_for_main,
+            population=workflow_outputs.get("population"),
+        )
+        stock_sales_figures.extend(module4_figures(t6, t6v))
+        stock_sales_figures.extend(module5_figures(t7, t7f))
     _write("module3.html", stock_sales_figures)
 
     post_stock_figures: list[tuple[str, Any]] = []
-    if isinstance(t5_post, pd.DataFrame) and not t5_post.empty:
-        post_stock_figures.extend(_filter_figures_by_title(
-            module3_figures(
-                t5_post,
-                population=workflow_outputs.get("population"),
-                show_freight_energy_context=True,
-                t13=workflow_outputs.get("T13"),
-                show_passenger_energy_context=True,
-                gdp=workflow_outputs.get("gdp"),
-                esto_road_energy_pj=workflow_outputs.get("esto_road_energy_pj"),
-            ),
-            {
-                "Target stock trajectories",
-                "Freight stock growth assumption",
-                "Passenger X-LPV-equivalent vehicles vs saturation",
-                "Passenger X-LPV weight calibration",
-                "Passenger energy growth context",
-            },
-        ))
-    if isinstance(t6_post, pd.DataFrame) and not t6_post.empty:
-        post_stock_figures.extend(module4_figures(
-            t6_post,
-            t6v_post if isinstance(t6v_post, pd.DataFrame) else pd.DataFrame(),
-        ))
+    post_stock_scenarios = _scenario_labels_from_frames(t5_post, t6_post, t6v_post, workflow_outputs.get("T13"))
+    post_titles = {
+        "Target stock trajectories",
+        "Freight stock growth assumption",
+        "Passenger X-LPV-equivalent vehicles vs saturation",
+        "Passenger X-LPV weight calibration",
+        "Passenger energy growth context",
+    }
+    if post_stock_scenarios:
+        for scenario in post_stock_scenarios:
+            scenario_figures: list[tuple[str, Any]] = []
+            t5_post_s = _filter_frame_scenario(t5_post, scenario)
+            if isinstance(t5_post_s, pd.DataFrame) and not t5_post_s.empty:
+                scenario_figures.extend(_filter_figures_by_title(
+                    module3_figures(
+                        t5_post_s,
+                        population=workflow_outputs.get("population"),
+                        show_freight_energy_context=True,
+                        t13=_filter_frame_scenario(workflow_outputs.get("T13"), scenario),
+                        show_passenger_energy_context=True,
+                        gdp=workflow_outputs.get("gdp"),
+                        esto_road_energy_pj=workflow_outputs.get("esto_road_energy_pj"),
+                    ),
+                    post_titles,
+                ))
+            t6_post_s = _filter_frame_scenario(t6_post, scenario)
+            if isinstance(t6_post_s, pd.DataFrame) and not t6_post_s.empty:
+                scenario_figures.extend(module4_figures(
+                    t6_post_s,
+                    _filter_frame_scenario(t6v_post, scenario) if isinstance(t6v_post, pd.DataFrame) else pd.DataFrame(),
+                ))
+            post_stock_figures.extend(_with_scenario(scenario_figures, scenario))
+    else:
+        if isinstance(t5_post, pd.DataFrame) and not t5_post.empty:
+            post_stock_figures.extend(_filter_figures_by_title(
+                module3_figures(
+                    t5_post,
+                    population=workflow_outputs.get("population"),
+                    show_freight_energy_context=True,
+                    t13=workflow_outputs.get("T13"),
+                    show_passenger_energy_context=True,
+                    gdp=workflow_outputs.get("gdp"),
+                    esto_road_energy_pj=workflow_outputs.get("esto_road_energy_pj"),
+                ),
+                post_titles,
+            ))
+        if isinstance(t6_post, pd.DataFrame) and not t6_post.empty:
+            post_stock_figures.extend(module4_figures(
+                t6_post,
+                t6v_post if isinstance(t6v_post, pd.DataFrame) else pd.DataFrame(),
+            ))
     _write("module3_post_reconciliation.html", post_stock_figures)
 
     t12 = workflow_outputs.get("T12")
     recon_alert = _reconciliation_alert_html(t12)
 
     m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12", "T12_phev")}
-    _write("module6.html", module6_figures(m6_sub), extra=recon_alert)
+    m6_scenarios = _scenario_labels_from_frames(*m6_sub.values())
+    if m6_scenarios:
+        m6_figures: list[tuple[str, Any]] = []
+        for scenario in m6_scenarios:
+            m6_sub_scenario = {k: _filter_frame_scenario(v, scenario) for k, v in m6_sub.items()}
+            m6_figures.extend(_with_scenario(module6_figures(m6_sub_scenario), scenario))
+    else:
+        m6_figures = module6_figures(m6_sub)
+    _write("module6.html", m6_figures, extra=recon_alert)
 
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
     split_alert = _transport_split_alert_html(workflow_outputs.get("T13"))
+    m7_scenarios = _scenario_labels_from_frames(*m7_sub.values(), workflow_outputs.get("T7f"))
+    if m7_scenarios:
+        m7_figures: list[tuple[str, Any]] = []
+        for scenario in m7_scenarios:
+            m7_sub_scenario = {k: _filter_frame_scenario(v, scenario) for k, v in m7_sub.items()}
+            scenario_figures = module7_figures(
+                m7_sub_scenario,
+                t7f=_filter_frame_scenario(workflow_outputs.get("T7f"), scenario),
+                t4=workflow_outputs.get("T4"),
+            )
+            m7_figures.extend(_with_scenario(scenario_figures, scenario))
+    else:
+        m7_figures = module7_figures(
+            m7_sub,
+            t7f=workflow_outputs.get("T7f"),
+            t4=workflow_outputs.get("T4"),
+        )
     _write(
         "module7.html",
-        module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4")),
+        m7_figures,
         extra=_MODULE7_NOTE_HTML + split_alert,
     )
 
-    _write("workflow_summary.html", workflow_summary_figures(workflow_outputs),
-           extra=recon_alert)
+    summary_scenarios = _scenario_labels_from_frames(
+        t5_for_main, t5_post, t6, t6v, t7, t7f,
+        *m6_sub.values(),
+        *m7_sub.values(),
+    )
+    if summary_scenarios:
+        summary_figures: list[tuple[str, Any]] = []
+        for scenario in summary_scenarios:
+            scenario_outputs = _filter_outputs_scenario(workflow_outputs, scenario)
+            scenario_outputs["T4"] = workflow_outputs.get("T4")
+            summary_figures.extend(_with_scenario(workflow_summary_figures(scenario_outputs), scenario))
+    else:
+        summary_figures = workflow_summary_figures(workflow_outputs)
+    _write("workflow_summary.html", summary_figures, extra=recon_alert)
 
     # Index page — module guide + system diagrams
     index_extra = _index_extra_html(out_dir=out, shared_assets_dir=shared_assets)

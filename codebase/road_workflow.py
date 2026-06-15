@@ -89,11 +89,15 @@ ECONOMY_CODE_TO_LEAP_REGION_NAMES: dict[str, str] = {
 }
 from diagnostics.module_charts import write_module1_charts, write_module6_charts, write_workflow_summary_charts
 from diagnostics.plotly_dashboard import write_module_pages
-from adapters.leap_import_writer import write_leap_import_workbook as write_strict_leap_import_workbook
+from adapters.leap_import_writer import (
+    load_reference_id_table,
+    write_leap_import_workbook as write_strict_leap_import_workbook,
+)
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_WORKFLOW_CONFIG_PATH = _REPO_ROOT / "codebase" / "config" / "workflow_defaults.yaml"
+_DEFAULT_SCENARIOS_CONFIG_PATH = _REPO_ROOT / "codebase" / "config" / "scenarios.yaml"
 
 
 def load_workflow_defaults(config_path: str | Path | None = None) -> dict[str, Any]:
@@ -113,6 +117,68 @@ def load_workflow_defaults(config_path: str | Path | None = None) -> dict[str, A
     if not isinstance(data, dict):
         raise ValueError(f"Workflow defaults must be a YAML mapping: {path}")
     return data
+
+
+def load_configured_scenario_labels(config_path: str | Path | None = None) -> set[str]:
+    """Return scenario labels configured for model/LEAP output."""
+    path = Path(config_path) if config_path is not None else _DEFAULT_SCENARIOS_CONFIG_PATH
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    if not path.exists():
+        return set()
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    scenarios = data.get("scenarios") if isinstance(data, dict) else {}
+    if not isinstance(scenarios, dict):
+        return set()
+    return {str(label).strip() for label in scenarios if str(label).strip()}
+
+
+def _normalise_scenario_list(values: list[str] | tuple[str, ...] | str | None) -> list[str]:
+    """Clean and de-duplicate scenario labels while preserving order."""
+    if values is None:
+        return []
+    raw_values = [values] if isinstance(values, str) else list(values)
+    scenarios: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        for part in str(value or "").split(","):
+            label = part.strip()
+            if not label or label in seen:
+                continue
+            scenarios.append(label)
+            seen.add(label)
+    return scenarios
+
+
+def _validate_configured_projection_scenarios(scenarios: list[str]) -> None:
+    """Fail before LEAP writing if a requested projection scenario is unknown."""
+    configured = load_configured_scenario_labels()
+    if not configured:
+        return
+    unknown = [
+        scenario
+        for scenario in scenarios
+        if scenario != "Current Accounts" and scenario not in configured
+    ]
+    if unknown:
+        raise ValueError(
+            "Projection scenario label(s) are not configured in "
+            f"{_DEFAULT_SCENARIOS_CONFIG_PATH}: {', '.join(unknown)}"
+        )
+
+
+def _validate_reference_export_scenarios(reference_path: Path, scenarios: list[str]) -> None:
+    """Fail if the LEAP reference export has no ID rows for requested scenarios."""
+    reference_ids = load_reference_id_table(reference_path)
+    available = set(reference_ids["Scenario"].dropna().astype(str))
+    required = {scenario for scenario in scenarios if scenario != "Current Accounts"}
+    missing = sorted(required - available)
+    if missing:
+        raise ValueError(
+            "Projection scenario label(s) are configured but absent from the LEAP "
+            f"reference export {reference_path}: {', '.join(missing)}"
+        )
 
 
 def _workflow_defaults_to_config_overrides(defaults: dict[str, Any]) -> dict[str, Any]:
@@ -972,28 +1038,32 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 _physical_stock_shares,
                 m1["vehicle_equivalent_weights"] or None,
             )
-        t5 = run_module3(
-            base_year_branches=t4,
-            population=inputs.population,
-            gdp=inputs.gdp,
-            esto_road_energy_pj=inputs.esto_road_energy_pj,
-            projection_years=config.projection_years(),
-            vehicle_type_shares=_vehicle_type_shares,
-            saturation_overrides=_saturation_overrides,
-            passenger_saturation_reached=bool(m1.get("passenger_saturation_reached", False)),
-            elasticity_overrides=inputs.elasticity_overrides,
-            elasticity_adjustments=(
-                {"freight_total": float(m1.get("freight_gdp_elasticity_adjustment", 1.0))}
-                if float(m1.get("freight_gdp_elasticity_adjustment", 1.0)) != 1.0
-                else None
-            ),
-            vehicle_equivalent_weights=m1["vehicle_equivalent_weights"] or None,
-            vehicle_equivalent_weight_bounds=m1.get("vehicle_equivalent_weight_bounds"),
-            config=_module3_config,
-            diagnostics_dir=str(diagnostics_dir) if diagnostics_dir else None,
-            economy=config.economy,
-            scenario=config.scenarios[0],
-        )
+        t5_parts = []
+        for scenario_name in config.scenarios:
+            t5_part = run_module3(
+                base_year_branches=t4,
+                population=inputs.population,
+                gdp=inputs.gdp,
+                esto_road_energy_pj=inputs.esto_road_energy_pj,
+                projection_years=config.projection_years(),
+                vehicle_type_shares=_vehicle_type_shares,
+                saturation_overrides=_saturation_overrides,
+                passenger_saturation_reached=bool(m1.get("passenger_saturation_reached", False)),
+                elasticity_overrides=inputs.elasticity_overrides,
+                elasticity_adjustments=(
+                    {"freight_total": float(m1.get("freight_gdp_elasticity_adjustment", 1.0))}
+                    if float(m1.get("freight_gdp_elasticity_adjustment", 1.0)) != 1.0
+                    else None
+                ),
+                vehicle_equivalent_weights=m1["vehicle_equivalent_weights"] or None,
+                vehicle_equivalent_weight_bounds=m1.get("vehicle_equivalent_weight_bounds"),
+                config=_module3_config,
+                diagnostics_dir=str(diagnostics_dir) if diagnostics_dir else None,
+                economy=config.economy,
+                scenario=scenario_name,
+            )
+            t5_parts.append(t5_part)
+        t5 = pd.concat(t5_parts, ignore_index=True) if t5_parts else pd.DataFrame()
         timings["module3_seconds"] = time.perf_counter() - t0
         # Module 3 reindexes against the full population series, producing null rows
         # beyond final_year.  Clamp to the intended projection window.
@@ -1034,19 +1104,31 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         logger.info("module4_input", **log_dataframe_info(t5, "stock_targets"))
         _print_progress(config, "Module 4: calculating sales, retirements, and vintages.")
         t0 = time.perf_counter()
-        t6, t6v = run_module4(
-            stock_targets=t5,
-            survival_curves=m1["survival_curves"],
-            vintage_profiles=m1["vintage_profiles"],
-            lifecycle_factors=lifecycle_factors if not lifecycle_factors.empty else None,
-            turnover_policies=inputs.turnover_policies,
-            fleet_age_shift_years=inputs.fleet_age_shift_years,
-            scrappage_years=inputs.scrappage_years,
-            config=config.module4_config,
-            diagnostics_dir=diagnostics_dir,
-            economy=config.economy,
-            scenario=config.scenarios[0],
-        )
+        t6_parts = []
+        t6v_parts = []
+        for scenario_name in config.scenarios:
+            scenario_targets = t5[t5["scenario"].astype(str).eq(str(scenario_name))].copy()
+            t6_part, t6v_part = run_module4(
+                stock_targets=scenario_targets,
+                survival_curves=m1["survival_curves"],
+                vintage_profiles=m1["vintage_profiles"],
+                lifecycle_factors=lifecycle_factors if not lifecycle_factors.empty else None,
+                turnover_policies=inputs.turnover_policies,
+                fleet_age_shift_years=inputs.fleet_age_shift_years,
+                scrappage_years=inputs.scrappage_years,
+                config=config.module4_config,
+                diagnostics_dir=diagnostics_dir,
+                economy=config.economy,
+                scenario=scenario_name,
+            )
+            t6_parts.append(t6_part)
+            if isinstance(t6v_part, pd.DataFrame) and not t6v_part.empty:
+                t6v_part = t6v_part.copy()
+                t6v_part["economy"] = config.economy
+                t6v_part["scenario"] = scenario_name
+            t6v_parts.append(t6v_part)
+        t6 = pd.concat(t6_parts, ignore_index=True) if t6_parts else pd.DataFrame()
+        t6v = pd.concat(t6v_parts, ignore_index=True) if t6v_parts else pd.DataFrame()
         timings["module4_seconds"] = time.perf_counter() - t0
         logger.info("module4_output", duration_sec=timings["module4_seconds"], **log_dataframe_info(t6, "sales_turnover"))
         _print_progress(config, f"Module 4 complete: {len(t6):,} sales/turnover rows.")
@@ -1176,19 +1258,31 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                 )
                 t_adjust = time.perf_counter()
                 t5 = t5_post_reconciliation
-                t6, t6v = run_module4(
-                    stock_targets=t5,
-                    survival_curves=m1["survival_curves"],
-                    vintage_profiles=m1["vintage_profiles"],
-                    lifecycle_factors=lifecycle_factors if not lifecycle_factors.empty else None,
-                    turnover_policies=inputs.turnover_policies,
-                    fleet_age_shift_years=inputs.fleet_age_shift_years,
-                    scrappage_years=inputs.scrappage_years,
-                    config=config.module4_config,
-                    diagnostics_dir=diagnostics_dir,
-                    economy=config.economy,
-                    scenario=config.scenarios[0],
-                )
+                t6_parts = []
+                t6v_parts = []
+                for scenario_name in config.scenarios:
+                    scenario_targets = t5[t5["scenario"].astype(str).eq(str(scenario_name))].copy()
+                    t6_part, t6v_part = run_module4(
+                        stock_targets=scenario_targets,
+                        survival_curves=m1["survival_curves"],
+                        vintage_profiles=m1["vintage_profiles"],
+                        lifecycle_factors=lifecycle_factors if not lifecycle_factors.empty else None,
+                        turnover_policies=inputs.turnover_policies,
+                        fleet_age_shift_years=inputs.fleet_age_shift_years,
+                        scrappage_years=inputs.scrappage_years,
+                        config=config.module4_config,
+                        diagnostics_dir=diagnostics_dir,
+                        economy=config.economy,
+                        scenario=scenario_name,
+                    )
+                    t6_parts.append(t6_part)
+                    if isinstance(t6v_part, pd.DataFrame) and not t6v_part.empty:
+                        t6v_part = t6v_part.copy()
+                        t6v_part["economy"] = config.economy
+                        t6v_part["scenario"] = scenario_name
+                    t6v_parts.append(t6v_part)
+                t6 = pd.concat(t6_parts, ignore_index=True) if t6_parts else pd.DataFrame()
+                t6v = pd.concat(t6v_parts, ignore_index=True) if t6v_parts else pd.DataFrame()
                 m6 = run_module6(
                     base_year_branches=t4,
                     sales_turnover=t6,
@@ -1281,6 +1375,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             leap_import_path = output_root / "module6" / f"{config.economy}_leap_import.xlsx"
             reference_path = Path(config.leap_reference_path) if config.leap_reference_path else _default_leap_reference_path()
             if reference_path is not None and reference_path.exists():
+                _validate_reference_export_scenarios(reference_path, config.scenarios)
                 warnings = write_strict_leap_import_workbook(
                     m6["T11"],
                     leap_import_path,
@@ -1873,6 +1968,7 @@ def _print_dashboard_link(outputs: dict[str, Any]) -> None:
 def run_for_economy(
     economy: str,
     scenario: str | None = None,
+    scenarios: list[str] | tuple[str, ...] | str | None = None,
     base_year: int | None = None,
     final_year: int | None = None,
     enable_visualisations: bool | None = None,
@@ -1892,6 +1988,9 @@ def run_for_economy(
     Args:
         economy:               Canonical economy code, e.g. '20_USA'.
         scenario:              Macro scenario label. Defaults to workflow_defaults.yaml.
+        scenarios:             Projection scenario labels to run. Defaults to
+                               [scenario]. Labels must exist in scenarios.yaml
+                               before LEAP import writing.
         base_year:             Base year. Defaults to workflow_defaults.yaml.
         final_year:            Final projection year. Defaults to workflow_defaults.yaml.
         enable_visualisations: Write PNG/HTML diagnostics. Defaults to workflow_defaults.yaml.
@@ -1918,6 +2017,8 @@ def run_for_economy(
 
     workflow_defaults = load_workflow_defaults(workflow_config_path)
     scenario = str(scenario or _workflow_defaults_value(workflow_defaults, "scenario", "Target"))
+    scenario_list = _normalise_scenario_list(scenarios) or [scenario]
+    _validate_configured_projection_scenarios(scenario_list)
     base_year = int(base_year if base_year is not None else _workflow_defaults_value(workflow_defaults, "base_year", 2022))
     final_year = int(final_year if final_year is not None else _workflow_defaults_value(workflow_defaults, "final_year", 2060))
     enable_visualisations = bool(
@@ -1952,7 +2053,7 @@ def run_for_economy(
     config_kwargs.update(yaml_config_overrides)
     config_kwargs.update({
         "economy": economy,
-        "scenarios": [scenario],
+        "scenarios": scenario_list,
         "base_year": base_year,
         "final_year": final_year,
         "enable_visualisations": enable_visualisations,
@@ -2017,6 +2118,12 @@ Examples:
     )
     parser.add_argument("economy", help="Economy code, e.g. 20_USA")
     parser.add_argument("--scenario", default=None, help="Macro scenario (default: workflow config)")
+    parser.add_argument(
+        "--scenarios",
+        nargs="+",
+        default=None,
+        help="Projection scenario labels to run. Can also be comma-separated.",
+    )
     parser.add_argument("--base-year", type=int, default=None, help="Base year (default: workflow config)")
     parser.add_argument("--final-year", type=int, default=None, help="Final projection year (default: workflow config)")
     parser.set_defaults(enable_visualisations=None)
@@ -2087,6 +2194,7 @@ Examples:
     result = run_for_economy(
         economy=args.economy,
         scenario=args.scenario,
+        scenarios=args.scenarios,
         base_year=args.base_year,
         final_year=args.final_year,
         enable_visualisations=args.enable_visualisations,

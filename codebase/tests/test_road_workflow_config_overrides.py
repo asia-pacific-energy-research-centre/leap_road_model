@@ -57,6 +57,57 @@ def test_run_for_economy_allows_module1_defaults_dir_override(monkeypatch, tmp_p
     assert config.module1_defaults_version == "v_test"
 
 
+def test_run_for_economy_accepts_multiple_projection_scenarios(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    years = [2022, 2023]
+
+    monkeypatch.setattr(road_workflow, "_validate_macro_inputs", lambda population, gdp, energy, years: None)
+    monkeypatch.setattr(
+        "adapters.esto_inputs.load_population",
+        lambda economy, scenario: pd.Series([1.0, 1.1], index=years),
+    )
+    monkeypatch.setattr(
+        "adapters.esto_inputs.load_gdp",
+        lambda economy, scenario: pd.Series([2.0, 2.2], index=years),
+    )
+    monkeypatch.setattr(
+        "adapters.esto_inputs.load_esto_road_energy",
+        lambda economy: pd.DataFrame(
+            [{"year": year, "transport_type": "passenger", "energy_pj": 1.0} for year in years]
+        ),
+    )
+    monkeypatch.setattr(
+        "adapters.esto_inputs.load_esto_fuel_totals",
+        lambda economy, base_year: pd.DataFrame([{"fuel": "Electricity", "energy_pj": 1.0}]),
+    )
+
+    def fake_run_with_config(config: road_workflow.RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> dict:
+        captured["config"] = config
+        return {"timings": {"test": 1.0}}
+
+    monkeypatch.setattr(road_workflow, "run_with_config", fake_run_with_config)
+
+    run_for_economy(
+        "15_PHL",
+        scenarios=["Target", "Reference"],
+        final_year=2023,
+        enable_visualisations=False,
+        output_root=tmp_path / "outputs",
+        auto_load_future_sales_shares=False,
+    )
+
+    config = captured["config"]
+    assert isinstance(config, road_workflow.RoadWorkflowConfig)
+    assert config.scenarios == ["Target", "Reference"]
+
+
+def test_normalise_scenario_list_accepts_comma_separated_values() -> None:
+    assert road_workflow._normalise_scenario_list(["Target, Reference", "Target"]) == [
+        "Target",
+        "Reference",
+    ]
+
+
 def test_run_for_economy_reads_workflow_defaults_yaml(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
     years = [2022, 2023]
