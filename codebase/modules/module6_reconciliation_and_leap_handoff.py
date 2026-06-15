@@ -1612,7 +1612,7 @@ def build_reconciliation_diagnostics(
         else {}
     )
 
-    pre_by_fuel = reconciliation_scalars.groupby("fuel")["initial_branch_energy_pj"].sum().to_dict()
+    pre_by_fuel = reconciliation_scalars.groupby("fuel")["allocated_branch_fuel_pj"].sum().to_dict()
     post_by_fuel = reconciliation_scalars.groupby("fuel")["final_branch_fuel_pj"].sum().to_dict()
 
     rows = []

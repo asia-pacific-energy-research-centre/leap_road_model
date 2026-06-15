@@ -3035,7 +3035,11 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
 
     timings = workflow_outputs.get("timings") or {}
 
-    # Module 7 figures — only mileage/efficiency distributions (base-year T4 data).
+    # Module 2 figures — base-year branch spread (stock/mileage/efficiency distributions).
+    m2_raw = module2_figures(workflow_outputs.get("T4"))
+    m2_by_title = {item[0]: item for item in m2_raw}
+
+    # Module 7 figures — mileage/efficiency distributions (base-year T4 data).
     # Simulated stock/energy outputs are excluded: they rely on assumptions about sales
     # shares and fleet turnover that differ from LEAP, so they are not model outputs.
     _INCLUDE_M7 = {"Mileage distribution", "Efficiency distribution"}
@@ -3043,7 +3047,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     m7_raw = module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4"))
     m7_by_title = {item[0]: item for item in m7_raw if item[0] in _INCLUDE_M7}
 
-    # Module 3 figures — Passenger X-LPV and freight stock growth assumption.
+    # Module 3 figures — Passenger X-LPV, freight stock growth, and target stocks.
     _t5_post = workflow_outputs.get("T5_post_reconciliation")
     _t5_pre = workflow_outputs.get("T5_pre_reconciliation")
     t5 = (
@@ -3067,7 +3071,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     )
     m3_by_title = {item[0]: item for item in m3_raw}
 
-    # Module 4 figures — new sales and stock trajectories by vehicle type.
+    # Module 4 figures — new sales, stock trajectories, vintage and survival profiles.
     _t6_post = workflow_outputs.get("T6_post_reconciliation")
     _t6_pre = workflow_outputs.get("T6_pre_reconciliation")
     t6 = (
@@ -3085,10 +3089,23 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     m4_raw = module4_figures(t6, t6v) if isinstance(t6, pd.DataFrame) and not t6.empty else []
     m4_by_title = {item[0]: item for item in m4_raw}
 
+    # Module 5 figures — base-year and projected drive-type sales shares.
+    m5_raw = module5_figures(workflow_outputs.get("T7"), workflow_outputs.get("T7f"))
+    m5_by_title = {item[0]: item for item in m5_raw}
+
     # Module 6 figures — reconciliation scalars and fuel allocation.
     m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12", "T12_phev")}
     m6_raw = module6_figures(m6_sub)
     m6_by_title = {item[0]: item for item in m6_raw}
+
+    # Correction factors: only include if any ECF deviates meaningfully from 1.0.
+    _t9 = workflow_outputs.get("T9")
+    _ecf_col = "energy_correction_factor"
+    _include_ecf = (
+        isinstance(_t9, pd.DataFrame)
+        and _ecf_col in _t9.columns
+        and (_t9[_ecf_col].dropna() - 1.0).abs().max() > 0.01
+    )
 
     # Post-reconciliation vs ESTO figure.
     _t12 = workflow_outputs.get("T12")
@@ -3147,22 +3164,43 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
             timing_fig = ("Workflow timing", fig)
 
     # Assemble in desired row order, then ESTO second-to-last, timing at the bottom.
+    # Each title is looked up across all module dicts; first match wins.
+    _ALL = {**m2_by_title, **m3_by_title, **m4_by_title, **m5_by_title, **m6_by_title, **m7_by_title}
     _DESIRED_ORDER = [
+        # Stock & sales outputs sent to LEAP
+        "Target stock trajectories",
         "New sales by vehicle type",
-        "Stock trajectory by vehicle type",
         "Passenger X-LPV-equivalent vehicles vs saturation",
         "Freight stock growth assumption",
         "Passenger energy growth context",
-        "Adjustment scalars by branch",
+        # Drive-type technology mix
+        "Sales shares (base-year)",
+        "Sales shares (projected)",
+        # Fleet composition inputs
+        "Base-year vintage profiles",
+        "Base-year survival curves",
+        # Reconciliation outputs
+        "Scalar distributions",
         "Final fuel allocation share by vehicle type and drive (2022)",
+        # Base-year distributions
+        "Spread of stock / mileage / efficiency",
         "Mileage distribution",
         "Efficiency distribution",
     ]
     figs: list[tuple[str, Any]] = []
     for title in _DESIRED_ORDER:
-        item = m4_by_title.get(title) or m3_by_title.get(title) or m6_by_title.get(title) or m7_by_title.get(title)
+        item = _ALL.get(title)
+        if item is None:
+            # prefix match for dynamic titles (e.g. "Sales shares (base-year) 2022")
+            item = next((v for k, v in _ALL.items() if k.startswith(title)), None)
         if item is not None:
             figs.append(item)
+
+    # Correction factors only if non-trivial
+    if _include_ecf:
+        ecf_item = m6_by_title.get("Average correction factor by fuel")
+        if ecf_item is not None:
+            figs.append(ecf_item)
 
     if esto_fig is not None:
         figs.append(esto_fig)
@@ -3297,6 +3335,71 @@ _NAV_LINKS: list[tuple[str, str]] = [
     ("workflow_summary.html", "Summary"),
 ]
 
+# ---------------------------------------------------------------------------
+# Data density index
+# ---------------------------------------------------------------------------
+# Maps chart title → minimum density level at which it appears.
+# Inclusiveness rule: "less" = show at all levels; "more" = more + ultra only;
+# "ultra" = ultra only. Unknown titles default to "more".
+# Prefix matching is used for dynamic titles (e.g. "Sales shares (base-year) 2022").
+
+_CHART_DENSITY: dict[str, str] = {
+    # --- Module 2 (shown on module1.html) ---
+    "Spread of stock / mileage / efficiency": "less",  # module1.html
+    "Rows with missing branch values": "more",
+    # --- Module 1 (inputs QA) ---
+    "Default and researcher-provided values by branch/measure": "more",
+    "Rows with missing year value": "more",
+    "Input data table": "ultra",
+    # --- Module 3 / 4 / 5 (module3.html) ---
+    "Target stock trajectories": "less",  # module3.html + summary
+    "New sales by vehicle type": "less",
+    "Stock trajectory by vehicle type": "more",
+    "Passenger X-LPV-equivalent vehicles vs saturation": "more",
+    "Freight stock growth assumption": "more",
+    "Passenger energy growth context": "more",
+    "Population": "more",
+    "Sales shares (base-year)": "more",   # prefix-matched (title includes year)
+    "Sales shares (projected)": "more",   # prefix-matched
+    "Retirements by type": "more",
+    "Sales / stock ratio": "more",
+    "Passenger X-LPV weight calibration": "ultra",
+    "Base-year vintage profiles": "more",
+    "Base-year survival curves": "more",
+    "Stock above target events": "ultra",
+    "Stock above target event table": "ultra",
+    # --- Module 6 (reconciliation) ---
+    "Post-reconciliation vs ESTO target": "less",
+    "Average correction factor by fuel": "less",
+    "Scalar distributions": "less",
+    "Device share by drive/fuel": "more",
+    "Final fuel allocation share by vehicle type and drive": "more",  # prefix-matched
+    "Final fuel energy by vehicle type and drive": "ultra",           # prefix-matched
+    "Adjustment scalars by branch": "ultra",
+    "Plug-in hybrid utilisation back-check": "ultra",
+    # --- Module 7 (simulated outputs) ---
+    "Energy": "less",
+    "Stock share": "less",
+    "Sales share": "more",
+    "Stock": "more",
+    "Vehicle-km": "more",
+    "Mileage distribution": "less",
+    "Efficiency distribution": "less",
+    "Simulation minus LEAP energy": "ultra",
+    # --- Workflow summary ---
+    "Workflow timing": "ultra",
+}
+
+
+def _chart_density_level(title: str) -> str:
+    """Return the density level for a chart title (exact match, then prefix match)."""
+    if title in _CHART_DENSITY:
+        return _CHART_DENSITY[title]
+    for key, level in _CHART_DENSITY.items():
+        if title.startswith(key):
+            return level
+    return "more"
+
 _ROAD_MODEL_OVERVIEW_HREF = "/road-model-docs/road_transport_model_overview.md"
 _ROAD_MODEL_GUIDE_HREF = "/road-model-docs/road_transport_model_simplified.md"
 _ROAD_MODEL_DETAILED_HREF = "/road-model-docs/road_transport_model_detailed.md"
@@ -3367,6 +3470,11 @@ footer{text-align:center;padding:20px;color:#aaa;font-size:.78rem}
 .page-title{padding:18px 16px 4px}
 .page-desc,.alert{margin-left:16px;margin-right:16px;padding-left:0;padding-right:0}
 }
+.density-toggle{display:flex;align-items:center;gap:4px;margin-left:auto}
+.density-label{font-size:.78rem;color:#bbdefb;margin-right:2px;white-space:nowrap}
+.density-btn{padding:3px 11px;border:1px solid rgba(255,255,255,.3);border-radius:4px;background:rgba(255,255,255,.1);color:#bbdefb;cursor:pointer;font-size:.78rem;line-height:1.4}
+.density-btn:hover{background:rgba(255,255,255,.2);color:white}
+.density-btn.is-active{background:rgba(255,255,255,.9);color:#1a237e;border-color:rgba(255,255,255,.9);font-weight:600}
 """
 
 _RESIZE_SCRIPT = """
@@ -3441,6 +3549,43 @@ _RESIZE_SCRIPT = """
     if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(function(){ scheduleResize(80); });
     }
+})();
+</script>
+"""
+
+_DENSITY_SCRIPT = """
+<script>
+(function () {
+    var KEY = 'road_dashboard_density';
+    var DEFAULT = 'less';
+    var LEVELS = ['less', 'more', 'ultra'];
+
+    function applyDensity(level) {
+        var levelIdx = LEVELS.indexOf(level);
+        document.querySelectorAll('[data-density]').forEach(function (el) {
+            var elIdx = LEVELS.indexOf(el.getAttribute('data-density'));
+            el.style.display = elIdx <= levelIdx ? '' : 'none';
+        });
+        document.querySelectorAll('.charts-pair').forEach(function (pair) {
+            var anyVisible = Array.from(pair.children).some(function (c) {
+                return c.style.display !== 'none';
+            });
+            pair.style.display = anyVisible ? '' : 'none';
+        });
+        document.querySelectorAll('.density-btn').forEach(function (btn) {
+            btn.classList.toggle('is-active', btn.dataset.level === level);
+        });
+        try { localStorage.setItem(KEY, level); } catch (e) {}
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var saved;
+        try { saved = localStorage.getItem(KEY); } catch (e) {}
+        applyDensity(saved && LEVELS.indexOf(saved) !== -1 ? saved : DEFAULT);
+        document.querySelectorAll('.density-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () { applyDensity(btn.dataset.level); });
+        });
+    });
 })();
 </script>
 """
@@ -3621,7 +3766,8 @@ def _build_html_page(
                 config={"responsive": True, "displaylogo": False},
             )
             caption_html = f'<div class="chart-caption">{caption}</div>' if caption else ""
-            card_html = f'<div class="chart-card"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
+            density = _chart_density_level(title)
+            card_html = f'<div class="chart-card" data-density="{density}"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
 
             if half:
                 half_buffer.append(card_html)
@@ -3634,7 +3780,7 @@ def _build_html_page(
                     half_buffer = []
                 css = "chart-card chart-card--wide" if wide else "chart-card"
                 rendered.append(
-                    f'<div class="{css}"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
+                    f'<div class="{css}" data-density="{density}"><div class="chart-title">{title}</div>{caption_html}{fig_html}{after_html}</div>'
                 )
 
         if half_buffer:
@@ -3656,13 +3802,20 @@ def _build_html_page(
         f'<style>{_CSS}</style></head>\n'
         f'<body>\n'
         f'<header><h1>Road Model QA Dashboard{economy_label}</h1>'
-        f'<nav>{_nav_html(active_page)}</nav></header>\n'
+        f'<nav>{_nav_html(active_page)}</nav>'
+        f'<div class="density-toggle">'
+        f'<span class="density-label">Detail:</span>'
+        f'<button class="density-btn" data-level="less">Less</button>'
+        f'<button class="density-btn" data-level="more">More</button>'
+        f'<button class="density-btn" data-level="ultra">Ultra</button>'
+        f'</div></header>\n'
         + f'<div class="page-wrap">'
         + f'<div class="page-title">{page_title}</div>'
         + (f'<div class="page-desc">{page_desc}</div>\n' if page_desc else "")
         + f'{body_content}\n'
         + f'<footer>Generated by leap_road_model — road_workflow diagnostic dashboard</footer>\n'
         + f'{_RESIZE_SCRIPT}\n'
+        + f'{_DENSITY_SCRIPT}\n'
         + f'</div>'
         + f'</body></html>'
     )
