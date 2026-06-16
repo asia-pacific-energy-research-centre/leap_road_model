@@ -1843,24 +1843,33 @@ def build_leap_ready_table(
         })
 
     # Stock Share: vehicle-type split of transport total and tech split of vehicle total.
-    transport_totals = tech_rows.groupby("_transport_path")["adjusted_stock"].sum().to_dict()
-    vehicle_totals = tech_rows.groupby("_vehicle_path")["adjusted_stock"].sum().to_dict()
+    transport_totals = tech_rows.groupby(
+        ["economy", "scenario", "_transport_path"], dropna=False,
+    )["adjusted_stock"].sum()
+    vehicle_totals = tech_rows.groupby(
+        ["economy", "scenario", "_vehicle_path"], dropna=False,
+    )["adjusted_stock"].sum()
     vehicle_share_rows = tech_rows.groupby(
         ["economy", "scenario", "_transport_path", "_vehicle_path"],
         dropna=False,
         as_index=False,
     )["adjusted_stock"].sum()
     for _, row in vehicle_share_rows.iterrows():
-        transport_total = float(transport_totals.get(row["_transport_path"], 0.0))
+        transport_total = float(transport_totals.get((row["economy"], row["scenario"], row["_transport_path"]), 0.0))
         vehicle_share = (float(row["adjusted_stock"]) / transport_total * 100.0) if transport_total > 0 else 0.0
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
             "year": base_year, "leap_branch_path": row["_vehicle_path"],
             "variable": "Stock Share", "value": vehicle_share, "unit": "Share",
         })
+        rows.append({
+            "economy": row["economy"], "scenario": row["scenario"],
+            "year": base_year, "leap_branch_path": row["_vehicle_path"],
+            "variable": "Sales Share", "value": vehicle_share, "unit": "Share",
+        })
 
     for _, row in tech_rows.iterrows():
-        vehicle_total = float(vehicle_totals.get(row["_vehicle_path"], 0.0))
+        vehicle_total = float(vehicle_totals.get((row["economy"], row["scenario"], row["_vehicle_path"]), 0.0))
         tech_share = (float(row["adjusted_stock"]) / vehicle_total * 100.0) if vehicle_total > 0 else 0.0
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
@@ -1892,7 +1901,7 @@ def build_leap_ready_table(
             rows.append({
                 "economy": row["economy"], "scenario": row["scenario"],
                 "year": base_year, "leap_branch_path": row["leap_branch_path"],
-                "variable": "Device Share", "value": row["device_share"], "unit": "Share",
+                "variable": "Device Share", "value": row["device_share"] * 100.0, "unit": "Share",
             })
 
     # ── Build (vehicle_type, drive_type) → tech_path lookup from T9 ───────
@@ -1949,7 +1958,7 @@ def build_leap_ready_table(
             how="left",
         )
         for _, row in vehicle_sales.iterrows():
-            if int(row["year"]) not in projection_years:
+            if int(row["year"]) not in projection_years or int(row["year"]) == base_year:
                 continue
             total = float(row.get("_transport_sales", 0.0))
             share = (float(row["new_sales"]) / total * 100.0) if total > 0 else 0.0
@@ -1971,7 +1980,7 @@ def build_leap_ready_table(
                 rows.append({
                     "economy": row["economy"], "scenario": row["scenario"],
                     "year": int(row["year"]), "leap_branch_path": row["_tech_path_lookup"],
-                    "variable": "Sales Share", "value": row["sales_share"], "unit": "Share",
+                    "variable": "Sales Share", "value": row["sales_share"] * 100.0, "unit": "Share",
                 })
         else:
             # Base-year only — replicate across all projection years
@@ -1982,7 +1991,7 @@ def build_leap_ready_table(
                     rows.append({
                         "economy": row["economy"], "scenario": row["scenario"],
                         "year": yr, "leap_branch_path": row["_tech_path_lookup"],
-                        "variable": "Sales Share", "value": row["sales_share"], "unit": "Share",
+                        "variable": "Sales Share", "value": row["sales_share"] * 100.0, "unit": "Share",
                     })
 
     factor_specs = [

@@ -740,7 +740,7 @@ def write_leap_import_workbook(
     economy_long_name: str,
     area_name: str | None = None,
     region_id: int | None = None,
-    version: str = "",
+    version: str = "2",
     coverage_diagnostics_path: str | Path | None = None,
     manual_missing_rows_path: str | Path | None = DEFAULT_MANUAL_MISSING_ROWS_PATH,
     economy_code: str | None = None,
@@ -759,8 +759,6 @@ def write_leap_import_workbook(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         _write_sheet_with_metadata(writer, "LEAP", leap_sheet, area_name or economy_long_name, version=version)
-        _write_sheet_with_metadata(writer, "FOR_VIEWING", viewing_sheet, area_name or economy_long_name, version=version)
-        _write_sheet_with_metadata(writer, "NOT_NEEDED", not_needed_sheet, area_name or economy_long_name, version=version)
     if coverage_diagnostics_path is not None:
         coverage_path = Path(coverage_diagnostics_path)
         coverage_path.parent.mkdir(parents=True, exist_ok=True)

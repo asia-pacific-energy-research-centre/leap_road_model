@@ -1196,6 +1196,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       HEV <size>
         Measures:
@@ -1207,6 +1209,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       EREV <size>
         Measures:
@@ -1217,6 +1221,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       PHEV <size>
         Measures:
@@ -1227,6 +1233,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       BEV <size>
         Measures:
@@ -1237,6 +1245,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       FCEV <size>
         Measures:
@@ -1247,6 +1257,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
     Motorcycles
       Measures:
@@ -1267,6 +1279,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       BEV
         Measures:
@@ -1277,6 +1291,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       FCEV
         Note:
@@ -1301,6 +1317,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       BEV
         Measures:
@@ -1311,6 +1329,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       FCEV
         Measures:
@@ -1321,6 +1341,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
   Freight road
     Measures:
@@ -1360,6 +1382,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       BEV <size>
         Measures:
@@ -1370,6 +1394,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       FCEV <size>
         Measures:
@@ -1380,6 +1406,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
     LCVs
       Measures:
@@ -1397,6 +1425,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       PHEV
         Measures:
@@ -1407,6 +1437,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       BEV
         Measures:
@@ -1417,6 +1449,8 @@ Demand
         Fuel-level measures:
           Mileage
           Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
 
       FCEV
         Note:
@@ -1496,6 +1530,8 @@ Fuel level
   Measures:
     Mileage
     Fuel Economy
+    Mileage correction factor
+    Fuel Economy correction factor
 ```
 
 Condensed rule of thumb:

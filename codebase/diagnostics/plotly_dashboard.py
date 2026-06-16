@@ -361,7 +361,8 @@ def _module1_source_category(row: pd.Series) -> str:
         return "Researcher-provided"
     # "provided" is the marker emitted by the static bundle for all values — treat as default.
     # "default" and "default_filled" are explicit default markers.
-    if source_type == "default_input_workbook" or input_source in {"default", "default_filled", "provided"}:
+    # "normalised" is set by the interface frontend when sales shares are normalised to sum to 100.
+    if source_type == "default_input_workbook" or input_source in {"default", "default_filled", "provided", "normalised"}:
         return "Default value"
     return "Other model input"
 
