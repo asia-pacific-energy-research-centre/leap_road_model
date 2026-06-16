@@ -824,57 +824,6 @@ def module2_figures(t4: pd.DataFrame) -> list[tuple[str, Any]]:
             "Lists branch rows missing required dimensions or base-year stock, mileage, or efficiency values.",
         ))
 
-    # 2) Spread of key values, grouped and sorted by vehicle type median
-    num_cols = [c for c in ["stock", "mileage_km_per_year", "efficiency_km_per_gj"] if c in t4.columns]
-    if num_cols and "vehicle_type" in t4.columns:
-        fig = make_subplots(
-            rows=1,
-            cols=len(num_cols),
-            subplot_titles=tuple(num_cols),
-            horizontal_spacing=0.07,
-        )
-        has_any = False
-        for i, col in enumerate(num_cols, 1):
-            tmp = t4[["vehicle_type", col]].copy()
-            tmp[col] = pd.to_numeric(tmp[col], errors="coerce")
-            tmp = tmp.dropna(subset=[col])
-            if tmp.empty:
-                continue
-            order = (
-                tmp.groupby("vehicle_type")[col]
-                .median()
-                .sort_values(ascending=False)
-                .index
-                .tolist()
-            )
-            for vt in order:
-                vals = tmp.loc[tmp["vehicle_type"] == vt, col].tolist()
-                if vals:
-                    has_any = True
-                    fig.add_trace(
-                        go.Box(
-                            x=[vt] * len(vals),
-                            y=vals,
-                            name=str(vt),
-                            boxpoints=False,
-                            showlegend=False,
-                            marker_color=_COLOURS[(i - 1) % len(_COLOURS)],
-                        ),
-                        row=1,
-                        col=i,
-                    )
-            fig.update_xaxes(title_text="Vehicle type (sorted)", tickangle=-30, row=1, col=i)
-            fig.update_yaxes(title_text="Value", row=1, col=i)
-
-        if has_any:
-            fig.update_layout(**_layout("Module 2 — Spread of stock, mileage and efficiency across branches"))
-            figs.append((
-                "Spread of stock / mileage / efficiency",
-                fig,
-                True,
-                "Each panel is grouped by vehicle type and sorted by median value (highest to lowest), so branch-level spread is easier to compare.",
-            ))
-
     return figs
 
 
@@ -1426,29 +1375,6 @@ def module3_figures(
                 if not gdp_index.empty
                 else sorted(int(year) for year in freight_sub["year"].dropna().unique().tolist())
             )
-            if not gdp_index.empty and not selected_elasticities.empty:
-                if selected_elasticities.round(6).nunique() == 1:
-                    elasticity = float(selected_elasticities.iloc[0])
-                    estimate = 100 * ((gdp_index / 100) ** elasticity)
-                    fig.add_trace(go.Scatter(
-                        x=estimate.index.tolist(),
-                        y=estimate.tolist(),
-                        mode="lines",
-                        name=f"Freight stock estimate from elasticity (epsilon={elasticity:.2f})",
-                        line=dict(color="#00897B", width=3, dash="dash"),
-                    ))
-                else:
-                    for idx, (vt, elasticity) in enumerate(selected_elasticities.items()):
-                        estimate = 100 * ((gdp_index / 100) ** float(elasticity))
-                        label = _freight_vehicle_label(str(vt))
-                        fig.add_trace(go.Scatter(
-                            x=estimate.index.tolist(),
-                            y=estimate.tolist(),
-                            mode="lines",
-                            name=f"{label} stock estimate from elasticity (epsilon={float(elasticity):.2f})",
-                            line=dict(color=_vehicle_type_colour(str(vt), idx), width=2, dash="dash"),
-                            opacity=0.8,
-                        ))
             historical_energy_index = _indexed_growth_line(energy_growth, historical_years)
             historical_gdp_index = _indexed_growth_line(gdp_growth, historical_years)
 
@@ -1993,11 +1919,23 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         return []
 
     figs: list[tuple[str, Any]] = []
+    _t4 = module6_outputs.get("T4"); t4 = _t4 if isinstance(_t4, pd.DataFrame) else pd.DataFrame()
     _t8 = module6_outputs.get("T8"); t8 = _t8 if isinstance(_t8, pd.DataFrame) else pd.DataFrame()
     _t9 = module6_outputs.get("T9"); t9 = _t9 if isinstance(_t9, pd.DataFrame) else pd.DataFrame()
     _t10 = module6_outputs.get("T10"); t10 = _t10 if isinstance(_t10, pd.DataFrame) else pd.DataFrame()
     _t12 = module6_outputs.get("T12"); t12 = _t12 if isinstance(_t12, pd.DataFrame) else pd.DataFrame()
     _t12_phev = module6_outputs.get("T12_phev"); t12_phev = _t12_phev if isinstance(_t12_phev, pd.DataFrame) else pd.DataFrame()
+
+    spread_fig = _spread_pre_vs_post_chart(t4, t9)
+    if spread_fig is not None:
+        figs.append((
+            "Spread of stock / mileage / efficiency — pre vs post reconciliation",
+            spread_fig,
+            True,
+            "Pre-reconciliation values come from the base-year input data (T4); post-reconciliation values come "
+            "from Module 6's adjusted output (T9). Each panel is sorted by median value (highest to lowest). Use "
+            "the dropdown to switch between vehicle type, drive type, and transport type groupings.",
+        ))
 
     if not t12.empty and {
         "fuel", "remaining_esto_pj", "post_reconciliation_model_pj",
@@ -2647,6 +2585,175 @@ def _distribution_chart_with_dropdown(
     return fig
 
 
+_PRE_RECONCILIATION_COLOUR = "#1565C0"
+_POST_RECONCILIATION_COLOUR = "#E53935"
+
+
+def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure | None":
+    """Stock/mileage/efficiency spread, pre- vs post-reconciliation, side by side.
+
+    One panel per metric (dot-plot style box, like the single-metric distribution
+    charts), with a dropdown to switch grouping (vehicle type / drive type /
+    transport type) across all panels at once. Pre-reconciliation values come
+    from T4 (base-year input data); post-reconciliation values come from T9's
+    adjusted_* columns (Module 6 output). Both are plotted together so the
+    effect of reconciliation is visible directly, instead of needing two charts.
+    """
+    if t4 is None or t4.empty or t9 is None or t9.empty:
+        return None
+
+    pre = t4.copy()
+    post = t9.drop(
+        columns=[c for c in ("stock", "mileage_km_per_year", "efficiency_km_per_gj") if c in t9.columns],
+    ).rename(columns={
+        "adjusted_stock": "stock",
+        "adjusted_mileage_km_per_year": "mileage_km_per_year",
+        "adjusted_efficiency_km_per_gj": "efficiency_km_per_gj",
+    }).copy()
+
+    metrics = [
+        ("stock", "Stock"),
+        ("mileage_km_per_year", "Mileage (km/year)"),
+        ("efficiency_km_per_gj", "Efficiency (km/GJ)"),
+    ]
+    metrics = [(c, l) for c, l in metrics if c in pre.columns and c in post.columns]
+    if not metrics:
+        return None
+
+    grouping_defs: list[tuple[str, str]] = []
+    for grp_label, grp_col in [
+        ("By vehicle type", "vehicle_type"),
+        ("By drive type", "drive_type"),
+        ("By transport type", "transport_type"),
+    ]:
+        if grp_col in pre.columns and grp_col in post.columns:
+            grouping_defs.append((grp_label, grp_col))
+
+    if not grouping_defs:
+        return None
+
+    fig = make_subplots(
+        rows=1,
+        cols=len(metrics),
+        subplot_titles=tuple(label for _col, label in metrics),
+        horizontal_spacing=0.07,
+    )
+
+    trace_groups: list[tuple[str, list[int], dict[str, Any]]] = []
+    initial_axis_updates: dict[str, Any] = {}
+    n_traces = 0
+
+    for grp_idx, (grp_label, grp_col) in enumerate(grouping_defs):
+        is_first = grp_idx == 0
+        indices: list[int] = []
+        relayout: dict[str, Any] = {}
+        for j, (col, label) in enumerate(metrics, start=1):
+            tpre = pre[[grp_col, col]].copy()
+            tpre[col] = pd.to_numeric(tpre[col], errors="coerce")
+            tpre = tpre.dropna(subset=[col])
+
+            tpost = post[[grp_col, col]].copy()
+            tpost[col] = pd.to_numeric(tpost[col], errors="coerce")
+            tpost = tpost.dropna(subset=[col])
+
+            if tpre.empty and tpost.empty:
+                continue
+
+            order_source = tpost if not tpost.empty else tpre
+            order = (
+                order_source.groupby(grp_col)[col]
+                .median()
+                .sort_values(ascending=False)
+                .index.astype(str)
+                .tolist()
+            )
+
+            fig.add_trace(
+                go.Box(
+                    x=tpre[grp_col].astype(str).tolist(),
+                    y=tpre[col].tolist(),
+                    name="Pre-reconciliation",
+                    legendgroup="pre",
+                    showlegend=(j == 1),
+                    marker_color=_PRE_RECONCILIATION_COLOUR,
+                    boxpoints="all",
+                    jitter=0.4,
+                    pointpos=0,
+                    visible=is_first,
+                ),
+                row=1,
+                col=j,
+            )
+            indices.append(n_traces)
+            n_traces += 1
+
+            fig.add_trace(
+                go.Box(
+                    x=tpost[grp_col].astype(str).tolist(),
+                    y=tpost[col].tolist(),
+                    name="Post-reconciliation",
+                    legendgroup="post",
+                    showlegend=(j == 1),
+                    marker_color=_POST_RECONCILIATION_COLOUR,
+                    boxpoints="all",
+                    jitter=0.4,
+                    pointpos=0,
+                    visible=is_first,
+                ),
+                row=1,
+                col=j,
+            )
+            indices.append(n_traces)
+            n_traces += 1
+
+            xkey = "xaxis" if j == 1 else f"xaxis{j}"
+            relayout[f"{xkey}.categoryorder"] = "array"
+            relayout[f"{xkey}.categoryarray"] = order
+            if is_first:
+                initial_axis_updates[xkey] = dict(categoryorder="array", categoryarray=order)
+            fig.update_yaxes(title_text=label, row=1, col=j)
+
+        trace_groups.append((grp_label, indices, relayout))
+
+    if n_traces == 0:
+        return None
+
+    total = n_traces
+    buttons = []
+    for grp_label, indices, relayout in trace_groups:
+        if not indices:
+            continue
+        vis = [False] * total
+        for i in indices:
+            vis[i] = True
+        buttons.append(dict(label=grp_label, method="update", args=[{"visible": vis}, relayout]))
+
+    if not buttons:
+        return None
+
+    fig.update_layout(
+        **_layout("Spread of stock, mileage and efficiency — pre vs post reconciliation"),
+        boxmode="group",
+        legend=dict(orientation="h", x=0.0, y=1.18),
+        margin=dict(t=130),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.0,
+            y=1.3,
+            xanchor="left",
+            yanchor="top",
+            buttons=buttons,
+            showactive=True,
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=12),
+        )],
+        **initial_axis_updates,
+    )
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Share-based interactive charts (used in Module 7)
 # ---------------------------------------------------------------------------
@@ -2997,13 +3104,14 @@ def module7_figures(
                 t4,
                 metric_col="mileage_km_per_year",
                 metric_label="Mileage (km/year)",
-                title="Mileage distribution",
+                title="Mileage distribution (pre-reconciliation input data)",
             )
             if mileage_dist is not None:
                 figs.append((
-                    "Mileage distribution",
+                    "Mileage distribution (pre-reconciliation input data)",
                     mileage_dist,
                     False,
+                    "Based directly on the base-year input data (T4), not on any simulated or reconciled model output. "
                     "Distribution of base-year mileage (km/year) across branches, sorted by median. Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
                 ))
 
@@ -3012,13 +3120,14 @@ def module7_figures(
                 t4,
                 metric_col="efficiency_km_per_gj",
                 metric_label="Efficiency (km/GJ)",
-                title="Efficiency distribution",
+                title="Efficiency distribution (pre-reconciliation input data)",
             )
             if eff_dist is not None:
                 figs.append((
-                    "Efficiency distribution",
+                    "Efficiency distribution (pre-reconciliation input data)",
                     eff_dist,
                     False,
+                    "Based directly on the base-year input data (T4), not on any simulated or reconciled model output. "
                     "Distribution of base-year efficiency (km/GJ) across branches, sorted by median. Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
                 ))
 
@@ -3043,7 +3152,10 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     # Module 7 figures — mileage/efficiency distributions (base-year T4 data).
     # Simulated stock/energy outputs are excluded: they rely on assumptions about sales
     # shares and fleet turnover that differ from LEAP, so they are not model outputs.
-    _INCLUDE_M7 = {"Mileage distribution", "Efficiency distribution"}
+    _INCLUDE_M7 = {
+        "Mileage distribution (pre-reconciliation input data)",
+        "Efficiency distribution (pre-reconciliation input data)",
+    }
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
     m7_raw = module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4"))
     m7_by_title = {item[0]: item for item in m7_raw if item[0] in _INCLUDE_M7}
@@ -3095,7 +3207,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     m5_by_title = {item[0]: item for item in m5_raw}
 
     # Module 6 figures — reconciliation scalars and fuel allocation.
-    m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12", "T12_phev")}
+    m6_sub = {k: workflow_outputs.get(k) for k in ("T4", "T8", "T9", "T10", "T12", "T12_phev")}
     m6_raw = module6_figures(m6_sub)
     m6_by_title = {item[0]: item for item in m6_raw}
 
@@ -3184,9 +3296,9 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         "Scalar distributions",
         "Final fuel allocation share by vehicle type and drive (2022)",
         # Base-year distributions
-        "Spread of stock / mileage / efficiency",
-        "Mileage distribution",
-        "Efficiency distribution",
+        "Spread of stock / mileage / efficiency — pre vs post reconciliation",
+        "Mileage distribution (pre-reconciliation input data)",
+        "Efficiency distribution (pre-reconciliation input data)",
     ]
     figs: list[tuple[str, Any]] = []
     for title in _DESIRED_ORDER:
@@ -3346,7 +3458,6 @@ _NAV_LINKS: list[tuple[str, str]] = [
 
 _CHART_DENSITY: dict[str, str] = {
     # --- Module 2 (shown on module1.html) ---
-    "Spread of stock / mileage / efficiency": "less",  # module1.html
     "Rows with missing branch values": "more",
     # --- Module 1 (inputs QA) ---
     "Default and researcher-provided values by branch/measure": "more",
@@ -3371,6 +3482,7 @@ _CHART_DENSITY: dict[str, str] = {
     "Stock above target event table": "ultra",
     # --- Module 6 (reconciliation) ---
     "Post-reconciliation vs ESTO target": "less",
+    "Spread of stock / mileage / efficiency — pre vs post reconciliation": "less",
     "Average correction factor by fuel": "less",
     "Scalar distributions": "less",
     "Device share by drive/fuel": "more",
@@ -3384,8 +3496,8 @@ _CHART_DENSITY: dict[str, str] = {
     "Sales share": "more",
     "Stock": "more",
     "Vehicle-km": "more",
-    "Mileage distribution": "less",
-    "Efficiency distribution": "less",
+    "Mileage distribution (pre-reconciliation input data)": "less",
+    "Efficiency distribution (pre-reconciliation input data)": "less",
     "Simulation minus LEAP energy": "ultra",
     # --- Workflow summary ---
     "Workflow timing": "ultra",
@@ -4085,7 +4197,7 @@ def write_module_pages(
     t12 = workflow_outputs.get("T12")
     recon_alert = _reconciliation_alert_html(t12)
 
-    m6_sub = {k: workflow_outputs.get(k) for k in ("T8", "T9", "T10", "T12", "T12_phev")}
+    m6_sub = {k: workflow_outputs.get(k) for k in ("T4", "T8", "T9", "T10", "T12", "T12_phev")}
     m6_scenarios = _scenario_labels_from_frames(*m6_sub.values())
     if m6_scenarios:
         m6_figures: list[tuple[str, Any]] = []

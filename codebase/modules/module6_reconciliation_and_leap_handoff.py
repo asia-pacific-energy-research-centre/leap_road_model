@@ -131,11 +131,11 @@ _FUEL_ALLOCATION_PRIORITY = {
     "LNG":                [["freight", "Trucks", "ICE"]],
     "LPG":                [[None, None, "ICE"]],
     "Natural gas":        [[None, None, "ICE"]],
-    # Diesel family: Trucks first (up to their liquid capacity), then LCVs
-    # (up to total LCV liquid capacity so diesel can displace gasoline slots),
-    # then passenger as overflow if freight demand is less than the diesel ESTO total.
-    "Gas and diesel oil": [["freight", "Trucks", "ICE"], ["freight", "LCVs"], ["passenger", None]],
-    "Biodiesel":          [["freight", "Trucks", "ICE"], ["freight", "LCVs"], ["passenger", None]],
+    # Diesel family: freight ICE first (Trucks + LCVs share proportionally by
+    # initial_energy_pj — see module docstring), with passenger as overflow for
+    # economies where freight ICE initial energy is less than the diesel ESTO total.
+    "Gas and diesel oil": [["freight", None, "ICE"], ["passenger", None]],
+    "Biodiesel":          [["freight", None, "ICE"], ["passenger", None]],
     # Gasoline family: passenger first, LCVs receive any surplus.
     "Motor gasoline":     [["passenger", None], ["freight", "LCVs"]],
     "Biogasoline":        [["passenger", None], ["freight", "LCVs"]],
@@ -600,7 +600,46 @@ def reconcile_electricity(
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Reconcile BEV and PHEV electricity use to ESTO road electricity.
+    Reconcile BEV and PHEV electricity use to ESTO road electricity, per scenario.
+
+    Base-year data carries a row per scenario (the base year itself is
+    scenario-agnostic, just replicated for each requested scenario). The ESTO
+    electricity target is a single, non-scenario value, so the ECF must be
+    computed from one scenario's initial electricity energy at a time —
+    summing initial energy across scenarios before dividing into the target
+    would shrink the ECF by the scenario count and under-reconcile every
+    scenario.
+    """
+    if branch_energy.empty or "scenario" not in branch_energy.columns:
+        return _reconcile_electricity_one_scenario(
+            branch_energy, electricity_esto_pj, phev_utilisation_rate, weights, scalar_bounds
+        )
+
+    energy_parts = []
+    phev_liquid_parts = []
+    for _, group in branch_energy.groupby("scenario", dropna=False, sort=False):
+        energy_part, phev_liquid_part = _reconcile_electricity_one_scenario(
+            group, electricity_esto_pj, phev_utilisation_rate, weights, scalar_bounds
+        )
+        energy_parts.append(energy_part)
+        phev_liquid_parts.append(phev_liquid_part)
+
+    energy = pd.concat(energy_parts).sort_index() if energy_parts else branch_energy.copy()
+    phev_liquid = (
+        pd.concat(phev_liquid_parts, ignore_index=True) if phev_liquid_parts else pd.DataFrame()
+    )
+    return energy, phev_liquid
+
+
+def _reconcile_electricity_one_scenario(
+    branch_energy: pd.DataFrame,
+    electricity_esto_pj: float,
+    phev_utilisation_rate: PHEVUtilisationRate,
+    weights: dict[str, float],
+    scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Reconcile BEV and PHEV electricity use to ESTO road electricity for a single scenario's rows.
 
     Uses the same iterative bounded stock/mileage/efficiency adjustment as Steps 5–6.
     After reconciliation, derives PHEV liquid fuel consumption from adjusted stock.
@@ -829,27 +868,49 @@ def calculate_remaining_esto(
     remaining_biogasoline = ESTO_biogasoline - PHEV_biogasoline
     remaining_efuel = ESTO_efuel - PHEV_efuel
 
+    Base-year data carries a row per scenario (scenario is replicated, not
+    distinct, in the base year) — summing phev_liquid_table across scenarios
+    before subtracting from a single-scenario ESTO total would over-subtract
+    by a factor of the scenario count. Group by scenario (when present) so the
+    subtraction stays scoped to one scenario's PHEV demand at a time.
+
     Returns:
         DataFrame with columns:
-        [fuel, esto_fuel_total_pj, phev_liquid_subtracted_pj, remaining_esto_fuel_pj]
+        [scenario, fuel, esto_fuel_total_pj, phev_liquid_subtracted_pj, remaining_esto_fuel_pj]
+        ("scenario" is only included if phev_liquid_table has a scenario column.)
     """
+    has_scenario = "scenario" in phev_liquid_table.columns and not phev_liquid_table.empty
+
     if phev_liquid_table.empty:
-        phev_by_fuel: dict[str, float] = {}
+        phev_by_key: dict[Any, float] = {}
+    elif has_scenario:
+        phev_by_key = phev_liquid_table.groupby(["scenario", "fuel"])["phev_liquid_pj"].sum().to_dict()
     else:
-        phev_by_fuel = phev_liquid_table.groupby("fuel")["phev_liquid_pj"].sum().to_dict()
+        phev_by_key = phev_liquid_table.groupby("fuel")["phev_liquid_pj"].sum().to_dict()
+
+    scenarios = (
+        phev_liquid_table["scenario"].dropna().unique().tolist()
+        if has_scenario
+        else [None]
+    )
 
     rows = []
-    for _, row in esto_fuel_totals.iterrows():
-        fuel = row["fuel"]
-        esto_total = float(row["energy_pj"])
-        phev_liquid = float(phev_by_fuel.get(fuel, 0.0))
-        remaining = max(0.0, esto_total - phev_liquid)
-        rows.append({
-            "fuel": fuel,
-            "esto_fuel_total_pj": esto_total,
-            "phev_liquid_subtracted_pj": phev_liquid,
-            "remaining_esto_fuel_pj": remaining,
-        })
+    for scenario in scenarios:
+        for _, row in esto_fuel_totals.iterrows():
+            fuel = row["fuel"]
+            esto_total = float(row["energy_pj"])
+            key = (scenario, fuel) if has_scenario else fuel
+            phev_liquid = float(phev_by_key.get(key, 0.0))
+            remaining = max(0.0, esto_total - phev_liquid)
+            out_row = {
+                "fuel": fuel,
+                "esto_fuel_total_pj": esto_total,
+                "phev_liquid_subtracted_pj": phev_liquid,
+                "remaining_esto_fuel_pj": remaining,
+            }
+            if has_scenario:
+                out_row = {"scenario": scenario, **out_row}
+            rows.append(out_row)
 
     return pd.DataFrame(rows)
 
@@ -889,8 +950,9 @@ def allocate_esto_fuel_to_branches(
 
     df = branch_energy[eligible_mask].copy()
 
-    # Join with remaining_esto on fuel
-    df = df.merge(remaining_esto, on="fuel", how="left")
+    # Join with remaining_esto on fuel (and scenario, when remaining_esto is scenario-scoped)
+    merge_on = ["scenario", "fuel"] if "scenario" in remaining_esto.columns else ["fuel"]
+    df = df.merge(remaining_esto, on=merge_on, how="left")
     df["esto_fuel_total_pj"] = df["esto_fuel_total_pj"].fillna(0.0)
     df["phev_liquid_subtracted_pj"] = df["phev_liquid_subtracted_pj"].fillna(0.0)
     df["remaining_esto_fuel_pj"] = df["remaining_esto_fuel_pj"].fillna(0.0)
@@ -1627,50 +1689,64 @@ def build_reconciliation_diagnostics(
     phev_liquid_table: pd.DataFrame,
     match_tolerance: float,
 ) -> pd.DataFrame:
-    """Build T12_reconciliation_diagnostics table."""
-    economy = reconciliation_scalars["economy"].iloc[0] if not reconciliation_scalars.empty else "unknown"
-    scenario = reconciliation_scalars["scenario"].iloc[0] if not reconciliation_scalars.empty else "unknown"
+    """Build T12_reconciliation_diagnostics table.
 
-    phev_by_fuel: dict[str, float] = (
-        phev_liquid_table.groupby("fuel")["phev_liquid_pj"].sum().to_dict()
-        if not phev_liquid_table.empty
-        else {}
-    )
+    reconciliation_scalars (and phev_liquid_table) carry one row group per
+    scenario — the ESTO target is scenario-agnostic (base year only), so each
+    scenario's pre/post energy must be compared against the target on its own.
+    Summing across scenarios before comparing would inflate the model side by
+    the scenario count and falsely report reconciliation failures.
+    """
+    if reconciliation_scalars.empty:
+        return pd.DataFrame()
 
-    pre_by_fuel = reconciliation_scalars.groupby("fuel")["allocated_branch_fuel_pj"].sum().to_dict()
-    post_by_fuel = reconciliation_scalars.groupby("fuel")["final_branch_fuel_pj"].sum().to_dict()
-
+    group_keys = ["economy", "scenario"]
     rows = []
-    for _, esto_row in esto_fuel_totals.iterrows():
-        fuel = esto_row["fuel"]
-        esto_total = float(esto_row["energy_pj"])
-        phev_liquid = float(phev_by_fuel.get(fuel, 0.0))
-        remaining = max(0.0, esto_total - phev_liquid)
-        pre = float(pre_by_fuel.get(fuel, 0.0))
-        post = float(post_by_fuel.get(fuel, 0.0))
-        gap_pj = post - remaining
-        gap_pct = abs(gap_pj) / esto_total * 100.0 if esto_total > 0 else 0.0
+    for (economy, scenario), scenario_scalars in reconciliation_scalars.groupby(group_keys, dropna=False):
+        scenario_phev = (
+            phev_liquid_table[phev_liquid_table["scenario"].eq(scenario)]
+            if not phev_liquid_table.empty and "scenario" in phev_liquid_table.columns
+            else phev_liquid_table
+        )
+        phev_by_fuel: dict[str, float] = (
+            scenario_phev.groupby("fuel")["phev_liquid_pj"].sum().to_dict()
+            if not scenario_phev.empty
+            else {}
+        )
 
-        if gap_pct < 2.0:
-            status = "ok"
-        elif gap_pct < 10.0:
-            status = "large_adjustment"
-        else:
-            status = "failed"
+        pre_by_fuel = scenario_scalars.groupby("fuel")["allocated_branch_fuel_pj"].sum().to_dict()
+        post_by_fuel = scenario_scalars.groupby("fuel")["final_branch_fuel_pj"].sum().to_dict()
 
-        rows.append({
-            "economy": economy,
-            "scenario": scenario,
-            "fuel": fuel,
-            "esto_total_pj": esto_total,
-            "phev_liquid_pj": phev_liquid,
-            "remaining_esto_pj": remaining,
-            "pre_reconciliation_model_pj": pre,
-            "post_reconciliation_model_pj": post,
-            "gap_pj": gap_pj,
-            "gap_pct": gap_pct,
-            "reconciliation_status": status,
-        })
+        for _, esto_row in esto_fuel_totals.iterrows():
+            fuel = esto_row["fuel"]
+            esto_total = float(esto_row["energy_pj"])
+            phev_liquid = float(phev_by_fuel.get(fuel, 0.0))
+            remaining = max(0.0, esto_total - phev_liquid)
+            pre = float(pre_by_fuel.get(fuel, 0.0))
+            post = float(post_by_fuel.get(fuel, 0.0))
+            gap_pj = post - remaining
+            gap_pct = abs(gap_pj) / esto_total * 100.0 if esto_total > 0 else 0.0
+
+            if gap_pct < 2.0:
+                status = "ok"
+            elif gap_pct < 10.0:
+                status = "large_adjustment"
+            else:
+                status = "failed"
+
+            rows.append({
+                "economy": economy,
+                "scenario": scenario,
+                "fuel": fuel,
+                "esto_total_pj": esto_total,
+                "phev_liquid_pj": phev_liquid,
+                "remaining_esto_pj": remaining,
+                "pre_reconciliation_model_pj": pre,
+                "post_reconciliation_model_pj": post,
+                "gap_pj": gap_pj,
+                "gap_pct": gap_pct,
+                "reconciliation_status": status,
+            })
 
     return pd.DataFrame(rows)
 

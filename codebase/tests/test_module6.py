@@ -699,7 +699,10 @@ class TestAllocateFuelToBranches:
         assert pytest.approx(shares["LPVs"], rel=1e-4) == lpv_energy / total
         assert pytest.approx(shares["Buses"], rel=1e-4) == bus_energy / total
 
-    def test_diesel_allocates_to_trucks_before_lcvs_and_passenger(self):
+    def test_diesel_splits_trucks_and_lcvs_proportionally_before_passenger(self):
+        # Trucks and LCVs share the combined freight ICE tier proportionally by
+        # initial_energy_pj (both 1.0 PJ here, so they split the 1.5 PJ target
+        # evenly) rather than Trucks draining the tier before LCVs gets any.
         t4 = _make_t4(
             _branch(
                 "Trucks", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100,
@@ -719,12 +722,14 @@ class TestAllocateFuelToBranches:
         t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
 
         allocated = t8.set_index("vehicle_type")["allocated_branch_fuel_pj"]
-        assert pytest.approx(allocated["Trucks"], rel=1e-4) == 1.0
-        assert pytest.approx(allocated["LCVs"], rel=1e-4) == 0.5
+        assert pytest.approx(allocated["Trucks"], rel=1e-4) == 0.75
+        assert pytest.approx(allocated["LCVs"], rel=1e-4) == 0.75
         assert pytest.approx(allocated["LPVs"], abs=1e-9) == 0.0
         assert set(t8["allocation_rule"]) == {"priority_spillover_stock_share"}
 
     def test_diesel_uses_lcv_liquid_capacity_before_passenger_spillover(self):
+        # Trucks (1.0 PJ) and diesel-fuelled LCVs (0.2 PJ) split the 1.8 PJ diesel
+        # target proportionally (5/6 : 1/6) within the combined freight ICE tier.
         t4 = _make_t4(
             _branch(
                 "Trucks", "ICE", "Gas and diesel oil", stock=10000, mileage=10000, efficiency=100,
@@ -753,8 +758,8 @@ class TestAllocateFuelToBranches:
 
         diesel = t8[t8["fuel"] == "Gas and diesel oil"].set_index("vehicle_type")["allocated_branch_fuel_pj"]
         gasoline = t8[t8["fuel"] == "Motor gasoline"].set_index("vehicle_type")["allocated_branch_fuel_pj"]
-        assert pytest.approx(diesel["Trucks"], rel=1e-4) == 1.0
-        assert pytest.approx(diesel["LCVs"], rel=1e-4) == 0.8
+        assert pytest.approx(diesel["Trucks"], rel=1e-4) == 1.5
+        assert pytest.approx(diesel["LCVs"], rel=1e-4) == 0.3
         assert pytest.approx(diesel["LPVs"], abs=1e-9) == 0.0
         assert pytest.approx(gasoline["LCVs"], rel=1e-4) == 0.5
 

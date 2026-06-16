@@ -317,7 +317,6 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
     assert "Post-reconciliation results include a base-year energy calibration" in post_html
     assert "Projected GDP growth" in post_html
     assert "Implied projected freight stock growth" in post_html
-    assert "Freight stock estimate from elasticity" in post_html
     assert "Simulated projected freight energy growth" in post_html
     assert "Historical freight energy index" in post_html
     assert "Historical GDP index" in post_html
