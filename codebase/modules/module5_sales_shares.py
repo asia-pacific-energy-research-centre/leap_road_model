@@ -419,6 +419,22 @@ def _apply_researcher_overrides(
         ignore_index=True,
     ).drop_duplicates()
     complete_keys = set(complete_groups[group_cols].astype(str).agg("\u241f".join, axis=1))
+
+    all_keys = set(provided_totals[group_cols].astype(str).agg("\u241f".join, axis=1))
+    incomplete_keys = all_keys - complete_keys
+    if incomplete_keys:
+        incomplete_rows = provided_totals[
+            provided_totals[group_cols].astype(str).agg("\u241f".join, axis=1).isin(incomplete_keys)
+        ]
+        raise ValueError(
+            "Module 1 sales-share override is incomplete for the following "
+            "(economy, scenario, vehicle_type) group(s) \u2014 shares don't sum to "
+            "~1.0 and no explicit ICE row was provided, so it's ambiguous whether "
+            "the remaining share should fall back to stock proportions or is "
+            "simply missing from Module 1:\n"
+            f"{incomplete_rows.to_string(index=False)}"
+        )
+
     if complete_keys:
         base_keys = base_shares[group_cols].astype(str).agg("\u241f".join, axis=1)
         base_shares = base_shares[~base_keys.isin(complete_keys)].copy()
