@@ -1932,8 +1932,9 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             "Spread of stock / mileage / efficiency — pre vs post reconciliation",
             spread_fig,
             True,
-            "Pre-reconciliation values come from the base-year input data (T4); post-reconciliation values come "
-            "from Module 6's adjusted output (T9). Each panel is sorted by median value (highest to lowest). Use "
+            "Each line connects one branch's pre-reconciliation value (blue, from base-year input data T4) to its "
+            "post-reconciliation value (red, from Module 6's adjusted output T9), so the shift caused by "
+            "reconciliation is visible per branch. Categories are sorted by median value (highest to lowest). Use "
             "the dropdown to switch between vehicle type, drive type, and transport type groupings.",
         ))
 
@@ -2589,15 +2590,18 @@ _PRE_RECONCILIATION_COLOUR = "#1565C0"
 _POST_RECONCILIATION_COLOUR = "#E53935"
 
 
-def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure | None":
-    """Stock/mileage/efficiency spread, pre- vs post-reconciliation, side by side.
+_BRANCH_KEY_COLS = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type", "fuel", "size"]
 
-    One panel per metric (dot-plot style box, like the single-metric distribution
-    charts), with a dropdown to switch grouping (vehicle type / drive type /
-    transport type) across all panels at once. Pre-reconciliation values come
-    from T4 (base-year input data); post-reconciliation values come from T9's
-    adjusted_* columns (Module 6 output). Both are plotted together so the
-    effect of reconciliation is visible directly, instead of needing two charts.
+
+def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure | None":
+    """Pre- vs post-reconciliation dumbbell chart, one panel per metric.
+
+    Each branch (a unique vehicle/drive/transport/fuel combination) is drawn as a
+    vertical segment connecting its pre-reconciliation value (T4) to its
+    post-reconciliation value (T9's adjusted_* columns), so the effect of
+    reconciliation is visible per branch rather than only as an aggregate
+    distribution. A dropdown switches the grouping used to position and order
+    branches along the x-axis (vehicle type / drive type / transport type).
     """
     if t4 is None or t4.empty or t9 is None or t9.empty:
         return None
@@ -2620,13 +2624,17 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
     if not metrics:
         return None
 
+    key_cols = [c for c in _BRANCH_KEY_COLS if c in pre.columns and c in post.columns]
+    if not key_cols:
+        return None
+
     grouping_defs: list[tuple[str, str]] = []
     for grp_label, grp_col in [
         ("By vehicle type", "vehicle_type"),
         ("By drive type", "drive_type"),
         ("By transport type", "transport_type"),
     ]:
-        if grp_col in pre.columns and grp_col in post.columns:
+        if grp_col in key_cols:
             grouping_defs.append((grp_label, grp_col))
 
     if not grouping_defs:
@@ -2639,6 +2647,17 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
         horizontal_spacing=0.07,
     )
 
+    # Branch-level pairing of pre/post values, shared across all groupings/metrics.
+    paired_by_metric: dict[str, pd.DataFrame] = {}
+    for col, _label in metrics:
+        p = pre[key_cols + [col]].rename(columns={col: "pre_val"})
+        q = post[key_cols + [col]].rename(columns={col: "post_val"})
+        paired = p.merge(q, on=key_cols, how="inner")
+        paired["pre_val"] = pd.to_numeric(paired["pre_val"], errors="coerce")
+        paired["post_val"] = pd.to_numeric(paired["post_val"], errors="coerce")
+        paired = paired.dropna(subset=["pre_val", "post_val"], how="all").reset_index(drop=True)
+        paired_by_metric[col] = paired
+
     trace_groups: list[tuple[str, list[int], dict[str, Any]]] = []
     initial_axis_updates: dict[str, Any] = {}
     n_traces = 0
@@ -2648,37 +2667,50 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
         indices: list[int] = []
         relayout: dict[str, Any] = {}
         for j, (col, label) in enumerate(metrics, start=1):
-            tpre = pre[[grp_col, col]].copy()
-            tpre[col] = pd.to_numeric(tpre[col], errors="coerce")
-            tpre = tpre.dropna(subset=[col])
-
-            tpost = post[[grp_col, col]].copy()
-            tpost[col] = pd.to_numeric(tpost[col], errors="coerce")
-            tpost = tpost.dropna(subset=[col])
-
-            if tpre.empty and tpost.empty:
+            paired = paired_by_metric[col]
+            if paired.empty:
                 continue
+            branch = paired.copy()
+            branch[grp_col] = branch[grp_col].astype(str)
 
-            order_source = tpost if not tpost.empty else tpre
+            order_val = branch["post_val"].where(branch["post_val"].notna(), branch["pre_val"])
             order = (
-                order_source.groupby(grp_col)[col]
+                branch.assign(_order=order_val)
+                .groupby(grp_col)["_order"]
                 .median()
                 .sort_values(ascending=False)
-                .index.astype(str)
-                .tolist()
+                .index.tolist()
+            )
+            cat_pos = {cat: i for i, cat in enumerate(order)}
+
+            # Spread branches that share a category across a small x-band so
+            # individual pre->post segments don't overlap.
+            rank_in_cat = branch.groupby(grp_col).cumcount()
+            n_in_cat = branch.groupby(grp_col)[grp_col].transform("count")
+            span = np.where(n_in_cat > 1, 0.64 * rank_in_cat / (n_in_cat - 1).clip(lower=1) - 0.32, 0.0)
+            branch["_x"] = branch[grp_col].map(cat_pos) + span
+
+            hover = (
+                branch[key_cols].fillna("").astype(str).agg(" / ".join, axis=1)
+                if key_cols else [""] * len(branch)
             )
 
+            line_x: list[Any] = []
+            line_y: list[Any] = []
+            for x, pv, qv in zip(branch["_x"], branch["pre_val"], branch["post_val"]):
+                if pd.isna(pv) or pd.isna(qv):
+                    continue
+                line_x.extend([x, x, None])
+                line_y.extend([pv, qv, None])
+
             fig.add_trace(
-                go.Box(
-                    x=tpre[grp_col].astype(str).tolist(),
-                    y=tpre[col].tolist(),
-                    name="Pre-reconciliation",
-                    legendgroup="pre",
-                    showlegend=(j == 1),
-                    marker_color=_PRE_RECONCILIATION_COLOUR,
-                    boxpoints="all",
-                    jitter=0.4,
-                    pointpos=0,
+                go.Scatter(
+                    x=line_x,
+                    y=line_y,
+                    mode="lines",
+                    line=dict(color="rgba(120,120,120,0.5)", width=1.5),
+                    hoverinfo="skip",
+                    showlegend=False,
                     visible=is_first,
                 ),
                 row=1,
@@ -2688,16 +2720,35 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
             n_traces += 1
 
             fig.add_trace(
-                go.Box(
-                    x=tpost[grp_col].astype(str).tolist(),
-                    y=tpost[col].tolist(),
+                go.Scatter(
+                    x=branch["_x"],
+                    y=branch["pre_val"],
+                    mode="markers",
+                    name="Pre-reconciliation",
+                    legendgroup="pre",
+                    showlegend=(j == 1),
+                    marker=dict(color=_PRE_RECONCILIATION_COLOUR, size=7),
+                    customdata=hover,
+                    hovertemplate="%{customdata}<br>Pre: %{y:,.3g}<extra></extra>",
+                    visible=is_first,
+                ),
+                row=1,
+                col=j,
+            )
+            indices.append(n_traces)
+            n_traces += 1
+
+            fig.add_trace(
+                go.Scatter(
+                    x=branch["_x"],
+                    y=branch["post_val"],
+                    mode="markers",
                     name="Post-reconciliation",
                     legendgroup="post",
                     showlegend=(j == 1),
-                    marker_color=_POST_RECONCILIATION_COLOUR,
-                    boxpoints="all",
-                    jitter=0.4,
-                    pointpos=0,
+                    marker=dict(color=_POST_RECONCILIATION_COLOUR, size=7),
+                    customdata=hover,
+                    hovertemplate="%{customdata}<br>Post: %{y:,.3g}<extra></extra>",
                     visible=is_first,
                 ),
                 row=1,
@@ -2707,10 +2758,18 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
             n_traces += 1
 
             xkey = "xaxis" if j == 1 else f"xaxis{j}"
-            relayout[f"{xkey}.categoryorder"] = "array"
-            relayout[f"{xkey}.categoryarray"] = order
+            axis_update = dict(
+                tickmode="array",
+                tickvals=list(range(len(order))),
+                ticktext=order,
+                range=[-0.5, len(order) - 0.5],
+            )
+            relayout[f"{xkey}.tickmode"] = axis_update["tickmode"]
+            relayout[f"{xkey}.tickvals"] = axis_update["tickvals"]
+            relayout[f"{xkey}.ticktext"] = axis_update["ticktext"]
+            relayout[f"{xkey}.range"] = axis_update["range"]
             if is_first:
-                initial_axis_updates[xkey] = dict(categoryorder="array", categoryarray=order)
+                initial_axis_updates[xkey] = axis_update
             fig.update_yaxes(title_text=label, row=1, col=j)
 
         trace_groups.append((grp_label, indices, relayout))
@@ -2733,7 +2792,6 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
 
     fig.update_layout(
         **_layout("Spread of stock, mileage and efficiency — pre vs post reconciliation"),
-        boxmode="group",
         legend=dict(orientation="h", x=0.0, y=1.18),
         margin=dict(t=130),
         updatemenus=[dict(
@@ -2988,13 +3046,17 @@ def module7_figures(
     module7_outputs: dict[str, Any],
     t7f: pd.DataFrame | None = None,
     t4: pd.DataFrame | None = None,
+    t9: pd.DataFrame | None = None,
 ) -> list[tuple[str, Any]]:
     """Interactive QA figures for Module 7 mirror outputs (T13, T13_fuel).
 
     Args:
         module7_outputs: dict with T13 and T13_fuel DataFrames.
         t7f: Optional T7f future sales shares DataFrame (for sales share by drive type).
-        t4: Optional T4 base-year branches DataFrame (for mileage/efficiency distributions).
+        t4: Optional T4 base-year branches DataFrame (for mileage/efficiency distributions,
+            used as a fallback if t9 is not available).
+        t9: Optional T9 reconciliation scalars DataFrame (adjusted_mileage_km_per_year /
+            adjusted_efficiency_km_per_gj), used for post-reconciliation distributions.
     """
     if not _can_plot() or not module7_outputs:
         return []
@@ -3096,39 +3158,51 @@ def module7_figures(
                 "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
             ))
 
-    # --- Mileage and efficiency distribution plots (from T4 base-year branches) ---
+    # --- Mileage and efficiency distribution plots (post-reconciliation, from T9) ---
+    # Falls back to T4 base-year input data (pre-reconciliation) if T9 isn't available.
 
-    if t4 is not None and not t4.empty:
-        if "mileage_km_per_year" in t4.columns:
+    has_t9_mileage = t9 is not None and not t9.empty and "adjusted_mileage_km_per_year" in t9.columns
+    has_t9_efficiency = t9 is not None and not t9.empty and "adjusted_efficiency_km_per_gj" in t9.columns
+
+    if has_t9_mileage or has_t9_efficiency:
+        post = t9.rename(columns={
+            "adjusted_mileage_km_per_year": "mileage_km_per_year",
+            "adjusted_efficiency_km_per_gj": "efficiency_km_per_gj",
+        })
+    else:
+        post = t4
+
+    if post is not None and not post.empty:
+        if "mileage_km_per_year" in post.columns:
             mileage_dist = _distribution_chart_with_dropdown(
-                t4,
+                post,
                 metric_col="mileage_km_per_year",
                 metric_label="Mileage (km/year)",
-                title="Mileage distribution (pre-reconciliation input data)",
+                title="Mileage distribution (post-reconciliation)",
             )
             if mileage_dist is not None:
                 figs.append((
-                    "Mileage distribution (pre-reconciliation input data)",
+                    "Mileage distribution (post-reconciliation)",
                     mileage_dist,
                     False,
-                    "Based directly on the base-year input data (T4), not on any simulated or reconciled model output. "
-                    "Distribution of base-year mileage (km/year) across branches, sorted by median. Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
+                    "Distribution of mileage (km/year) across branches after Module 6 reconciliation (T9), sorted by median. "
+                    "Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
                 ))
 
-        if "efficiency_km_per_gj" in t4.columns:
+        if "efficiency_km_per_gj" in post.columns:
             eff_dist = _distribution_chart_with_dropdown(
-                t4,
+                post,
                 metric_col="efficiency_km_per_gj",
                 metric_label="Efficiency (km/GJ)",
-                title="Efficiency distribution (pre-reconciliation input data)",
+                title="Efficiency distribution (post-reconciliation)",
             )
             if eff_dist is not None:
                 figs.append((
-                    "Efficiency distribution (pre-reconciliation input data)",
+                    "Efficiency distribution (post-reconciliation)",
                     eff_dist,
                     False,
-                    "Based directly on the base-year input data (T4), not on any simulated or reconciled model output. "
-                    "Distribution of base-year efficiency (km/GJ) across branches, sorted by median. Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
+                    "Distribution of efficiency (km/GJ) across branches after Module 6 reconciliation (T9), sorted by median. "
+                    "Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
                 ))
 
     return figs
@@ -3149,16 +3223,9 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
     m2_raw = module2_figures(workflow_outputs.get("T4"))
     m2_by_title = {item[0]: item for item in m2_raw}
 
-    # Module 7 figures — mileage/efficiency distributions (base-year T4 data).
-    # Simulated stock/energy outputs are excluded: they rely on assumptions about sales
-    # shares and fleet turnover that differ from LEAP, so they are not model outputs.
-    _INCLUDE_M7 = {
-        "Mileage distribution (pre-reconciliation input data)",
-        "Efficiency distribution (pre-reconciliation input data)",
-    }
-    m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
-    m7_raw = module7_figures(m7_sub, t7f=workflow_outputs.get("T7f"), t4=workflow_outputs.get("T4"))
-    m7_by_title = {item[0]: item for item in m7_raw if item[0] in _INCLUDE_M7}
+    # Module 7's mileage/efficiency distribution charts are superseded by the
+    # pre-vs-post spread comparison chart (module2_figures), so they are excluded here.
+    m7_by_title: dict[str, Any] = {}
 
     # Module 3 figures — Passenger X-LPV, freight stock growth, and target stocks.
     _t5_post = workflow_outputs.get("T5_post_reconciliation")
@@ -3297,8 +3364,6 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         "Final fuel allocation share by vehicle type and drive (2022)",
         # Base-year distributions
         "Spread of stock / mileage / efficiency — pre vs post reconciliation",
-        "Mileage distribution (pre-reconciliation input data)",
-        "Efficiency distribution (pre-reconciliation input data)",
     ]
     figs: list[tuple[str, Any]] = []
     for title in _DESIRED_ORDER:
@@ -3496,8 +3561,8 @@ _CHART_DENSITY: dict[str, str] = {
     "Sales share": "more",
     "Stock": "more",
     "Vehicle-km": "more",
-    "Mileage distribution (pre-reconciliation input data)": "less",
-    "Efficiency distribution (pre-reconciliation input data)": "less",
+    "Mileage distribution (post-reconciliation)": "less",
+    "Efficiency distribution (post-reconciliation)": "less",
     "Simulation minus LEAP energy": "ultra",
     # --- Workflow summary ---
     "Workflow timing": "ultra",
@@ -4219,6 +4284,7 @@ def write_module_pages(
                 m7_sub_scenario,
                 t7f=_filter_frame_scenario(workflow_outputs.get("T7f"), scenario),
                 t4=workflow_outputs.get("T4"),
+                t9=_filter_frame_scenario(workflow_outputs.get("T9"), scenario),
             )
             m7_figures.extend(_with_scenario(scenario_figures, scenario))
     else:
@@ -4226,6 +4292,7 @@ def write_module_pages(
             m7_sub,
             t7f=workflow_outputs.get("T7f"),
             t4=workflow_outputs.get("T4"),
+            t9=workflow_outputs.get("T9"),
         )
     _write(
         "module7.html",

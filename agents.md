@@ -123,6 +123,126 @@ boundaries, not as interchangeable codebases.
 
 ---
 
+## Front-end input-cell formatting (road_model_inputs_interface)
+
+Browser UI behavior is owned by `road_model_inputs_interface` (see ownership
+table above), but its conventions are easy to violate accidentally because the
+same visual row can be produced by several different code paths (plain rows,
+shared-mileage, shared-fuel-economy, shared-utilisation, stock-share,
+reconciliation/transport-params, sales-share-mix). This section records the
+*intent* behind the current formatting so it can be kept consistent as new row
+types are added, even if exact selectors/values drift. Treat this as a set of
+principles to re-apply, not a frozen spec — if the CSS changes, update this
+section rather than treating it as stale and ignorable.
+
+Relevant files: `front-end/styles.css` (rules referenced below) and
+`front-end/app.js` (`buildRoadModule1ListGroupHtml`,
+`buildRoadModule1TreeEditorHtml`, `buildRoadModule1EditorRowsHtml`, and the
+per-group-type branches inside it).
+
+### The five cell visual states
+
+Regardless of row type, an input cell should only ever be in one of these
+states, styled consistently everywhere:
+
+1. **Default editable** — white background, `#cbd5e1` border (`.road-value-input`).
+2. **Focused** — blue border + glow (`:focus`).
+3. **Read-only/computed** — gray background, muted text, `not-allowed` cursor
+   (e.g. the auto-calculated base-year stock-share cell).
+4. **Edited row** — green background + green left border, toggled via JS
+   (`.road-input-row.is-edited`) when an override or comment is present.
+5. **Selected cell** — blue outline + tint, toggled via JS for click-to-inspect.
+
+Don't invent a 6th ad hoc visual state for a new row type; reuse one of these
+or extend the rule that already implements it.
+
+### Row layout: two axes, not one-off per row type
+
+Every input row is the product of two independent decisions. New row types
+should pick a position on each axis rather than getting bespoke CSS.
+
+**Axis 1 — does the card show a row label inline, or is it a single shared
+value?**
+
+- Most rows show a label (title + badges) to the left of the input(s):
+  `.road-input-row` with its 3-column grid (label / input(s) / actions).
+- Rows representing one shared value with no per-row label (a single shared
+  mileage/fuel-economy/utilisation series, a hidden-label single-row group)
+  use `.road-input-row.no-row-label`, which keeps the *same* column
+  boundaries as labeled rows (so inputs still line up vertically against
+  labeled rows above/below) by reserving — not removing — the label column.
+
+**Axis 2 — is the group "compact" (header and row share one line) or not
+(header above, row below)?**
+This is `isCompactGroup` in `buildRoadModule1ListGroupHtml` /
+`buildRoadModule1TreeEditorHtml`. A group should be compact when it renders
+exactly one input row with no separate need for a tall header (single-row
+groups, and shared-value groups like mileage/fuel-economy/utilisation that
+always reduce to one or two cells). Compact cards use a
+`minmax(240px, 1fr) auto` 2-column grid (header | row), which lets the row
+shrink-wrap to its content and right-align — this is *why* compact rows and
+non-compact rows can end up at different horizontal positions if a row type
+is missing from `isCompactGroup`: a non-compact row's empty label column
+flex-grows to fill the card width before the input, while a compact row's
+column only grows to its content's minimum. When adding a new shared/derived
+row type that always reduces to a small, fixed number of cells, add its
+`groupType` to `isCompactGroup` in *both* the list-view and tree-view builders
+so it lines up with Stock Share / per-fuel Fuel Economy / Mileage / PHEV
+utilisation instead of drifting.
+
+### Multi-cell ("list") rows: right-align with a floor, never a fixed equal grid
+
+Some rows can show 1-3+ cells (stock share base/target years, etc.). The
+failure mode to avoid: forcing a fixed `repeat(N, minmax(0,1fr))` grid, which
+left-bunches cells when fewer than N are present instead of right-aligning
+them like single-cell rows, and which has no defense against overlap at
+narrow widths.
+
+The pattern used instead (`.road-stock-share-row .road-year-grid` et al.):
+
+```css
+display: flex;
+flex-wrap: wrap;
+justify-content: flex-end;   /* right-align with single-cell rows */
+gap: 0.5rem;
+```
+
+paired with a `flex: 0 1 <basis>; min-width: <floor>;` on each cell so the
+row wraps onto a second line under width pressure instead of shrinking cells
+below a readable size (which is what causes label/input text to visually
+overlap). If a more specific selector already sets `min-width` or a fixed
+width for the same element elsewhere (e.g. the generic
+`.road-input-row.no-row-label .road-year-input` rule), the new rule needs
+matching or greater specificity or it will be silently overridden — check
+computed styles (e.g. via a quick Playwright script), not just visual
+inspection, when cells look subtly misaligned.
+
+As a last-resort safety net at very narrow widths, compact cards fall back to
+stacking the header above the row (`@media (max-width: 1150px)` switches
+`.road-group-card.is-compact` to a single column) rather than letting the
+header/row columns compress indefinitely.
+
+### When adding a new row type
+
+1. Decide label-shown vs. no-row-label, and whether it's typically 1 cell
+   (mark it compact) or genuinely multi-cell/list-like.
+2. Reuse the generic `.road-input-row` / `.road-input-row.no-row-label` cell
+   styling rather than writing new per-row-type grid/flex rules. Only add a
+   row-type-specific override when the content genuinely differs (e.g. a
+   chart, a textarea, a multi-section measure block) — not just to fix
+   alignment, which usually means the row is missing from `isCompactGroup` or
+   reusing a stale bespoke rule instead of the shared one.
+3. If multiple sub-rows need a short distinguishing label (e.g. PHEV
+   electric vs. other-fuel fuel-economy split), put it in the row's normally-
+   empty label column rather than changing the input cell's own layout.
+4. Verify alignment by comparing bounding boxes of `.road-value-input` across
+   row types at a few viewport widths, not just by eyeballing one screenshot —
+   misalignments here are usually a few pixels off because of `min-width`/
+   `flex-basis`/specificity interactions, not because the layout is visually
+   broken.
+
+---
+
 ## Naming and file conventions
 
 ### Economy codes
