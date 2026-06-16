@@ -46,8 +46,8 @@ Read these when the task touches the relevant area:
 
 | Area | Doc |
 |------|-----|
-| Road model design | `docs/new model/road_transport_model_detailed.md` |
-| Simplified road model overview | `docs/new model/road_transport_model_simplified.md` |
+| Road model modeller guide | `docs/new model/road_transport_model_modeller_guide.md` |
+| Road model methodology | `docs/new model/road_transport_model_methodology.md` |
 | Interface/Module 1 contract | `../road_model_inputs_interface/docs/new model/multinode_road_module1_repo_guide.md` |
 | Interface source update method | `../road_model_inputs_interface/back-end/data/road_model/UPDATE_METHOD.md` |
 | LEAP export file format | `C:\Users\Work\.codex\AGENTS_LEAP_EXPORT.md` |
@@ -194,7 +194,7 @@ preserve it losslessly through load, edit, download/upload, and run-model export
 Do not drop rows merely because they are not prominent in the main editor. Some
 examples of less-visible rows that still must travel through the hand-off are:
 
-- `PHEV Electric Driving Share` (Module 6 PHEV electricity/liquid split)
+- `PHEV Electric Driving Share` (Module 6 passenger/freight PHEV electricity/liquid split)
 - `Survival Rate` (Module 4 turnover)
 - `Vintage Profile Share` (Module 4 base-year vintage distribution)
 - reconciliation weights/bounds, passenger saturation, and vehicle equivalent
@@ -655,7 +655,7 @@ PY
 
 Brief summary of each module's role:
 
-- **Module 1** — Loads base-year road assumptions (stock, mileage, efficiency, survival curves, PHEV utilisation rate, reconciliation bounds). Source: module1 CSV written by the interface.
+- **Module 1** — Loads base-year road assumptions (stock, mileage, efficiency, survival curves, passenger/freight PHEV utilisation rates, reconciliation bounds). Source: module1 CSV written by the interface.
 - **Module 2** — Builds the base-year branch table by cross-joining vehicle taxonomy with module 1 data. Produces T4.
 - **Module 3** — Projects passenger stock with the motorisation envelope and freight stock with GDP elasticity, including Module 1 growth/elasticity adjustment controls. Produces T5.
 - **Module 4** — Derives sales, retirements, and vintage distributions from stock targets. Produces T6.

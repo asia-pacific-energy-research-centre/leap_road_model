@@ -492,6 +492,34 @@ class TestModule1DefaultsSaturationUnits:
         assert "2022" in raw.columns
         assert raw.loc[raw["Variable"].eq("Stock"), "Region"].iloc[0] == "20_USA"
 
+    def test_phev_utilisation_rates_can_be_transport_specific(self, tmp_path: Path):
+        df = pd.DataFrame([
+            {
+                "Economy": "20_USA",
+                "Scenario": "Current Accounts",
+                "Branch Path": "Demand\\Passenger road\\PHEV",
+                "Variable": "PHEV Electric Driving Share",
+                "Year": 2022,
+                "Value": 0.52,
+                "Units": "Share",
+            },
+            {
+                "Economy": "20_USA",
+                "Scenario": "Current Accounts",
+                "Branch Path": "Demand\\Freight road\\PHEV",
+                "Variable": "PHEV Electric Driving Share",
+                "Year": 2022,
+                "Value": 0.47,
+                "Units": "Share",
+            },
+        ])
+        df.to_csv(tmp_path / "road_module1_values_20_USA.csv", index=False)
+
+        loaded = load_road_module1_defaults(tmp_path, economy_filter=["20_USA"])
+        rates = get_phev_utilisation_rate(loaded, economy="20_USA")
+
+        assert rates == pytest.approx({"passenger": 0.52, "freight": 0.47})
+
     def test_component_reconciliation_weights_from_pseudo_branches(self, tmp_path: Path):
         rows = []
         for branch, value in [

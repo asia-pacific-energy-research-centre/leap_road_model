@@ -3401,8 +3401,8 @@ def _chart_density_level(title: str) -> str:
     return "more"
 
 _ROAD_MODEL_OVERVIEW_HREF = "/road-model-docs/road_transport_model_overview.md"
-_ROAD_MODEL_GUIDE_HREF = "/road-model-docs/road_transport_model_simplified.md"
-_ROAD_MODEL_DETAILED_HREF = "/road-model-docs/road_transport_model_detailed.md"
+_ROAD_MODEL_GUIDE_HREF = "/road-model-docs/road_transport_model_methodology.md"
+_ROAD_MODEL_DETAILED_HREF = "/road-model-docs/road_transport_model_modeller_guide.md"
 
 _CSS = """
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:0;background:#f5f5f5;color:#333}
@@ -3744,8 +3744,8 @@ def _index_extra_html(
         'Inputs &amp; branches → Stocks &amp; sales → Reconciliation → Post-Reconciliation stocks → Outputs → Summary</p>'
         f'<div style="display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;margin-top:10px">'
         f'<a class="doc-link" href="{_ROAD_MODEL_OVERVIEW_HREF}" target="_blank" rel="noopener">Open road model overview</a>'
-        f'<a class="doc-link" href="{_ROAD_MODEL_GUIDE_HREF}" target="_blank" rel="noopener">Open road model guide</a>'
-        f'<a class="doc-link" href="{_ROAD_MODEL_DETAILED_HREF}" target="_blank" rel="noopener">Open detailed road model workflow</a>'
+        f'<a class="doc-link" href="{_ROAD_MODEL_GUIDE_HREF}" target="_blank" rel="noopener">Open methodology guide</a>'
+        f'<a class="doc-link" href="{_ROAD_MODEL_DETAILED_HREF}" target="_blank" rel="noopener">Open modeller guide</a>'
         f'</div>'
         '</div>'
     )

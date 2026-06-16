@@ -81,6 +81,50 @@ def _make_esto(fuels_pj: dict[str, float]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# PHEV utilisation rates
+# ---------------------------------------------------------------------------
+
+class TestPHEVUtilisationRates:
+    def test_initial_branch_energy_uses_transport_type_specific_phev_rates(self):
+        t4 = _make_t4(
+            _branch("LPVs", "PHEV", "Electricity", stock=100, mileage=10000, efficiency=250),
+            _branch("LPVs", "PHEV", "Motor gasoline", stock=100, mileage=10000, efficiency=100),
+            _branch(
+                "LCVs",
+                "PHEV",
+                "Electricity",
+                stock=100,
+                mileage=20000,
+                efficiency=300,
+                transport_type="freight",
+                leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Electricity",
+            ),
+            _branch(
+                "LCVs",
+                "PHEV",
+                "Motor gasoline",
+                stock=100,
+                mileage=20000,
+                efficiency=120,
+                transport_type="freight",
+                leap_branch_path="Demand\\Freight road\\LCVs\\PHEV\\Motor gasoline",
+            ),
+        )
+
+        result = calculate_initial_branch_energy(
+            t4,
+            phev_utilisation_rate={"passenger": 0.8, "freight": 0.3},
+        )
+
+        passenger = result[result["transport_type"].eq("passenger")]
+        freight = result[result["transport_type"].eq("freight")]
+        assert passenger.loc[passenger["fuel"].eq("Electricity"), "mileage_km_per_year"].iloc[0] == pytest.approx(8000)
+        assert passenger.loc[passenger["fuel"].eq("Motor gasoline"), "mileage_km_per_year"].iloc[0] == pytest.approx(2000)
+        assert freight.loc[freight["fuel"].eq("Electricity"), "mileage_km_per_year"].iloc[0] == pytest.approx(6000)
+        assert freight.loc[freight["fuel"].eq("Motor gasoline"), "mileage_km_per_year"].iloc[0] == pytest.approx(14000)
+
+
+# ---------------------------------------------------------------------------
 # apply_scalars
 # ---------------------------------------------------------------------------
 

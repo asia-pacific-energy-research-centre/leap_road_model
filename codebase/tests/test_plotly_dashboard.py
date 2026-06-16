@@ -162,11 +162,11 @@ def test_dashboard_diagrams_are_written_to_shared_assets(tmp_path):
     assert "../../../shared/dashboard_assets/end_to_end_road_model_workflow.png" in index_html
     assert "../../../shared/dashboard_assets/road_transport_model_researcher_detail.png" in index_html
     assert "/road-model-docs/road_transport_model_overview.md" in index_html
-    assert "/road-model-docs/road_transport_model_simplified.md" in index_html
-    assert "/road-model-docs/road_transport_model_detailed.md" in index_html
+    assert "/road-model-docs/road_transport_model_methodology.md" in index_html
+    assert "/road-model-docs/road_transport_model_modeller_guide.md" in index_html
     assert "Open road model overview" in index_html
-    assert "Open road model guide" in index_html
-    assert "Open detailed road model workflow" in index_html
+    assert "Open methodology guide" in index_html
+    assert "Open modeller guide" in index_html
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")

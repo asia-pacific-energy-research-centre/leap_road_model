@@ -33,8 +33,8 @@ Keep both repos open together in one VS Code multi-root workspace
 
 Use these docs first:
 
-- `docs/new model/road_transport_model_detailed.md`
-- `docs/new model/road_transport_model_simplified.md`
+- `docs/new model/road_transport_model_modeller_guide.md`
+- `docs/new model/road_transport_model_methodology.md`
 - `../road_model_inputs_interface/docs/new model/multinode_road_module1_repo_guide.md`
 
 `transition_audit_report.md` is historical migration context only.

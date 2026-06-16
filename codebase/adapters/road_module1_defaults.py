@@ -1083,13 +1083,13 @@ def get_passenger_stock_growth_rate_adjustment(defaults_df: pd.DataFrame, econom
     return value
 
 
-def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float:
+def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float | dict[str, float]:
     """
-    Extract the PHEV electric driving share for the economy as a single float.
+    Extract the PHEV electric driving share for the economy.
 
-    Falls back to 0.50 if no row is found. If vehicle-type-specific rows are
-    present instead of a single economy-level value, their mean is used and a
-    warning is logged — supply a single economy-level row to avoid this.
+    Passenger/freight rows are returned as a transport-type dictionary. Older
+    economy-level packages still return a single float, and missing inputs fall
+    back to 0.50.
     """
     mask = (
         (defaults_df["economy"] == economy)
@@ -1102,7 +1102,21 @@ def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float:
             economy,
         )
         return 0.50
-    economy_level = sub[sub["vehicle_type"].isna()] if "vehicle_type" in sub.columns else sub
+    if "transport_type" in sub.columns:
+        transport_rows = sub[sub["transport_type"].notna()].copy()
+        if not transport_rows.empty:
+            rates: dict[str, float] = {}
+            for transport_type, group in transport_rows.groupby("transport_type", dropna=True):
+                rate = float(group["value"].iloc[0])
+                rates[str(transport_type)] = min(1.0, max(0.0, rate))
+            if rates:
+                log.info("Module 1 PHEV utilisation rates for %s by transport type: %s", economy, rates)
+                return rates
+
+    if {"vehicle_type", "transport_type"}.issubset(sub.columns):
+        economy_level = sub[sub["vehicle_type"].isna() & sub["transport_type"].isna()]
+    else:
+        economy_level = sub[sub["vehicle_type"].isna()] if "vehicle_type" in sub.columns else sub
     if not economy_level.empty:
         rate = float(economy_level["value"].iloc[0])
     else:
@@ -1112,6 +1126,7 @@ def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float:
             "Supply a single economy-level row instead.",
             economy, rate,
         )
+    rate = min(1.0, max(0.0, rate))
     log.info("Module 1 PHEV utilisation rate for %s: %.3f", economy, rate)
     return rate
 
@@ -1322,7 +1337,7 @@ def load_module1_for_economy(
             raw_leap_df            : LEAP-format DataFrame, pass to parse_leap_format_inputs()
             survival_curves        : dict[vehicle_type → pd.Series by age]
             vintage_profiles       : dict[vehicle_type → pd.Series by age]
-            phev_utilisation_rate  : float
+            phev_utilisation_rate  : float or dict[transport_type -> float]
             scalar_bounds          : tuple(lower, upper) or None
             passenger_saturation_level : float or None
             reconciliation_weights : dict{stock,mileage,efficiency} or None

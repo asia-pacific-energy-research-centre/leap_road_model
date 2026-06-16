@@ -1,7 +1,7 @@
 ﻿# Road transport model methodology guide
 
 > **Purpose note**  
-> This document explains the methodology of the road transport model in `leap_road_model`. It is intended for researchers, reviewers, and external readers who need to understand how the model works without reading the implementation code. It is more detailed than the front-page overview, but it does not replace `road_transport_model_detailed.md`, which remains the modeller/developer guide for module sequencing, output tables, file paths, validation rules, and implementation details.
+> This document explains the methodology of the road transport model in `leap_road_model`. It is intended for researchers, reviewers, and external readers who need to understand how the model works without reading the detail required for using or managing the code. It is more detailed than the front-page overview, but it does not replace `road_transport_model_modeller_guide.md`, which remains the modeller guide.
 
 ## Contents
 
@@ -121,17 +121,24 @@ Demand
 
 The intention is to provide detail where it is useful, not to make every branch equally detailed. LPVs receive the most detail because they are usually the largest part of the fleet, have better data, and are where many technology-transition assumptions are most policy-relevant. Smaller or less data-rich branches are kept simpler where extra detail would add work without improving the result. At the same time, the model still needs enough detail to represent the different needs of APEC economies. Reducing detail is useful for keeping the model understandable and manageable, but it has to be weighed against the need to represent economies with different fuels, technologies, and vehicle structures.
 
-This hierarchy matters because variables are defined at different levels.
-
-For example:
-
-- total passenger road sales are defined high in the branch structure;
-- vehicle-type stock shares are defined at the LPV, motorcycle, bus, truck, or LCV level;
-- technology sales shares are defined at the drive type level;
-- mileage and fuel economy are usually applied at fuel-level branches; and
-- fuel or Device Shares are applied where a drive type can consume more than one fuel.
+This hierarchy matters because variables are defined at different levels, which is a result of model design decisions, which was sometimes influenced by the way LEAP works.
 
 This means a change at one level can affect many branches below it. For example, changing BEV sales share under LPVs affects future BEV stock, electricity demand, ICE stock share over time, and liquid fuel demand. Changing mileage at a fuel branch affects energy use for that branch, but does not directly change stock or sales.
+
+Current scope rules (important when comparing to the 9th edition and earlier 10th edition LEAP models):
+
+- `HEV` and `EREV` are LPV-only.
+- Truck `PHEV` is out of scope.
+- LPVs use `small`, `medium`, and `large` size labels.
+- Trucks use `medium` and `heavy` size labels where truck-size splits are needed.
+- `Fuel Economy` is the canonical Module 1 efficiency variable. `Final On-Road Fuel Economy` can be accepted only as a legacy input alias.
+
+The changes were generally intended to 
+The same vehicle/drive/size matrix should be used by Module 1 validation and
+Module 2 branch generation. Module 1 rows outside this matrix should be rejected
+or explicitly recategorized before export; Module 2 should not create branches
+outside this matrix during skeleton generation.
+
 
 ## 3. Main variables and how they interact
 
@@ -428,7 +435,7 @@ In the current methodology, PHEV and EREV liquid fuel is treated as gasoline-fam
 
 ### Step 4 â€” Allocate remaining ESTO fuels to eligible branches
 
-The model then allocates the remaining ESTO fuel totals to road branches that are eligible to use each fuel. Eligibility depends on the vehicle and drive structure. For example, electricity is linked to BEV/PHEV/EREV branches, hydrogen to FCEV branches, and liquid or gaseous fuels to eligible ICE/HEV/PHEV/EREV branches depending on the fuel.
+For ordinary fuel allocation, eligibility depends on the vehicle and drive structure. Electricity is handled first for BEV/PHEV/EREV branches, PHEV/EREV liquid fuel is handled separately as gasoline-family fuel, and the remaining liquid or gaseous fuels are allocated to eligible ICE, HEV, and other configured branches.
 
 Fuel allocation is not only a mathematical split. It also embeds transport judgement. The allocation needs to reflect likely fuel use by vehicle type, especially where ESTO reports fuel totals but does not say exactly which road branches consumed that fuel.
 
@@ -447,7 +454,7 @@ The exact fuel allocation order matters because it affects the reconciled stock,
 
 After fuel has been allocated to eligible branches, the model compares allocated ESTO-consistent fuel energy with the initial bottom-up energy estimate.
 
-This comparison gives the correction required for each branch. If the bottom-up estimate is too low, the model needs to increase energy use through stock, mileage, fuel economy, or fuel allocation. If the estimate is too high, it needs to reduce energy use.
+This comparison gives the correction required for each branch. If the bottom-up estimate is too low, the model needs to increase implied branch energy through stock, mileage, or fuel economy adjustments. If the estimate is too high, it needs to reduce implied branch energy through those same variables.
 
 ### Step 6 â€” Split the correction across stock, mileage, and fuel economy
 
@@ -527,7 +534,7 @@ Some variables are suitable for direct LEAP scenario editing because they are us
 - technology sales shares, such as ICE, BEV, PHEV, and FCEV shares;
 - fuel or Device Share settings where relevant.
 
-These variables are useful for EED or scenario design because they let researchers test changes to travel demand, efficiency, technology uptake, and fuel use.
+These variables are useful for scenario design because they let researchers test changes to travel demand, efficiency, technology uptake, and fuel use.
 
 Scrappage and accelerated-retirement settings are partly represented in the Python workflow, but they are not currently written as routine `T11` LEAP import variables. They should therefore be treated as testing or mirror-model inputs until the LEAP hand-off is deliberately extended.
 
@@ -537,6 +544,8 @@ The general rule is:
 
 - use the pre-LEAP workflow for difficult preparation, base-year calibration, and structural stock-flow assumptions; and
 - use LEAP for official projection runs and controlled scenario changes.
+
+The user will need to be careful not to change other variables in LEAP that are not intended to be scenario levers. For example, changing stock shares or survival assumptions directly in LEAP can have unintended consequences for the stock-flow pathway. The pre-LEAP workflow is designed to prepare those assumptions in a consistent way, so they should generally be left unchanged in LEAP unless the user understands the implications.
 
 ## 14. Python simulated outputs, LEAP, and official results
 

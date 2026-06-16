@@ -93,6 +93,7 @@ _SINGLE_FUEL_DRIVES = {"BEV", "FCEV"}
 
 # Plug-in hybrid drive types share the PHEV electric-utilisation workflow.
 _PLUGIN_HYBRID_DRIVES = {"PHEV", "EREV"}
+PHEVUtilisationRate = float | dict[str, float]
 
 # Plug-in hybrid liquid fuels used for the transport-sector liquid blend.
 # PHEVs and EREVs use the gasoline family: motor gasoline, biogasoline, and efuel.
@@ -101,6 +102,29 @@ _PLUGIN_LIQUID_FUELS_BY_DRIVE = {
     "EREV": {"Motor gasoline", "Biogasoline", "Efuel"},
 }
 _DEFAULT_PLUGIN_LIQUID_FUELS = {"Motor gasoline", "Biogasoline", "Efuel"}
+
+
+def _resolve_phev_utilisation_rate(
+    phev_utilisation_rate: PHEVUtilisationRate,
+    row_or_group: pd.Series | pd.DataFrame,
+) -> float:
+    """Return the electric driving share for a PHEV row/group."""
+    if isinstance(phev_utilisation_rate, dict):
+        transport_type = None
+        if "transport_type" in row_or_group:
+            value = row_or_group["transport_type"]
+            if isinstance(value, pd.Series):
+                non_null = value.dropna()
+                transport_type = str(non_null.iloc[0]) if not non_null.empty else None
+            elif pd.notna(value):
+                transport_type = str(value)
+        for key in (transport_type, "default", "economy"):
+            if key in phev_utilisation_rate:
+                return min(1.0, max(0.0, float(phev_utilisation_rate[key])))
+        if phev_utilisation_rate:
+            return min(1.0, max(0.0, float(next(iter(phev_utilisation_rate.values())))))
+        return 0.50
+    return min(1.0, max(0.0, float(phev_utilisation_rate)))
 
 _FUEL_ALLOCATION_PRIORITY = {
     # Gaseous fuels: LNG to Trucks ICE only; LPG and Natural gas to all ICE (not HEV).
@@ -302,7 +326,7 @@ def run_module6(
     mileage_correction_factors: pd.DataFrame | None = None,
     fuel_economy_correction_factors: pd.DataFrame | None = None,
     reconciliation_weights: dict[str, float] | None = None,
-    phev_electric_utilisation_rate: float = 0.50,
+    phev_electric_utilisation_rate: PHEVUtilisationRate = 0.50,
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]] | None = None,
     match_tolerance: float = 0.01,
     phev_utilisation_tolerance: float = 0.10,
@@ -319,7 +343,8 @@ def run_module6(
             ESTO road fuel totals for the base year.
         projection_years: Full year range (e.g. range(2022, 2061)).
         reconciliation_weights: Required weights for {stock, mileage, efficiency} — must sum to 1.0.
-        phev_electric_utilisation_rate: PHEV fraction driven on electricity (single float).
+        phev_electric_utilisation_rate: PHEV fraction driven on electricity.
+            Supports either a single float or a dict keyed by transport_type.
                 scalar_bounds: Reconciliation scalar bounds. Supports either:
                         - tuple(min_scalar, max_scalar) applied to all scalars (legacy), or
                         - dict with keys {'stock','mileage','efficiency'} each mapping to
@@ -412,7 +437,7 @@ def run_module6(
 
 def calculate_initial_branch_energy(
     base_year_branches: pd.DataFrame,
-    phev_utilisation_rate: float | None = None,
+    phev_utilisation_rate: PHEVUtilisationRate | None = None,
 ) -> pd.DataFrame:
     """
     Calculate initial branch energy from base-year stock, mileage, and efficiency.
@@ -503,7 +528,7 @@ def bootstrap_zero_stock_fuel_branches(
 
 def apply_phev_mileage_split(
     base_year_branches: pd.DataFrame,
-    phev_utilisation_rate: float,
+    phev_utilisation_rate: PHEVUtilisationRate,
 ) -> pd.DataFrame:
     """
     Split PHEV annual mileage into electric-mode and liquid-mode mileage.
@@ -528,7 +553,7 @@ def apply_phev_mileage_split(
         if electric_idx.empty or liquid_idx.empty:
             continue
 
-        rate = min(1.0, max(0.0, float(phev_utilisation_rate)))
+        rate = _resolve_phev_utilisation_rate(phev_utilisation_rate, group)
 
         electric_mileage = pd.to_numeric(df.loc[electric_idx, "mileage_km_per_year"], errors="coerce").dropna()
         liquid_mileage = pd.to_numeric(df.loc[liquid_idx, "mileage_km_per_year"], errors="coerce").dropna()
@@ -570,7 +595,7 @@ def apply_phev_mileage_split(
 def reconcile_electricity(
     branch_energy: pd.DataFrame,
     electricity_esto_pj: float,
-    phev_utilisation_rate: float,
+    phev_utilisation_rate: PHEVUtilisationRate,
     weights: dict[str, float],
     scalar_bounds: tuple[float, float] | dict[str, tuple[float, float]],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -696,7 +721,7 @@ def reconcile_electricity(
 
 def _compute_phev_liquid(
     branch_energy: pd.DataFrame,
-    phev_utilisation_rate: float,
+    phev_utilisation_rate: PHEVUtilisationRate,
 ) -> pd.DataFrame:
     """
     Compute PHEV liquid fuel consumption from adjusted PHEV liquid branches.
@@ -1652,7 +1677,7 @@ def build_reconciliation_diagnostics(
 
 def build_phev_utilisation_diagnostics(
     reconciliation_scalars: pd.DataFrame,
-    phev_utilisation_rate: float,
+    phev_utilisation_rate: PHEVUtilisationRate,
     tolerance: float = 0.10,
 ) -> pd.DataFrame:
     """
@@ -1705,7 +1730,7 @@ def build_phev_utilisation_diagnostics(
         liquid_km_proxy = float(liquid["km_proxy"].sum())
         total_km_proxy = electric_km_proxy + liquid_km_proxy
 
-        provided_rate = float(phev_utilisation_rate)
+        provided_rate = _resolve_phev_utilisation_rate(phev_utilisation_rate, group)
         lower_rate = max(0.0, provided_rate - float(tolerance))
         upper_rate = min(1.0, provided_rate + float(tolerance))
         backcalculated_rate = (
