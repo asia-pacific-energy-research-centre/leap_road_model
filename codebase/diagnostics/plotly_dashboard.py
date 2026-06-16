@@ -805,6 +805,18 @@ def module2_figures(t4: pd.DataFrame) -> list[tuple[str, Any]]:
 
     figs: list[tuple[str, Any]] = []
 
+    spread_fig = _spread_dot_chart(t4, "Spread of stock, mileage and efficiency — base-year input data")
+    if spread_fig is not None:
+        figs.append((
+            "Spread of stock / mileage / efficiency — base-year input data",
+            spread_fig,
+            True,
+            "Based directly on the base-year input data (T4), not on any simulated or reconciled model output. "
+            "Each dot is one branch's value, jittered within its category and coloured by category. Categories "
+            "are sorted by median value (highest to lowest). Use the dropdown to switch between vehicle type, "
+            "drive type, and transport type groupings.",
+        ))
+
     missing_table = _missing_rows_table(
         t4,
         check_cols=[
@@ -2512,6 +2524,8 @@ def _distribution_chart_with_dropdown(
         return None
 
     tmp = df.copy()
+    if tmp.columns.duplicated().any():
+        tmp = tmp.loc[:, ~tmp.columns.duplicated(keep="last")]
     tmp[metric_col] = pd.to_numeric(tmp[metric_col], errors="coerce")
     tmp = tmp.dropna(subset=[metric_col])
     if tmp.empty:
@@ -2594,14 +2608,14 @@ _BRANCH_KEY_COLS = ["economy", "scenario", "transport_type", "vehicle_type", "dr
 
 
 def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure | None":
-    """Pre- vs post-reconciliation dumbbell chart, one panel per metric.
+    """Pre- vs post-reconciliation dot plot, one panel per metric.
 
-    Each branch (a unique vehicle/drive/transport/fuel combination) is drawn as a
-    vertical segment connecting its pre-reconciliation value (T4) to its
-    post-reconciliation value (T9's adjusted_* columns), so the effect of
-    reconciliation is visible per branch rather than only as an aggregate
-    distribution. A dropdown switches the grouping used to position and order
-    branches along the x-axis (vehicle type / drive type / transport type).
+    Each branch (a unique vehicle/drive/transport/fuel combination) contributes
+    two dots — its pre-reconciliation value (T4, blue) and its post-reconciliation
+    value (T9's adjusted_* columns, red) — offset slightly so both are visible,
+    so the effect of reconciliation is visible per branch rather than only as an
+    aggregate distribution. A dropdown switches the grouping used to position and
+    order branches along the x-axis (vehicle type / drive type / transport type).
     """
     if t4 is None or t4.empty or t9 is None or t9.empty:
         return None
@@ -2695,39 +2709,17 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
                 if key_cols else [""] * len(branch)
             )
 
-            line_x: list[Any] = []
-            line_y: list[Any] = []
-            for x, pv, qv in zip(branch["_x"], branch["pre_val"], branch["post_val"]):
-                if pd.isna(pv) or pd.isna(qv):
-                    continue
-                line_x.extend([x, x, None])
-                line_y.extend([pv, qv, None])
-
+            # Offset pre/post dots slightly either side of each branch's x slot
+            # so both are visible without a connecting line.
             fig.add_trace(
                 go.Scatter(
-                    x=line_x,
-                    y=line_y,
-                    mode="lines",
-                    line=dict(color="rgba(120,120,120,0.5)", width=1.5),
-                    hoverinfo="skip",
-                    showlegend=False,
-                    visible=is_first,
-                ),
-                row=1,
-                col=j,
-            )
-            indices.append(n_traces)
-            n_traces += 1
-
-            fig.add_trace(
-                go.Scatter(
-                    x=branch["_x"],
+                    x=branch["_x"] - 0.08,
                     y=branch["pre_val"],
                     mode="markers",
                     name="Pre-reconciliation",
                     legendgroup="pre",
                     showlegend=(j == 1),
-                    marker=dict(color=_PRE_RECONCILIATION_COLOUR, size=7),
+                    marker=dict(color=_PRE_RECONCILIATION_COLOUR, size=6),
                     customdata=hover,
                     hovertemplate="%{customdata}<br>Pre: %{y:,.3g}<extra></extra>",
                     visible=is_first,
@@ -2740,13 +2732,13 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
 
             fig.add_trace(
                 go.Scatter(
-                    x=branch["_x"],
+                    x=branch["_x"] + 0.08,
                     y=branch["post_val"],
                     mode="markers",
                     name="Post-reconciliation",
                     legendgroup="post",
                     showlegend=(j == 1),
-                    marker=dict(color=_POST_RECONCILIATION_COLOUR, size=7),
+                    marker=dict(color=_POST_RECONCILIATION_COLOUR, size=6),
                     customdata=hover,
                     hovertemplate="%{customdata}<br>Post: %{y:,.3g}<extra></extra>",
                     visible=is_first,
@@ -2799,6 +2791,150 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
             direction="down",
             x=0.0,
             y=1.3,
+            xanchor="left",
+            yanchor="top",
+            buttons=buttons,
+            showactive=True,
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=12),
+        )],
+        **initial_axis_updates,
+    )
+    return fig
+
+
+def _spread_dot_chart(df: pd.DataFrame, title: str) -> "go.Figure | None":
+    """Dot-plot spread of stock, mileage and efficiency for a single dataset.
+
+    One subplot per metric; branches are jittered horizontally within their
+    category (coloured by category, like the grouping it belongs to) so
+    individual values are visible. This is the single-dataset counterpart to
+    :func:`_spread_pre_vs_post_chart` — used where there's no pre/post pairing
+    to draw, e.g. base-year input data straight from T4.
+    """
+    if df is None or df.empty:
+        return None
+
+    metrics = [
+        ("stock", "Stock"),
+        ("mileage_km_per_year", "Mileage (km/year)"),
+        ("efficiency_km_per_gj", "Efficiency (km/GJ)"),
+    ]
+    metrics = [(c, l) for c, l in metrics if c in df.columns]
+    if not metrics:
+        return None
+
+    grouping_defs: list[tuple[str, str, Any]] = []
+    for grp_label, grp_col, colour_fn in [
+        ("By vehicle type", "vehicle_type", _vehicle_type_colour),
+        ("By drive type", "drive_type", _drive_colour),
+        ("By transport type", "transport_type", _transport_mode_colour),
+    ]:
+        if grp_col in df.columns:
+            grouping_defs.append((grp_label, grp_col, colour_fn))
+    if not grouping_defs:
+        return None
+
+    tmp = df.copy()
+    if tmp.columns.duplicated().any():
+        tmp = tmp.loc[:, ~tmp.columns.duplicated(keep="last")]
+    for col, _label in metrics:
+        tmp[col] = pd.to_numeric(tmp[col], errors="coerce")
+
+    fig = make_subplots(
+        rows=1,
+        cols=len(metrics),
+        subplot_titles=tuple(label for _col, label in metrics),
+        horizontal_spacing=0.07,
+    )
+
+    trace_groups: list[tuple[str, list[int], dict[str, Any]]] = []
+    initial_axis_updates: dict[str, Any] = {}
+    n_traces = 0
+
+    for grp_idx, (grp_label, grp_col, colour_fn) in enumerate(grouping_defs):
+        is_first = grp_idx == 0
+        indices: list[int] = []
+        relayout: dict[str, Any] = {}
+        for j, (col, label) in enumerate(metrics, start=1):
+            sub = tmp.dropna(subset=[col]).copy()
+            if sub.empty:
+                continue
+            sub[grp_col] = sub[grp_col].astype(str)
+            order = sub.groupby(grp_col)[col].median().sort_values(ascending=False).index.tolist()
+            cat_pos = {cat: i for i, cat in enumerate(order)}
+
+            # Spread branches that share a category across a small x-band so
+            # individual points don't overlap.
+            rank_in_cat = sub.groupby(grp_col).cumcount()
+            n_in_cat = sub.groupby(grp_col)[grp_col].transform("count")
+            span = np.where(n_in_cat > 1, 0.64 * rank_in_cat / (n_in_cat - 1).clip(lower=1) - 0.32, 0.0)
+            sub["_x"] = sub[grp_col].map(cat_pos) + span
+
+            for k, cat in enumerate(order):
+                cat_rows = sub[sub[grp_col] == cat]
+                if cat_rows.empty:
+                    continue
+                _c = colour_fn(str(cat), k)
+                fig.add_trace(
+                    go.Scatter(
+                        x=cat_rows["_x"],
+                        y=cat_rows[col],
+                        mode="markers",
+                        name=str(cat),
+                        marker=dict(color=_c, size=7),
+                        showlegend=False,
+                        visible=is_first,
+                        hovertemplate=f"{cat}<br>{label}: " + "%{y:,.3g}<extra></extra>",
+                    ),
+                    row=1,
+                    col=j,
+                )
+                indices.append(n_traces)
+                n_traces += 1
+
+            xkey = "xaxis" if j == 1 else f"xaxis{j}"
+            axis_update = dict(
+                tickmode="array",
+                tickvals=list(range(len(order))),
+                ticktext=order,
+                range=[-0.5, len(order) - 0.5],
+            )
+            relayout[f"{xkey}.tickmode"] = axis_update["tickmode"]
+            relayout[f"{xkey}.tickvals"] = axis_update["tickvals"]
+            relayout[f"{xkey}.ticktext"] = axis_update["ticktext"]
+            relayout[f"{xkey}.range"] = axis_update["range"]
+            if is_first:
+                initial_axis_updates[xkey] = axis_update
+            fig.update_yaxes(title_text=label, row=1, col=j)
+
+        trace_groups.append((grp_label, indices, relayout))
+
+    if n_traces == 0:
+        return None
+
+    total = n_traces
+    buttons = []
+    for grp_label, indices, relayout in trace_groups:
+        if not indices:
+            continue
+        vis = [False] * total
+        for i in indices:
+            vis[i] = True
+        buttons.append(dict(label=grp_label, method="update", args=[{"visible": vis}, relayout]))
+
+    if not buttons:
+        return None
+
+    fig.update_layout(
+        **_layout(title),
+        margin=dict(t=110),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.0,
+            y=1.22,
             xanchor="left",
             yanchor="top",
             buttons=buttons,
@@ -3165,7 +3301,7 @@ def module7_figures(
     has_t9_efficiency = t9 is not None and not t9.empty and "adjusted_efficiency_km_per_gj" in t9.columns
 
     if has_t9_mileage or has_t9_efficiency:
-        post = t9.rename(columns={
+        post = t9.drop(columns=["mileage_km_per_year", "efficiency_km_per_gj"], errors="ignore").rename(columns={
             "adjusted_mileage_km_per_year": "mileage_km_per_year",
             "adjusted_efficiency_km_per_gj": "efficiency_km_per_gj",
         })

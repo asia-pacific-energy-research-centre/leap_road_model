@@ -38,12 +38,29 @@ import re
 import shutil
 import time
 import json
+import logging
+import sys
 import traceback
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import yaml
+
+# Plain logging.warning() calls (e.g. module3's elasticity clamp notices) have no
+# handler configured by default, so Python's logging module falls back to stderr
+# at WARNING level via logging.lastResort. The interface that wraps this script
+# colours stderr lines as errors, so route anything below ERROR to stdout instead —
+# only true failures (ERROR/CRITICAL, plus uncaught tracebacks) should reach stderr.
+_stdout_log_handler = logging.StreamHandler(sys.stdout)
+_stdout_log_handler.addFilter(lambda record: record.levelno < logging.ERROR)
+_stdout_log_handler.setFormatter(logging.Formatter("%(message)s"))
+
+_stderr_log_handler = logging.StreamHandler(sys.stderr)
+_stderr_log_handler.setLevel(logging.ERROR)
+_stderr_log_handler.setFormatter(logging.Formatter("%(message)s"))
+
+logging.basicConfig(level=logging.WARNING, handlers=[_stdout_log_handler, _stderr_log_handler])
 
 from modules.module2_base_year import run_module2
 from modules.module3_stock_targets import run_module3
