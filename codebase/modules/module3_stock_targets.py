@@ -1,16 +1,16 @@
 """
-Module 3 — Stock target projection.
+Module 3 - Stock target projection.
 
 Derives annual target vehicle stocks before the survival, vintage, and sales
 module is applied.
 
-Passenger stocks use a logistic / Gompertz-style motorisation curve calibrated
-from recent historical energy growth.
+Passenger stocks use a GDP-per-capita income-elasticity method, damped as
+vehicle-equivalent ownership approaches saturation.
 
 Freight stocks use GDP elasticity calibrated from recent historical energy
 and GDP growth.
 
-Both exclude COVID-affected years (2020–2022) from trend estimation.
+Both exclude COVID-affected years (2020-2022) from trend estimation.
 
 Outputs: T5_stock_targets DataFrame.
 
@@ -46,6 +46,9 @@ _DEFAULTS = {
     # actual achieved level rather than projecting toward an unreachable ceiling.
     "saturation_calibration_fallback_threshold": 0.05,
     "passenger_stock_growth_rate_adjustment": 1.2,
+    "passenger_income_elasticity_min": 0.0,
+    "passenger_income_elasticity_max": 2.0,
+    "passenger_default_income_elasticity": 0.8,
     "elasticity_min": 0.0,
     "elasticity_max": 2.0,
     "default_elasticity": 0.8,
@@ -85,16 +88,16 @@ def run_module3(
         esto_road_energy_pj: DataFrame with columns [year, transport_type, energy_pj].
             Used for energy trend calibration.
         projection_years: Years to project over (e.g. range(2022, 2061)).
-        vehicle_type_shares: Optional dict mapping vehicle_type → pd.Series indexed
+        vehicle_type_shares: Optional dict mapping vehicle_type -> pd.Series indexed
             by year giving the share of total passenger/freight stock for that type.
             If None, shares are held constant at base-year proportions.
-        saturation_overrides: Optional dict mapping vehicle_type → saturation
+        saturation_overrides: Optional dict mapping vehicle_type -> saturation
             motorisation level (car-equiv per capita). Overrides default fallback.
-        elasticity_overrides: Optional dict mapping vehicle_type → GDP elasticity.
+        elasticity_overrides: Optional dict mapping vehicle_type -> GDP elasticity.
             Overrides estimated elasticity.
-        elasticity_adjustments: Optional dict mapping vehicle_type → multiplier
+        elasticity_adjustments: Optional dict mapping vehicle_type -> multiplier
             applied to the estimated GDP elasticity before clamping.
-        vehicle_equivalent_weights: Optional dict mapping vehicle_type → weight.
+        vehicle_equivalent_weights: Optional dict mapping vehicle_type -> weight.
             Defaults to local fallback vehicle-equivalent weights.
         config: Optional dict overriding _DEFAULTS.
         diagnostics_dir: Optional directory root for Module 3 PNG diagnostic
@@ -124,6 +127,7 @@ def run_module3(
     pax_stocks = project_passenger_stocks(
         years=years,
         population=population,
+        gdp=gdp,
         energy_series=pax_energy,
         base_stocks={vt: base_stocks.get(vt, 0.0) for vt in passenger_types},
         weights=weights,
@@ -178,6 +182,13 @@ def run_module3(
                     row["k_used"] = stocks_dict["k_used"]
                     row["k_clamped"] = stocks_dict["k_clamped"]
                     row["passenger_stock_growth_rate_adjustment"] = stocks_dict["growth_rate_adjustment"]
+                    row["passenger_income_elasticity_used"] = stocks_dict["income_elasticity_used"]
+                    row["passenger_raw_income_elasticity"] = stocks_dict["raw_income_elasticity"]
+                    row["passenger_income_elasticity_clamped"] = stocks_dict["income_elasticity_clamped"]
+                    row["passenger_energy_growth_rate"] = stocks_dict["passenger_energy_growth_rate"]
+                    row["passenger_gdp_per_capita_growth_rate"] = stocks_dict["passenger_gdp_per_capita_growth_rate"]
+                    row["passenger_income_elasticity_data_source"] = stocks_dict["income_elasticity_data_source"]
+                    row["passenger_income_elasticity_note"] = stocks_dict["income_elasticity_note"]
                     row["is_saturated"] = stocks_dict["is_saturated"]
                     row["saturation_source_flag"] = stocks_dict["saturation_source_flag"]
                     row["original_vehicle_equivalent_weight"] = stocks_dict["original_weights"].get(vt)
@@ -222,6 +233,7 @@ def run_module3(
 def project_passenger_stocks(
     years: list[int],
     population: pd.Series,
+    gdp: pd.Series,
     energy_series: pd.Series,
     base_stocks: dict[str, float],
     weights: dict[str, float],
@@ -233,21 +245,22 @@ def project_passenger_stocks(
     cfg: dict | None = None,
 ) -> dict:
     """
-    Project passenger target stocks using a logistic motorisation envelope.
+    Project passenger target stocks using a GDP-per-capita motorisation envelope.
 
     Args:
         years: List of years to project.
         population: pd.Series indexed by year (persons).
+        gdp: pd.Series indexed by year (consistent units).
         energy_series: pd.Series indexed by year (PJ), passenger road energy.
-            Used to calibrate S-curve steepness k.
-        base_stocks: Dict mapping vehicle_type → base-year vehicle count.
+            Used to estimate the GDP-per-capita income elasticity.
+        base_stocks: Dict mapping vehicle_type -> base-year vehicle count.
         weights: Vehicle-equivalent weights per vehicle type.
         vehicle_type_shares: Optional time-varying shares per vehicle type.
         saturation_overrides: Optional economy-specific saturation levels.
-        cfg: Config dict with k_min, k_max, lookback_window_years, etc.
+        cfg: Config dict with elasticity bounds, lookback_window_years, etc.
 
     Returns:
-        Dict with keys: M_envelope, M_sat, M_base, k_used, k_clamped,
+        Dict with keys: M_envelope, M_sat, M_base, income_elasticity_used,
         is_saturated, saturation_source_flag, target_stocks, vehicle_type_shares.
     """
     cfg = cfg or _DEFAULTS
@@ -287,7 +300,7 @@ def project_passenger_stocks(
             M_sat = M_base
             saturation_was_adjusted = True
             log.warning(
-                "Saturation weight calibration gap too large (%.1f%% of target) — "
+                "Saturation weight calibration gap too large (%.1f%% of target) - "
                 "M_sat reduced from %.4f to M_base=%.4f; projection will be flat at current level.",
                 gap_fraction * 100,
                 original_M_sat,
@@ -298,49 +311,64 @@ def project_passenger_stocks(
     growth_rate_adjustment = max(0.0, float(growth_rate_adjustment))
 
     if is_saturated:
-        k = 0.0
-        k_raw = 0.0
-        k_clamped = False
-        log.info("Economy treated as saturated — k set to 0.0")
+        elasticity_diag = {
+            "elasticity": 0.0,
+            "raw_elasticity": 0.0,
+            "elasticity_clamped": False,
+            "energy_growth_rate": 0.0,
+            "gdp_per_capita_growth_rate": 0.0,
+            "data_source": "saturated",
+            "note": "economy treated as saturated",
+        }
+        log.info("Economy treated as saturated; passenger motorisation held flat")
     else:
-        g_E = estimate_recent_energy_growth(
-            energy_series,
+        elasticity_diag = estimate_passenger_income_elasticity(
+            passenger_energy=energy_series,
+            gdp=gdp,
+            population=population,
             lookback_years=cfg["lookback_window_years"],
             base_year=base_year,
             exclude_years=cfg["covid_exclude_years"],
+            elasticity_min=cfg["passenger_income_elasticity_min"],
+            elasticity_max=cfg["passenger_income_elasticity_max"],
+            default_elasticity=cfg["passenger_default_income_elasticity"],
         )
-        k, k_clamped = estimate_passenger_k(
-            g_E, M_base, M_sat,
-            k_min=cfg["k_min"], k_max=cfg["k_max"],
-        )
-        k_raw = k
         if growth_rate_adjustment != 1.0:
-            k_adjusted = k * growth_rate_adjustment
-            k = float(np.clip(k_adjusted, cfg["k_min"], cfg["k_max"]))
-            k_clamped = k_clamped or not np.isclose(k_adjusted, k)
+            adjusted = elasticity_diag["elasticity"] * growth_rate_adjustment
+            adjusted_clamped = float(np.clip(
+                adjusted,
+                cfg["passenger_income_elasticity_min"],
+                cfg["passenger_income_elasticity_max"],
+            ))
+            elasticity_diag["elasticity"] = adjusted_clamped
+            elasticity_diag["elasticity_clamped"] = (
+                elasticity_diag["elasticity_clamped"] or not np.isclose(adjusted, adjusted_clamped)
+            )
+            if elasticity_diag["data_source"] == "estimated":
+                elasticity_diag["data_source"] = "estimated_adjusted"
         log.info(
-            "Estimated k=%.4f, adjusted k=%.4f (adjustment=%.3f, clamped=%s, g_E=%.4f)",
-            k_raw,
-            k,
+            "Estimated passenger income elasticity raw=%s, used=%.4f "
+            "(adjustment=%.3f, clamped=%s, passenger_energy_growth=%s, gdp_pc_growth=%s)",
+            elasticity_diag.get("raw_elasticity"),
+            elasticity_diag["elasticity"],
             growth_rate_adjustment,
-            k_clamped,
-            g_E,
+            elasticity_diag["elasticity_clamped"],
+            elasticity_diag.get("energy_growth_rate"),
+            elasticity_diag.get("gdp_per_capita_growth_rate"),
         )
-        if k_clamped:
-            log.warning("k was clamped to bounds — flag for review")
+        if elasticity_diag["elasticity_clamped"]:
+            log.warning("Passenger income elasticity was clamped to bounds; flag for review")
 
-    M_envelope = project_motorisation_envelope(
+    M_envelope = project_passenger_motorisation_envelope_from_gdp_per_capita(
         base_year=base_year,
         projection_years=years,
+        population=population,
+        gdp=gdp,
         M_base=M_base,
         M_sat=M_sat,
-        k=k,
-        population=population,
+        income_elasticity=float(elasticity_diag["elasticity"]),
     )
 
-    # Constant base-year X-LPV-equivalent shares if not supplied.  The
-    # motorisation envelope is in weighted vehicle-equivalents, so convert each
-    # vehicle type back to physical vehicles after allocation.
     if vehicle_type_shares is None:
         vehicle_type_shares = {
             vt: pd.Series(capacity_shares.get(vt, 0.0), index=years)
@@ -360,9 +388,16 @@ def project_passenger_stocks(
         "original_M_sat": original_M_sat,
         "saturation_was_adjusted": saturation_was_adjusted,
         "M_base": M_base,
-        "k_raw": k_raw,
-        "k_used": k,
-        "k_clamped": k_clamped,
+        "k_raw": pd.NA,
+        "k_used": pd.NA,
+        "k_clamped": False,
+        "income_elasticity_used": elasticity_diag["elasticity"],
+        "raw_income_elasticity": elasticity_diag["raw_elasticity"],
+        "income_elasticity_clamped": elasticity_diag["elasticity_clamped"],
+        "passenger_energy_growth_rate": elasticity_diag["energy_growth_rate"],
+        "passenger_gdp_per_capita_growth_rate": elasticity_diag["gdp_per_capita_growth_rate"],
+        "income_elasticity_data_source": elasticity_diag["data_source"],
+        "income_elasticity_note": elasticity_diag["note"],
         "growth_rate_adjustment": growth_rate_adjustment,
         "is_saturated": is_saturated,
         "saturation_source_flag": sat_source,
@@ -377,6 +412,7 @@ def project_passenger_stocks(
     }
 
 
+
 def compute_motorisation_base(
     base_stocks: dict[str, float],
     weights: dict[str, float],
@@ -388,8 +424,8 @@ def compute_motorisation_base(
     Also returns capacity-weighted shares per vehicle type.
 
     Args:
-        base_stocks: Dict mapping vehicle_type → vehicle count.
-        weights: Dict mapping vehicle_type → vehicle-equivalent weight.
+        base_stocks: Dict mapping vehicle_type -> vehicle count.
+        weights: Dict mapping vehicle_type -> vehicle-equivalent weight.
         population_base: Base-year population (persons).
 
     Returns:
@@ -602,7 +638,7 @@ def estimate_passenger_k(
     """
     Estimate S-curve steepness k from recent energy growth rate.
 
-    k ≈ g_E / (1 - M_base / M_sat)
+    k ~= g_E / (1 - M_base / M_sat)
 
     Args:
         g_E: Recent average annual log growth rate of passenger road energy.
@@ -660,7 +696,7 @@ def project_motorisation_envelope(
     years = np.array(sorted(projection_years))
 
     if k == 0.0:
-        return pd.Series(M_sat if M_sat > 0 else M_base, index=years)
+        return pd.Series(M_base, index=years)
     if M_sat <= 0:
         return pd.Series(M_base, index=years)
 
@@ -678,6 +714,144 @@ def project_motorisation_envelope(
     return pd.Series(M_values, index=years)
 
 
+def estimate_passenger_income_elasticity(
+    passenger_energy: pd.Series,
+    gdp: pd.Series,
+    population: pd.Series,
+    lookback_years: int,
+    base_year: int,
+    exclude_years: Collection[int] | None = None,
+    elasticity_min: float = 0.0,
+    elasticity_max: float = 2.0,
+    default_elasticity: float = 0.8,
+) -> dict[str, float | bool | str | None]:
+    """
+    Estimate passenger motorisation income elasticity from historical trends.
+
+    Passenger road energy is used as the activity proxy. GDP per capita is
+    calculated from the macro GDP and population series, then the elasticity is
+    the ratio of historical passenger activity growth to GDP-per-capita growth.
+    """
+    exclude = set(exclude_years or [])
+    window_start = base_year - lookback_years
+
+    common_years = gdp.index.intersection(population.index)
+    gdp_pc = (gdp.loc[common_years] / population.loc[common_years].replace(0.0, np.nan)).dropna()
+
+    def _geometric_growth(series: pd.Series) -> float | None:
+        mask = (
+            (series.index >= window_start) &
+            (series.index <= base_year) &
+            (~series.index.isin(exclude))
+        )
+        s = series[mask].dropna().sort_index()
+        if len(s) < 2 or s.iloc[0] <= 0:
+            return None
+        n = len(s) - 1
+        return float((s.iloc[-1] / s.iloc[0]) ** (1 / n) - 1)
+
+    energy_growth = _geometric_growth(passenger_energy)
+    gdp_pc_growth = _geometric_growth(gdp_pc)
+
+    if energy_growth is None or gdp_pc_growth is None:
+        log.warning(
+            "Insufficient data for passenger income elasticity estimation; using default %.2f",
+            default_elasticity,
+        )
+        return {
+            "elasticity": float(default_elasticity),
+            "raw_elasticity": None,
+            "elasticity_clamped": False,
+            "energy_growth_rate": energy_growth,
+            "gdp_per_capita_growth_rate": gdp_pc_growth,
+            "data_source": "default",
+            "note": "insufficient data",
+        }
+
+    if abs(gdp_pc_growth) < 1e-6:
+        log.warning(
+            "Near-zero GDP per capita growth; using default passenger income elasticity %.2f",
+            default_elasticity,
+        )
+        return {
+            "elasticity": float(default_elasticity),
+            "raw_elasticity": None,
+            "elasticity_clamped": False,
+            "energy_growth_rate": energy_growth,
+            "gdp_per_capita_growth_rate": gdp_pc_growth,
+            "data_source": "default",
+            "note": "near-zero GDP per capita growth",
+        }
+
+    raw_elasticity = energy_growth / gdp_pc_growth
+    clamped = float(np.clip(raw_elasticity, elasticity_min, elasticity_max))
+    was_clamped = not np.isclose(raw_elasticity, clamped)
+    if was_clamped:
+        log.warning(
+            "Passenger income elasticity clamped from %.4f to %.4f; flag for review",
+            raw_elasticity,
+            clamped,
+        )
+
+    return {
+        "elasticity": clamped,
+        "raw_elasticity": float(raw_elasticity),
+        "elasticity_clamped": bool(was_clamped),
+        "energy_growth_rate": float(energy_growth),
+        "gdp_per_capita_growth_rate": float(gdp_pc_growth),
+        "data_source": "estimated",
+        "note": "clamped" if was_clamped else "estimated",
+    }
+
+
+def project_passenger_motorisation_envelope_from_gdp_per_capita(
+    base_year: int,
+    projection_years: list[int],
+    population: pd.Series,
+    gdp: pd.Series,
+    M_base: float,
+    M_sat: float,
+    income_elasticity: float,
+) -> pd.Series:
+    """
+    Project passenger vehicle-equivalent ownership from GDP per capita.
+
+    The year-to-year GDP-per-capita growth effect is damped by the remaining
+    distance to saturation, so growth fades as M approaches M_sat.
+    """
+    years = sorted(projection_years)
+    common_years = gdp.index.intersection(population.index)
+    gdp_pc = (gdp.loc[common_years] / population.loc[common_years].replace(0.0, np.nan)).dropna()
+    gdp_pc = gdp_pc.reindex(years).interpolate(method="index").ffill().bfill()
+
+    values: dict[int, float] = {}
+    previous_year = base_year
+    values[base_year] = min(float(M_base), float(M_sat)) if M_sat > 0 else float(M_base)
+
+    for year in years:
+        if year == base_year:
+            continue
+        previous_m = float(values[previous_year])
+        previous_gdp_pc = float(gdp_pc.loc[previous_year]) if previous_year in gdp_pc.index else np.nan
+        current_gdp_pc = float(gdp_pc.loc[year]) if year in gdp_pc.index else np.nan
+        if not np.isfinite(previous_gdp_pc) or not np.isfinite(current_gdp_pc) or previous_gdp_pc <= 0:
+            values[year] = previous_m
+            previous_year = year
+            continue
+
+        income_growth_factor = (current_gdp_pc / previous_gdp_pc) ** float(income_elasticity)
+        income_growth_rate = income_growth_factor - 1.0
+        remaining_fraction = max(0.0, 1.0 - previous_m / M_sat) if M_sat > 0 else 0.0
+        damped_growth_rate = income_growth_rate * remaining_fraction
+        next_m = previous_m * (1.0 + damped_growth_rate)
+        if M_sat > 0:
+            next_m = min(next_m, M_sat)
+        values[year] = max(0.0, float(next_m))
+        previous_year = year
+
+    return pd.Series(values, index=years)
+
+
 def resolve_saturation(
     M_base: float,
     saturation_overrides: dict[str, float],
@@ -688,7 +862,7 @@ def resolve_saturation(
 
     Priority:
     1. Researcher-provided saturation (passed in saturation_overrides).
-    2. Default fallback: M_base × fallback_multiplier.
+    2. Default fallback: M_base x fallback_multiplier.
 
     Args:
         M_base: Base-year motorisation level.
@@ -724,15 +898,15 @@ def project_freight_stocks(
     """
     Project freight target stocks using GDP elasticity.
 
-    target_stock(y) = base_stock × (GDP(y) / GDP_base) ^ elasticity
+    target_stock(y) = base_stock x (GDP(y) / GDP_base) ^ elasticity
 
     Args:
         years: List of years to project.
         gdp: pd.Series indexed by year.
         energy_series: pd.Series indexed by year (PJ), freight road energy.
-        base_stocks: Dict mapping vehicle_type → base-year count.
-        elasticity_overrides: Optional dict mapping vehicle_type → override elasticity.
-        elasticity_adjustments: Optional dict mapping vehicle_type → elasticity multiplier.
+        base_stocks: Dict mapping vehicle_type -> base-year count.
+        elasticity_overrides: Optional dict mapping vehicle_type -> override elasticity.
+        elasticity_adjustments: Optional dict mapping vehicle_type -> elasticity multiplier.
         cfg: Config dict.
 
     Returns:
@@ -912,7 +1086,7 @@ def _read_base_stocks(base_year_branches: pd.DataFrame, base_year: int) -> dict[
         df = base_year_branches
 
     if "stock" not in df.columns:
-        log.warning("No 'stock' column in base_year_branches — returning zero stocks")
+        log.warning("No 'stock' column in base_year_branches - returning zero stocks")
         return {}
 
     branch_keys = [

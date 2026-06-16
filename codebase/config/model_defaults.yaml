@@ -7,13 +7,18 @@
 # --- Module 3: Stock target projection ---
 
 passenger_motorisation:
-  # S-curve steepness bounds
+  # Deprecated S-curve steepness bounds retained for old notebooks/tests.
+  # Current passenger projection uses GDP-per-capita income elasticity below.
   k_min: 0.0    # flat envelope (no growth)
   k_max: 0.15   # fast upper-bound transition
-  # Lookback window for energy trend calibration
+  # Lookback window for passenger energy and GDP-per-capita trend calibration.
   lookback_window_years: 10
-  # Years excluded from energy trend calibration (COVID disruption)
+  # Years excluded from trend calibration (COVID disruption).
   covid_exclude_years: [2020, 2021, 2022]
+  # Passenger GDP-per-capita income elasticity bounds/default.
+  passenger_income_elasticity_min: 0.0
+  passenger_income_elasticity_max: 2.0
+  passenger_default_income_elasticity: 0.8
   # Default saturation fallback: multiple of base-year motorisation level
   saturation_fallback_multiplier: 3.0
   # If base-year motorisation exceeds this fraction of saturation, treat as already-saturated.

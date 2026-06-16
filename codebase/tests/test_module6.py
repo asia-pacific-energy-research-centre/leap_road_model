@@ -633,7 +633,14 @@ class TestAllocateFuelToBranches:
         assert pytest.approx(t8["allocated_branch_fuel_pj"].iloc[0]) == 2.0
         assert pytest.approx(t8["branch_allocation_share"].iloc[0]) == 1.0
 
-    def test_two_branches_same_fuel_split_by_stock(self):
+    def test_two_branches_same_fuel_split_by_energy(self):
+        # LPV:  600 * 14000 / 100  = 84000 GJ = 0.084 PJ
+        # Bus:  400 * 50000 / 60   = 333333 GJ ≈ 0.3333 PJ
+        # Allocation uses energy-weighted shares (not stock count) so trucks/buses
+        # with high utilisation receive a proportional share of liquid fuels.
+        lpv_energy = 600 * 14000 / 100 / 1_000_000
+        bus_energy = 400 * 50000 / 60 / 1_000_000
+        total = lpv_energy + bus_energy
         t4 = _make_t4(
             _branch("LPVs", "ICE", "Motor gasoline", stock=600, mileage=14000, efficiency=100),
             _branch("Buses", "ICE", "Motor gasoline", stock=400, mileage=50000, efficiency=60,
@@ -645,8 +652,8 @@ class TestAllocateFuelToBranches:
         )
         t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
         shares = t8.set_index("vehicle_type")["branch_allocation_share"]
-        assert pytest.approx(shares["LPVs"], rel=1e-4) == 0.60
-        assert pytest.approx(shares["Buses"], rel=1e-4) == 0.40
+        assert pytest.approx(shares["LPVs"], rel=1e-4) == lpv_energy / total
+        assert pytest.approx(shares["Buses"], rel=1e-4) == bus_energy / total
 
     def test_diesel_allocates_to_trucks_before_lcvs_and_passenger(self):
         t4 = _make_t4(

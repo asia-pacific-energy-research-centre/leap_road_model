@@ -13,6 +13,8 @@ from modules.module3_stock_targets import (
     compute_motorisation_base,
     estimate_recent_energy_growth,
     estimate_passenger_k,
+    estimate_passenger_income_elasticity,
+    project_passenger_motorisation_envelope_from_gdp_per_capita,
     project_motorisation_envelope,
     resolve_saturation,
     estimate_freight_elasticity,
@@ -276,8 +278,51 @@ class TestProjectFreightStocks:
 # Integration: project_passenger_stocks
 # ===========================================================================
 
+class TestPassengerIncomeElasticity:
+    def test_estimates_from_passenger_energy_and_gdp_per_capita(self):
+        years = list(range(2012, 2023))
+        energy = pd.Series([100.0 * (1.03 ** i) for i in range(len(years))], index=years)
+        gdp = pd.Series([1000.0 * (1.04 ** i) for i in range(len(years))], index=years)
+        population = pd.Series([10.0 * (1.01 ** i) for i in range(len(years))], index=years)
+
+        diag = estimate_passenger_income_elasticity(
+            passenger_energy=energy,
+            gdp=gdp,
+            population=population,
+            lookback_years=10,
+            base_year=2022,
+            exclude_years=[],
+        )
+
+        assert diag["data_source"] == "estimated"
+        assert diag["elasticity"] == pytest.approx(
+            diag["energy_growth_rate"] / diag["gdp_per_capita_growth_rate"]
+        )
+
+
+class TestPassengerGDPPerCapitaEnvelope:
+    def test_rising_gdp_per_capita_increases_motorisation_below_saturation(self):
+        years = [2022, 2023, 2024]
+        population = pd.Series([100.0, 100.0, 100.0], index=years)
+        gdp = pd.Series([100.0, 110.0, 121.0], index=years)
+
+        envelope = project_passenger_motorisation_envelope_from_gdp_per_capita(
+            base_year=2022,
+            projection_years=years,
+            population=population,
+            gdp=gdp,
+            M_base=0.2,
+            M_sat=0.6,
+            income_elasticity=1.0,
+        )
+
+        assert envelope.loc[2022] == pytest.approx(0.2)
+        assert envelope.loc[2024] > envelope.loc[2022]
+        assert envelope.loc[2024] < 0.6
+
+
 class TestProjectPassengerStocks:
-    def test_base_year_stock_preserved(self, population_series, passenger_energy_series):
+    def test_base_year_stock_preserved(self, population_series, gdp_series, passenger_energy_series):
         years = list(range(2022, 2061))
         base_stocks = {"LPVs": 3_000_000, "Motorcycles": 150_000, "Buses": 8_000}
         weights = {"LPVs": 1.0, "Motorcycles": 0.8, "Buses": 20.0}
@@ -285,6 +330,7 @@ class TestProjectPassengerStocks:
         result = project_passenger_stocks(
             years=years,
             population=population_series,
+            gdp=gdp_series,
             energy_series=passenger_energy_series,
             base_stocks=base_stocks,
             weights=weights,
@@ -299,7 +345,7 @@ class TestProjectPassengerStocks:
         for vt, stock in base_stocks.items():
             assert abs(result["target_stocks"][vt][2022] - stock) < 1e-4
 
-    def test_stocks_non_negative(self, population_series, passenger_energy_series):
+    def test_stocks_non_negative(self, population_series, gdp_series, passenger_energy_series):
         years = list(range(2022, 2061))
         base_stocks = {"LPVs": 3_000_000, "Motorcycles": 150_000, "Buses": 8_000}
         weights = {"LPVs": 1.0, "Motorcycles": 0.8, "Buses": 20.0}
@@ -307,6 +353,7 @@ class TestProjectPassengerStocks:
         result = project_passenger_stocks(
             years=years,
             population=population_series,
+            gdp=gdp_series,
             energy_series=passenger_energy_series,
             base_stocks=base_stocks,
             weights=weights,
@@ -315,7 +362,7 @@ class TestProjectPassengerStocks:
         for vt, series in result["target_stocks"].items():
             assert (series >= 0).all(), f"Negative stock for {vt}"
 
-    def test_growth_rate_adjustment_speeds_passenger_stock_growth(self, population_series, passenger_energy_series):
+    def test_growth_rate_adjustment_speeds_passenger_stock_growth(self, population_series, gdp_series, passenger_energy_series):
         years = list(range(2022, 2061))
         base_stocks = {"LPVs": 3_000_000, "Motorcycles": 150_000, "Buses": 8_000}
         weights = {"LPVs": 1.0, "Motorcycles": 0.8, "Buses": 20.0}
@@ -323,6 +370,7 @@ class TestProjectPassengerStocks:
         baseline = project_passenger_stocks(
             years=years,
             population=population_series,
+            gdp=gdp_series,
             energy_series=passenger_energy_series,
             base_stocks=base_stocks,
             weights=weights,
@@ -331,6 +379,7 @@ class TestProjectPassengerStocks:
         faster = project_passenger_stocks(
             years=years,
             population=population_series,
+            gdp=gdp_series,
             energy_series=passenger_energy_series,
             base_stocks=base_stocks,
             weights=weights,
@@ -346,6 +395,7 @@ class TestProjectPassengerStocks:
     def test_saturation_flag_calibrates_base_year_to_saturation(self, passenger_energy_series):
         years = list(range(2022, 2061))
         population = pd.Series(1000.0, index=years)
+        gdp = pd.Series(1000.0 * (1.02 ** np.arange(len(years))), index=years)
         base_stocks = {"LPVs": 100_000, "Motorcycles": 100_000, "Buses": 10_000}
         weights = {"LPVs": 1.0, "Motorcycles": 0.25, "Buses": 12.0}
         target_sat = 300.0
@@ -353,6 +403,7 @@ class TestProjectPassengerStocks:
         result = project_passenger_stocks(
             years=years,
             population=population,
+            gdp=gdp,
             energy_series=passenger_energy_series,
             base_stocks=base_stocks,
             weights=weights,
@@ -399,16 +450,20 @@ class TestPassengerWeightCalibration:
         assert weighted_stock == pytest.approx(300.0)
         assert result["gap"] == pytest.approx(0.0)
 
-    def test_infeasible_bounds_raise(self):
-        with pytest.raises(ValueError, match="infeasible"):
-            calibrate_passenger_vehicle_equivalent_weights(
-                base_stocks={"LPVs": 100.0, "Motorcycles": 10.0, "Buses": 1.0},
-                weights={"LPVs": 1.0, "Motorcycles": 0.25, "Buses": 12.0},
-                population_base=1000.0,
-                saturation_level=1.0,
-                passenger_saturation_reached=True,
-                bounds={"Motorcycles": (0.05, 0.80), "Buses": (8.0, 30.0)},
-            )
+    def test_unreachable_target_clamps_to_nearest_bounds(self):
+        result = calibrate_passenger_vehicle_equivalent_weights(
+            base_stocks={"LPVs": 100.0, "Motorcycles": 10.0, "Buses": 1.0},
+            weights={"LPVs": 1.0, "Motorcycles": 0.25, "Buses": 12.0},
+            population_base=1000.0,
+            saturation_level=1.0,
+            passenger_saturation_reached=True,
+            bounds={"Motorcycles": (0.05, 0.80), "Buses": (8.0, 30.0)},
+        )
+
+        assert result["applied"] is True
+        assert result["adjusted_weights"]["Motorcycles"] == pytest.approx(0.80)
+        assert result["adjusted_weights"]["Buses"] == pytest.approx(30.0)
+        assert result["gap"] < 0.0
 
 
 class TestReadBaseStocks:

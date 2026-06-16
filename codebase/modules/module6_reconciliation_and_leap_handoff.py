@@ -107,11 +107,11 @@ _FUEL_ALLOCATION_PRIORITY = {
     "LNG":                [["freight", "Trucks", "ICE"]],
     "LPG":                [[None, None, "ICE"]],
     "Natural gas":        [[None, None, "ICE"]],
-    # Diesel family: freight ICE first (Trucks + LCVs share proportionally by
-    # initial_energy_pj), with passenger as overflow for economies where freight
-    # ICE initial energy is less than the diesel ESTO total.
-    "Gas and diesel oil": [["freight", None, "ICE"], ["passenger", None]],
-    "Biodiesel":          [["freight", None, "ICE"], ["passenger", None]],
+    # Diesel family: Trucks first (up to their liquid capacity), then LCVs
+    # (up to total LCV liquid capacity so diesel can displace gasoline slots),
+    # then passenger as overflow if freight demand is less than the diesel ESTO total.
+    "Gas and diesel oil": [["freight", "Trucks", "ICE"], ["freight", "LCVs"], ["passenger", None]],
+    "Biodiesel":          [["freight", "Trucks", "ICE"], ["freight", "LCVs"], ["passenger", None]],
     # Gasoline family: passenger first, LCVs receive any surplus.
     "Motor gasoline":     [["passenger", None], ["freight", "LCVs"]],
     "Biogasoline":        [["passenger", None], ["freight", "LCVs"]],
@@ -956,7 +956,7 @@ def allocate_esto_fuel_to_branches(
 
         if priority_mask.any():
             for _, scenario_rows in df.loc[priority_mask].groupby(["economy", "scenario"], dropna=False):
-                remaining_tier_capacity = _build_priority_tier_capacity(scenario_rows)
+                base_tier_capacity = _build_priority_tier_capacity(scenario_rows)
                 fuel_names = sorted(
                     scenario_rows["fuel"].dropna().unique(),
                     key=lambda fuel: _PRIORITY_FUEL_ALLOCATION_ORDER.get(str(fuel), 99),
@@ -966,7 +966,7 @@ def allocate_esto_fuel_to_branches(
                     allocated_groups.append(
                         _allocate_priority_fuel_group(
                             fuel_group,
-                            remaining_tier_capacity=remaining_tier_capacity,
+                            remaining_tier_capacity=dict(base_tier_capacity),
                         )
                     )
 

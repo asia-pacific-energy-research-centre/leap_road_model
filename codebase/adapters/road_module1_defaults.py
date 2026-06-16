@@ -1054,7 +1054,7 @@ def get_freight_gdp_elasticity_adjustment(defaults_df: pd.DataFrame, economy: st
 
 
 def get_passenger_stock_growth_rate_adjustment(defaults_df: pd.DataFrame, economy: str) -> float:
-    """Extract the researcher-facing passenger S-curve steepness multiplier from Module 1."""
+    """Extract the researcher-facing passenger growth multiplier from Module 1."""
     if defaults_df.empty or "economy" not in defaults_df.columns or "variable" not in defaults_df.columns:
         return 1.2
     mask = (
