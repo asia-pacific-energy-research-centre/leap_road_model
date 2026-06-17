@@ -2048,6 +2048,29 @@ def build_leap_ready_table(
     if not sales_shares.empty and "sales_share" in sales_shares.columns:
         ss_keys = [k for k in lookup_keys if k in sales_shares.columns]
         ss_path = sales_shares.merge(vt_dt_path, on=ss_keys, how="left")
+
+        # When the branch structure has size variants (e.g. Trucks heavy / medium)
+        # but Module 5 produces drive-level shares without a size dimension, the
+        # merge fans each drive's single share out to every size row.  Each size
+        # must receive a fraction of the drive share proportional to its stock so
+        # all children still sum to 100 %.
+        if "size" in vt_dt_path.columns and "size" not in sales_shares.columns and "size" in ss_path.columns:
+            drive_keys = [k for k in ["economy", "scenario", "vehicle_type", "drive_type"] if k in tech_rows.columns]
+            size_keys = drive_keys + (["size"] if "size" in tech_rows.columns else [])
+            size_stock = tech_rows.groupby(size_keys, dropna=False)["adjusted_stock"].sum().reset_index()
+            drive_total = (
+                size_stock.groupby(drive_keys)["adjusted_stock"].sum()
+                .reset_index().rename(columns={"adjusted_stock": "_drive_total"})
+            )
+            size_stock = size_stock.merge(drive_total, on=drive_keys, how="left")
+            size_stock["_size_fraction"] = (
+                size_stock["adjusted_stock"] / size_stock["_drive_total"].replace(0, np.nan)
+            ).fillna(1.0)
+            merge_keys = [k for k in size_keys if k in ss_path.columns]
+            ss_path = ss_path.merge(size_stock[size_keys + ["_size_fraction"]], on=merge_keys, how="left")
+            ss_path["_size_fraction"] = ss_path["_size_fraction"].fillna(1.0)
+            ss_path["sales_share"] = ss_path["sales_share"] * ss_path["_size_fraction"]
+
         if "year" in ss_path.columns:
             # Multi-year sales shares (Module 5 produces future-year shares)
             for _, row in ss_path.iterrows():
