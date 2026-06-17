@@ -91,12 +91,13 @@ def build_reconciled_module1_reimport(
     stock_targets: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
-    Return a canonical long Module 1 CSV with reconciled base-year values.
+    Return a canonical long Module 1 CSV suitable for re-upload.
 
-    Only rows already present in ``source_long_df`` are written for the standard
-    reconciled variables. Additionally, if ``stock_targets`` (T5 post-reconciliation)
-    is supplied, "Stock Target" rows are appended for every projection year so that
-    a second model run started from this CSV produces identical stock trajectories.
+    The source CSV is carried through unchanged so the next run sees the same
+    base-year inputs (T4) and produces identical base-year reconciliation (T9).
+    If ``stock_targets`` (T5 post-reconciliation) is supplied, "Stock Target"
+    rows are appended for every projection year so that a second model run
+    started from this CSV produces identical stock trajectories to the first.
     """
     source_long_df = source_long_df.drop_duplicates().copy()
     source_long_df = source_long_df.drop_duplicates(
@@ -106,35 +107,6 @@ def build_reconciled_module1_reimport(
     _validate_unique_keys(source_long_df, context="source Module 1")
 
     out = _ensure_reimport_columns(source_long_df)
-    replacement_values = _build_replacement_values(
-        leap_ready,
-        base_year=base_year,
-        include_stock_share=reconciliation_scalars is None,
-    )
-    if reconciliation_scalars is not None:
-        replacement_values.update(
-            _build_stock_share_replacements_from_t9(
-                reconciliation_scalars,
-                base_year=base_year,
-            )
-        )
-
-    replace_mask = (
-        out["Variable"].isin(RECONCILED_REIMPORT_VARIABLES)
-        & pd.to_numeric(out["Year"], errors="coerce").eq(int(base_year))
-    )
-    for idx, row in out.loc[replace_mask].iterrows():
-        key = (
-            str(row["Branch Path"]),
-            str(row["Variable"]),
-            str(row["Scenario"]),
-            int(row["Year"]),
-        )
-        if key not in replacement_values:
-            continue
-        multiplier = _scale_multiplier(row.get("Scale", ""))
-        out.at[idx, "Value"] = replacement_values[key] / multiplier
-
     out = out[out["Shown In Interface"].astype(str).str.strip().str.lower().ne("false")]
 
     if stock_targets is not None:
@@ -263,6 +235,11 @@ def _build_stock_share_replacements_from_t9(
             replacements[(str(row["_tech_path"]), "Stock Share", scenario, int(base_year))] = value
 
     return replacements
+
+
+def _parent_path(branch_path: str) -> str:
+    parts = str(branch_path).rsplit("\\", 1)
+    return parts[0] if len(parts) > 1 else str(branch_path)
 
 
 def _tech_path(branch_path: str) -> str:

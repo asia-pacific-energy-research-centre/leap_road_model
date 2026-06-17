@@ -413,6 +413,7 @@ def parse_leap_format_inputs(
     melted = melted.drop(columns=["_year"])
     melted["value"] = pd.to_numeric(melted["value"], errors="coerce")
     melted = melted.dropna(subset=["value", "year"])
+    melted = melted[np.isfinite(melted["value"])]
     melted["year"] = melted["year"].astype(int)
 
     if base_year is not None:
@@ -837,7 +838,10 @@ def _extract_stock_target_overrides(
         return None
     result: dict[str, pd.Series] = {}
     for vt, grp in st.groupby("vehicle_type"):
-        result[str(vt)] = grp.set_index("year")["value"].sort_index()
+        series = grp.set_index("year")["value"].sort_index()
+        if series.index.duplicated().any():
+            series = series[~series.index.duplicated(keep="last")]
+        result[str(vt)] = series
     return result or None
 
 
@@ -855,6 +859,16 @@ def _apply_stock_target_overrides(
     unchanged (so a partial override is safe).
     """
     out = stock_targets.copy()
+    # Snapshot pre-override target_stock — mirrors the pre_reconciliation_target_stock
+    # column added by build_post_reconciliation_stock_targets so T5 has the same
+    # shape whether the second pass ran or was skipped due to overrides.
+    out["pre_reconciliation_target_stock"] = pd.to_numeric(out["target_stock"], errors="coerce")
+
+    # Collect reconciled base-year stock per vehicle type from the base_year rows of
+    # the overrides. build_post_reconciliation_stock_targets broadcasts this value to
+    # ALL rows (all years) for each vehicle type, so we must do the same.
+    key_cols = [c for c in ["economy", "scenario", "transport_type", "vehicle_type"] if c in out.columns]
+    rec_base_by_vt: dict[str, float] = {}
     for vt, series in overrides.items():
         mask = out["vehicle_type"] == vt
         if not mask.any():
@@ -862,14 +876,38 @@ def _apply_stock_target_overrides(
         years_covered = set(series.index)
         year_mask = mask & out["year"].isin(years_covered)
         out.loc[year_mask, "target_stock"] = out.loc[year_mask, "year"].map(series)
-        out.loc[
-            year_mask & out["year"].astype(int).eq(int(base_year)),
-            "reconciled_base_stock",
-        ] = out.loc[
-            year_mask & out["year"].astype(int).eq(int(base_year)),
-            "target_stock",
-        ]
-    return out
+        base_rows = out.loc[year_mask & out["year"].astype(int).eq(int(base_year)), "target_stock"]
+        if not base_rows.empty:
+            rec_base_by_vt[vt] = float(base_rows.iloc[0])
+
+    # Broadcast reconciled_base_stock to all rows for each vehicle type — mirrors
+    # build_post_reconciliation_stock_targets which merges the value by key_cols.
+    out["reconciled_base_stock"] = out["vehicle_type"].map(rec_base_by_vt)
+
+    # Add stock_target_base_adjustment and stock_target_adjustment_method to
+    # match build_post_reconciliation_stock_targets output shape.
+    base_mask = out["year"].astype(int).eq(int(base_year))
+    pre_base = (
+        out.loc[base_mask, key_cols + ["pre_reconciliation_target_stock"]]
+        .drop_duplicates(key_cols)
+        .rename(columns={"pre_reconciliation_target_stock": "_pre_base"})
+    )
+    rec_base = (
+        out.loc[base_mask & out["reconciled_base_stock"].notna(), key_cols + ["reconciled_base_stock"]]
+        .drop_duplicates(key_cols)
+        .rename(columns={"reconciled_base_stock": "_rec_base"})
+    )
+
+    out = out.merge(pre_base, on=key_cols, how="left").merge(rec_base, on=key_cols, how="left")
+    out["stock_target_base_adjustment"] = out["_rec_base"] - out["_pre_base"]
+    transport_mask = out.get("transport_type", pd.Series("", index=out.index)).astype(str).str.lower()
+    has_rec = out["_rec_base"].notna()
+    out["stock_target_adjustment_method"] = np.select(
+        [transport_mask.eq("passenger") & has_rec, transport_mask.eq("freight") & has_rec],
+        ["preserve_final_target_linear_base_adjustment", "preserve_growth_index_from_reconciled_base"],
+        default="no_reconciled_base_stock",
+    )
+    return out.drop(columns=["_pre_base", "_rec_base"], errors="ignore")
 
 
 def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> dict[str, Any]:

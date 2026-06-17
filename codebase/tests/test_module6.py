@@ -958,3 +958,60 @@ class TestBuildLeapReadyTable:
         assert mileage_factor["year"] == 2030
         assert mileage_factor["value"] == pytest.approx(0.95)
         assert efficiency_factor["value"] == pytest.approx(1.05)
+
+    def test_t11_has_no_duplicate_keys_for_four_level_paths(self):
+        """
+        Regression: for 4-level LEAP paths (drive type is the leaf, no separate
+        fuel branch), _tech_path == _vehicle_path.  The tech-level Stock Share
+        loop previously wrote drive-type shares at the vehicle path, producing
+        multiple rows with the same (economy, scenario, leap_branch_path,
+        variable, year) key.
+        """
+        t9 = pd.DataFrame([
+            {
+                "economy": "20_USA", "scenario": "Target", "base_year": 2022,
+                "transport_type": "freight", "vehicle_type": "LCVs",
+                "drive_type": "Diesel", "size": None,
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\Diesel",
+                "adjusted_stock": 80.0,
+                "adjusted_mileage_km_per_year": 15_000.0,
+                "adjusted_efficiency_km_per_gj": 250.0,
+                "final_branch_fuel_pj": 4.8,
+            },
+            {
+                "economy": "20_USA", "scenario": "Target", "base_year": 2022,
+                "transport_type": "freight", "vehicle_type": "LCVs",
+                "drive_type": "BEV", "size": None,
+                "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV",
+                "adjusted_stock": 20.0,
+                "adjusted_mileage_km_per_year": 15_000.0,
+                "adjusted_efficiency_km_per_gj": 400.0,
+                "final_branch_fuel_pj": 0.75,
+            },
+        ])
+        t10 = pd.DataFrame([
+            {"economy": "20_USA", "scenario": "Target",
+             "leap_branch_path": "Demand\\Freight road\\LCVs\\Diesel", "device_share": 1.0},
+            {"economy": "20_USA", "scenario": "Target",
+             "leap_branch_path": "Demand\\Freight road\\LCVs\\BEV", "device_share": 1.0},
+        ])
+
+        t11 = build_leap_ready_table(t9, t10, pd.DataFrame(), pd.DataFrame(), projection_years=[2022])
+
+        key_cols = ["economy", "scenario", "leap_branch_path", "variable", "year"]
+        dup_mask = t11.duplicated(subset=key_cols, keep=False)
+        dup_count = dup_mask.sum()
+        assert dup_count == 0, (
+            f"T11 has {dup_count} rows with duplicate keys:\n"
+            + t11.loc[dup_mask, key_cols + ["value"]].to_string()
+        )
+
+        # For 4-level paths the drive type IS the leaf — there is no distinct
+        # drive-type path, so no tech-level Stock Share is emitted below the vehicle.
+        # The vehicle-level Stock Share (LCVs as % of Freight road) must appear exactly once.
+        vehicle_share = t11[
+            (t11["variable"] == "Stock Share")
+            & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")
+        ]
+        assert len(vehicle_share) == 1, "Vehicle-level Stock Share should appear exactly once"
+        assert vehicle_share.iloc[0]["value"] == pytest.approx(100.0)

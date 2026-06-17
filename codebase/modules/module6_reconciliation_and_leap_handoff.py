@@ -1947,9 +1947,25 @@ def build_leap_ready_table(
     for _, row in tech_rows.iterrows():
         vehicle_total = float(vehicle_totals.get((row["economy"], row["scenario"], row["_vehicle_path"]), 0.0))
         tech_share = (float(row["adjusted_stock"]) / vehicle_total * 100.0) if vehicle_total > 0 else 0.0
+
+        # tech_rows["leap_branch_path"] is already one level above the fuel leaf.
+        # For 5-level input (fuel is the leaf):  tech_rows path is 4-part (drive-type level).
+        #   → _tech_path == _vehicle_path (both give 3-part vehicle path)
+        #   → use leap_branch_path (4-part drive-type path) ✓
+        # For 4-level input (drive type is the leaf):  tech_rows path is 3-part (= vehicle path).
+        #   → _tech_path gives 2-part transport path, != _vehicle_path
+        #   → leap_branch_path == _vehicle_path — no distinct drive-type path exists, skip to
+        #      avoid a dup with the vehicle-level Stock Share added above.
+        if row["leap_branch_path"] == row["_vehicle_path"]:
+            continue
+        tech_share_path = (
+            row["leap_branch_path"]
+            if row["_tech_path"] == row["_vehicle_path"]
+            else row["_tech_path"]
+        )
         rows.append({
             "economy": row["economy"], "scenario": row["scenario"],
-            "year": base_year, "leap_branch_path": row["_tech_path"],
+            "year": base_year, "leap_branch_path": tech_share_path,
             "variable": "Stock Share", "value": tech_share, "unit": "Share",
         })
 

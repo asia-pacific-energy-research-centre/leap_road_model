@@ -494,6 +494,26 @@ belong in `back-end/data/road_model/UPDATE_METHOD.md`. If upstream
 into `back-end/data/road_model/processed_source/`. Source prep is not part of
 the regular build.
 
+### Convert documentation to Word
+
+`scripts/convert_docs.py` converts the Markdown docs in `docs/new model/` to `.docx` using Pandoc.
+It fixes encoding mojibake (e.g. Ã— → ×, â€" → —), renders Mermaid diagrams to PNG, and suppresses auto-captions on images.
+
+```powershell
+# Convert each .md file to a separate .docx
+python scripts/convert_docs.py
+
+# Combine overview + methodology + modeller guide into one document
+python scripts/convert_docs.py --combine
+```
+
+Output goes to `docs/docx/`. Mermaid PNGs go to `docs/docx/mermaid/`.
+
+Requirements (one-time install):
+
+- `winget install JohnMacFarlane.Pandoc`
+- `npm install -g @mermaid-js/mermaid-cli`
+
 ### Validate a cross-repo change
 
 For a change that touches the hand-off between the interface and model, the

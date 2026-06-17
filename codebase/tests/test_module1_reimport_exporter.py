@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from adapters.module1_reimport_exporter import (
     MODULE1_REIMPORT_COLUMNS,
+    RECONCILED_REIMPORT_VARIABLES,
     build_reconciled_module1_reimport,
 )
 from adapters.road_module1_defaults import load_module1_for_economy
@@ -152,7 +153,10 @@ def test_reconciled_reimport_preserves_row_keys_and_metadata():
     assert stock["Input Status"] == "default"
 
 
-def test_reconciled_reimport_preserves_units_and_applies_original_scale():
+def test_reconciled_reimport_preserves_source_values():
+    # Source values pass through unchanged — replacements were removed because
+    # updating Stock/Mileage/FuelEconomy changes T4 and thereby changes T9,
+    # breaking the roundtrip invariant.
     out = build_reconciled_module1_reimport(_source_rows(), _t11_rows(), base_year=2022)
 
     stock = out[out["Variable"] == "Stock"].iloc[0]
@@ -160,24 +164,26 @@ def test_reconciled_reimport_preserves_units_and_applies_original_scale():
     efficiency = out[out["Variable"] == "Fuel Economy"].iloc[0]
     stock_share = out[out["Variable"] == "Stock Share"].iloc[0]
 
-    assert stock["Value"] == pytest.approx(2.5)
+    assert stock["Value"] == pytest.approx(1.0)
     assert stock["Scale"] == "Millions"
     assert stock["Units"] == "Device"
 
-    assert mileage["Value"] == pytest.approx(12.5)
+    assert mileage["Value"] == pytest.approx(10.0)
     assert mileage["Scale"] == "Thousands"
     assert mileage["Units"] == "Kilometer"
 
-    assert stock_share["Value"] == pytest.approx(60.0)
+    assert stock_share["Value"] == pytest.approx(50.0)
     assert stock_share["Scale"] == "%"
     assert stock_share["Units"] == "Share"
 
-    assert efficiency["Value"] == pytest.approx(7.5)
+    assert efficiency["Value"] == pytest.approx(8.0)
     assert efficiency["Scale"] == ""
     assert efficiency["Units"] == "MJ/100 km"
 
 
-def test_reconciled_reimport_derives_stock_share_from_t9():
+def test_reconciled_reimport_preserves_source_stock_shares_when_reconciliation_scalars_provided():
+    # reconciliation_scalars is accepted for backward-compat but no longer replaces
+    # source Stock Share values — changing them would alter T4 and break T9 roundtrip.
     source = pd.DataFrame([
         {
             "Economy": "20USA",
@@ -239,8 +245,8 @@ def test_reconciled_reimport_derives_stock_share_from_t9():
 
     vehicle_share = out[out["Branch Path"] == "Demand\\Passenger road\\LPVs"].iloc[0]
     tech_share = out[out["Branch Path"] == "Demand\\Passenger road\\LPVs\\ICE"].iloc[0]
-    assert vehicle_share["Value"] == pytest.approx(80.0)
-    assert tech_share["Value"] == pytest.approx(100.0)
+    assert vehicle_share["Value"] == pytest.approx(50.0)
+    assert tech_share["Value"] == pytest.approx(50.0)
 
 
 def test_reconciled_reimport_loads_with_module1_adapter(tmp_path: Path):
@@ -253,19 +259,41 @@ def test_reconciled_reimport_loads_with_module1_adapter(tmp_path: Path):
     raw = loaded["raw_leap_df"]
     parsed = parse_leap_format_inputs(raw, base_year=2022)
 
+    # Source values pass through unchanged — scale applied by the adapter.
     stock_raw = raw[raw["Variable"] == "Stock"].iloc[0]
     assert stock_raw["Scale"] == "Millions"
-    assert stock_raw["2022"] == pytest.approx(2.5)
+    assert stock_raw["2022"] == pytest.approx(1.0)
 
     stock_parsed = parsed[parsed["variable"] == "stock"].iloc[0]
     mileage_parsed = parsed[parsed["variable"] == "mileage"].iloc[0]
     stock_share_parsed = parsed[parsed["variable"] == "stock_share"].iloc[0]
     efficiency_parsed = parsed[parsed["variable"] == "efficiency"].iloc[0]
 
-    assert stock_parsed["value"] == pytest.approx(2_500_000.0)
-    assert stock_share_parsed["value"] == pytest.approx(60.0)
-    assert mileage_parsed["value"] == pytest.approx(12_500.0)
-    assert efficiency_parsed["value"] == pytest.approx(100_000.0 / 7.5)
+    assert stock_parsed["value"] == pytest.approx(1_000_000.0)
+    assert stock_share_parsed["value"] == pytest.approx(50.0)
+    assert mileage_parsed["value"] == pytest.approx(10_000.0)
+    assert efficiency_parsed["value"] == pytest.approx(100_000.0 / 8.0)
+
+
+@pytest.mark.parametrize("variable", sorted(RECONCILED_REIMPORT_VARIABLES))
+def test_reconciled_reimport_preserves_each_reconciled_variable(variable: str):
+    """
+    Every variable in RECONCILED_REIMPORT_VARIABLES must pass through with its
+    source value unchanged.  Replacing these values changes T4, which changes T9,
+    breaking the roundtrip invariant.
+    """
+    source = _source_rows()
+    src_row = source[source["Variable"] == variable]
+    if src_row.empty:
+        pytest.skip(f"_source_rows() has no {variable!r} row")
+    expected_value = float(src_row.iloc[0]["Value"])
+
+    out = build_reconciled_module1_reimport(source, _t11_rows(), base_year=2022)
+    out_row = out[out["Variable"] == variable]
+    assert not out_row.empty, f"Variable {variable!r} missing from output"
+    assert float(out_row.iloc[0]["Value"]) == pytest.approx(expected_value), (
+        f"{variable}: output value {out_row.iloc[0]['Value']!r} != source value {expected_value!r}"
+    )
 
 
 def _t5_rows() -> pd.DataFrame:

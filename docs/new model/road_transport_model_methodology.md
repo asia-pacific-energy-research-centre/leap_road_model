@@ -527,25 +527,20 @@ For example, changing survival assumptions affects retirements and sales. Changi
 
 ## 13. What researchers can adjust in LEAP
 
-Some variables are suitable for direct LEAP scenario editing because they are useful levers once the stock-flow inputs have been prepared. These include:
+Once the pre-LEAP workflow has prepared the stock-flow structure, some assumptions can be adjusted directly in LEAP as scenario levers. These are mainly variables that affect technology uptake, utilisation, efficiency, or fuel splits without rebuilding the underlying stock, sales, and turnover pathway.
 
-- mileage adjustment factors;
-- fuel economy or efficiency adjustment factors;
-- technology sales shares, such as ICE, BEV, PHEV, and FCEV shares;
-- fuel or Device Share settings where relevant.
+The safest LEAP edits are made in projection scenarios, not Current Accounts. Current Accounts should normally remain the calibrated base-year setup.
 
-These variables are useful for scenario design because they let researchers test changes to travel demand, efficiency, technology uptake, and fuel use.
+| Change | Where to change it | What it does | Main checks |
+| --- | --- | --- | --- |
+| Technology uptake | `Sales Share` at vehicle-type or drive/engine level. | Changes which technologies enter the fleet through new sales. The effect appears gradually as the stock turns over. | Shares must sum to 100% within each parent. Check that stock changes gradually, not instantly. |
+| Mileage Correction Factor | `Mileage Correction Factor` at fuel branches. | Changes distance travelled per vehicle and therefore energy demand. This should not be changed without strong reasoning, because mileage often stays relatively stable over time. | Check that energy changes directly. Stock should not change just because mileage changed. |
+| Efficiency Correction Factor | `Fuel Economy Correction Factor` at fuel branches. | Changes the effective fuel economy or efficiency used in the energy calculation. This can represent efficiency improvement within a technology, separate from shifts between ICE, BEV, PHEV, and other technologies. As a rough benchmark, new-vehicle efficiency has often improved by around 1.5-2% per year, while whole-fleet efficiency usually changes more slowly because older vehicles remain in the stock. | Check the unit direction before deciding whether the factor should rise or fall. |
+| Fuel split within a technology | `Device Share` at fuel branches. | Changes how a technology branch is split across fuels. | Device Shares under one parent must sum to 100%. PHEV and EREV Device Shares should usually come from the pre-LEAP utilisation workflow, because the resulting electricity utilisation share is difficult to infer manually. |
+| Technology availability | `First Sales Year`. | Prevents a technology from receiving sales before a specified year. | Check whether sales shares before that year are ignored or reallocated as intended. |
+| Scrappage / accelerated retirement | Scrappage-related variables at drive/engine type branches. | Can accelerate retirement beyond normal survival profiles. | Advanced only. Check sales, retirements, stock, and replacement assumptions together. These settings are not yet part of the routine `T11` LEAP import workflow, so use them carefully until the hand-off is extended. |
 
-Scrappage and accelerated-retirement settings are partly represented in the Python workflow, but they are not currently written as routine `T11` LEAP import variables. They should therefore be treated as testing or mirror-model inputs until the LEAP hand-off is deliberately extended.
-
-Users should remember that even LEAP-editable variables interact with the stock-flow model. For example, changing sales shares affects future stock gradually through turnover. Changing mileage affects energy demand directly but does not change stock. Changing scrappage affects retirements and may affect replacement sales when it is enabled in a scenario workflow.
-
-The general rule is:
-
-- use the pre-LEAP workflow for difficult preparation, base-year calibration, and structural stock-flow assumptions; and
-- use LEAP for official projection runs and controlled scenario changes.
-
-The user will need to be careful not to change other variables in LEAP that are not intended to be scenario levers. For example, changing stock shares or survival assumptions directly in LEAP can have unintended consequences for the stock-flow pathway. The pre-LEAP workflow is designed to prepare those assumptions in a consistent way, so they should generally be left unchanged in LEAP unless the user understands the implications.
+The general rule is to use the pre-LEAP workflow for base-year calibration and structural stock-flow assumptions, then use LEAP for controlled scenario changes. Variables such as vehicle-type stock shares, survival profiles, vintage profiles, passenger saturation, freight elasticity, PHEV utilisation, and reconciliation weights should generally not be changed directly in LEAP, because they affect several linked calculations at once.
 
 ## 14. Python simulated outputs, LEAP, and official results
 
