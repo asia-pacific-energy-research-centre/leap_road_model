@@ -2842,6 +2842,25 @@ def _spread_dot_chart(df: pd.DataFrame, title: str) -> "go.Figure | None":
     for col, _label in metrics:
         tmp[col] = pd.to_numeric(tmp[col], errors="coerce")
 
+    # Build a per-row hover string from all available branch attributes.
+    _hover_field_labels = [
+        ("vehicle_type", "Vehicle"),
+        ("drive_type", "Drive"),
+        ("transport_type", "Transport"),
+        ("fuel", "Fuel"),
+        ("size", "Size"),
+        ("scenario", "Scenario"),
+        ("economy", "Economy"),
+    ]
+    _hover_fields = [(c, lbl) for c, lbl in _hover_field_labels if c in tmp.columns]
+    if _hover_fields:
+        tmp["_hover"] = tmp.apply(
+            lambda r: "<br>".join(f"{lbl}: {r[c]}" for c, lbl in _hover_fields if pd.notna(r[c]) and str(r[c]) != ""),
+            axis=1,
+        )
+    else:
+        tmp["_hover"] = ""
+
     fig = make_subplots(
         rows=1,
         cols=len(metrics),
@@ -2886,7 +2905,8 @@ def _spread_dot_chart(df: pd.DataFrame, title: str) -> "go.Figure | None":
                         marker=dict(color=_c, size=7),
                         showlegend=False,
                         visible=is_first,
-                        hovertemplate=f"{cat}<br>{label}: " + "%{y:,.3g}<extra></extra>",
+                        customdata=cat_rows["_hover"].tolist(),
+                        hovertemplate="%{customdata}<br>" + f"{label}: " + "%{y:,.3g}<extra></extra>",
                     ),
                     row=1,
                     col=j,
@@ -3294,53 +3314,6 @@ def module7_figures(
                 "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
             ))
 
-    # --- Mileage and efficiency distribution plots (post-reconciliation, from T9) ---
-    # Falls back to T4 base-year input data (pre-reconciliation) if T9 isn't available.
-
-    has_t9_mileage = t9 is not None and not t9.empty and "adjusted_mileage_km_per_year" in t9.columns
-    has_t9_efficiency = t9 is not None and not t9.empty and "adjusted_efficiency_km_per_gj" in t9.columns
-
-    if has_t9_mileage or has_t9_efficiency:
-        post = t9.drop(columns=["mileage_km_per_year", "efficiency_km_per_gj"], errors="ignore").rename(columns={
-            "adjusted_mileage_km_per_year": "mileage_km_per_year",
-            "adjusted_efficiency_km_per_gj": "efficiency_km_per_gj",
-        })
-    else:
-        post = t4
-
-    if post is not None and not post.empty:
-        if "mileage_km_per_year" in post.columns:
-            mileage_dist = _distribution_chart_with_dropdown(
-                post,
-                metric_col="mileage_km_per_year",
-                metric_label="Mileage (km/year)",
-                title="Mileage distribution (post-reconciliation)",
-            )
-            if mileage_dist is not None:
-                figs.append((
-                    "Mileage distribution (post-reconciliation)",
-                    mileage_dist,
-                    False,
-                    "Distribution of mileage (km/year) across branches after Module 6 reconciliation (T9), sorted by median. "
-                    "Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
-                ))
-
-        if "efficiency_km_per_gj" in post.columns:
-            eff_dist = _distribution_chart_with_dropdown(
-                post,
-                metric_col="efficiency_km_per_gj",
-                metric_label="Efficiency (km/GJ)",
-                title="Efficiency distribution (post-reconciliation)",
-            )
-            if eff_dist is not None:
-                figs.append((
-                    "Efficiency distribution (post-reconciliation)",
-                    eff_dist,
-                    False,
-                    "Distribution of efficiency (km/GJ) across branches after Module 6 reconciliation (T9), sorted by median. "
-                    "Use the dropdown to switch between vehicle type, drive type, and transport type groupings.",
-                ))
-
     return figs
 
 
@@ -3697,8 +3670,6 @@ _CHART_DENSITY: dict[str, str] = {
     "Sales share": "more",
     "Stock": "more",
     "Vehicle-km": "more",
-    "Mileage distribution (post-reconciliation)": "less",
-    "Efficiency distribution (post-reconciliation)": "less",
     "Simulation minus LEAP energy": "ultra",
     # --- Workflow summary ---
     "Workflow timing": "ultra",

@@ -193,6 +193,9 @@ def export_lifecycle_profiles_from_t6v(
     - ``manifest``: manifest DataFrame
     """
     _validate_t6v_columns(t6v)
+    # Lifecycle profiles are scenario-independent; drop duplicates introduced by
+    # multi-scenario concatenation in the workflow before iterating transport types.
+    t6v = t6v.drop_duplicates(subset=["transport_type", "vehicle_type", "age"])
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     area = area_name or f"{economy} transport"

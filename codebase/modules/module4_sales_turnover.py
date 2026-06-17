@@ -965,8 +965,9 @@ def _calibrate_single(
             # Bisect: higher factor → lower turnover rate
             # We want lower <= rate <= upper
             # rate decreases as factor increases
+            # Target the nearest bound to minimise shape distortion.
             lo_f, hi_f = min_factor, max_factor
-            target = (lower + upper) / 2.0
+            target = lower if initial_rate < lower else upper
             for _ in range(50):
                 mid_f = (lo_f + hi_f) / 2.0
                 mid_rate = _implied_turnover_rate(_apply_factor(annual, mid_f))
