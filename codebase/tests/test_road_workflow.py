@@ -10,7 +10,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from road_workflow import _apply_stock_target_overrides, build_post_reconciliation_stock_targets
+from road_workflow import (
+    _apply_stock_target_overrides,
+    _extract_current_accounts_base_year,
+    build_post_reconciliation_stock_targets,
+)
 
 
 def _minimal_t5(years=(2022, 2030, 2040, 2060)) -> pd.DataFrame:
@@ -109,3 +113,43 @@ class TestApplyStockTargetOverrides:
         extra_in_applied = sorted(set(applied.columns) - set(post_recon.columns))
         assert not extra_in_post, f"Columns in build_post_reconciliation_stock_targets but not _apply_stock_target_overrides: {extra_in_post}"
         assert not extra_in_applied, f"Columns in _apply_stock_target_overrides but not build_post_reconciliation_stock_targets: {extra_in_applied}"
+
+
+class TestExtractCurrentAccountsBaseYear:
+    def test_fills_missing_current_accounts_rows_without_replacing_existing_rows(self):
+        t11 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Target",
+                "year": 2022,
+                "leap_branch_path": "Demand\\Passenger road\\Buses\\ICE",
+                "variable": "Sales Share",
+                "value": 83.3333,
+            },
+            {
+                "economy": "01_AUS",
+                "scenario": "Target",
+                "year": 2022,
+                "leap_branch_path": "Demand\\Passenger road\\Buses\\FCEV",
+                "variable": "Sales Share",
+                "value": 5.5556,
+            },
+            {
+                "economy": "01_AUS",
+                "scenario": "Current Accounts",
+                "year": 2022,
+                "leap_branch_path": "Demand\\Passenger road\\Buses\\ICE",
+                "variable": "Sales Share",
+                "value": 80.0,
+            },
+        ])
+
+        out = _extract_current_accounts_base_year(t11, base_year=2022)
+        ca = out[out["scenario"].eq("Current Accounts")]
+
+        existing = ca[ca["leap_branch_path"].eq("Demand\\Passenger road\\Buses\\ICE")]
+        added = ca[ca["leap_branch_path"].eq("Demand\\Passenger road\\Buses\\FCEV")]
+        assert len(existing) == 1
+        assert existing.iloc[0]["value"] == pytest.approx(80.0)
+        assert len(added) == 1
+        assert added.iloc[0]["value"] == pytest.approx(5.5556)

@@ -1639,14 +1639,28 @@ def _extract_current_accounts_base_year(t11: pd.DataFrame, base_year: int) -> pd
     We derive them from the first available scenario's base-year values rather than
     running a separate CA scenario, which keeps them consistent with the projection.
     """
-    if "Current Accounts" in t11["scenario"].values:
-        return t11
-    first_scenario = t11["scenario"].dropna().iloc[0] if not t11.empty else None
+    non_ca = t11[t11["scenario"].ne("Current Accounts")].copy()
+    first_scenario = non_ca["scenario"].dropna().iloc[0] if not non_ca.empty else None
     if first_scenario is None:
         return t11
+
     base_rows = t11[(t11["year"] == base_year) & (t11["scenario"] == first_scenario)].copy()
+    if base_rows.empty:
+        return t11
+
     base_rows["scenario"] = "Current Accounts"
-    return pd.concat([t11, base_rows], ignore_index=True)
+    key_cols = [c for c in ["economy", "scenario", "year", "leap_branch_path", "variable"] if c in t11.columns]
+    existing_ca_keys = set(
+        t11[t11["scenario"].eq("Current Accounts")][key_cols]
+        .astype(str)
+        .agg("\u241f".join, axis=1)
+    )
+    missing_base_rows = base_rows[
+        ~base_rows[key_cols].astype(str).agg("\u241f".join, axis=1).isin(existing_ca_keys)
+    ].copy()
+    if missing_base_rows.empty:
+        return t11
+    return pd.concat([t11, missing_base_rows], ignore_index=True)
 
 
 def _default_leap_reference_path() -> Path | None:
