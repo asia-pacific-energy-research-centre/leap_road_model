@@ -437,25 +437,58 @@ def _parent_branch_path(branch_path: object) -> str:
     return "\\".join(parts[:-1]) if len(parts) > 1 else ""
 
 
-def _normalise_matched_device_shares(df: pd.DataFrame, matched_keys: set[str]) -> pd.DataFrame:
-    """Renormalise imported Device Share siblings after non-reference rows are dropped."""
+SHARE_SUM_VARIABLES = {"Device Share", "Sales Share", "Stock Share"}
+
+
+def _normalise_matched_share_groups(df: pd.DataFrame, matched: pd.DataFrame) -> pd.DataFrame:
+    """Renormalise imported share siblings after non-reference rows are dropped."""
     if df.empty:
         return df
 
     out = df.copy()
-    out["_key"] = out[["Branch Path", "Variable", "Scenario"]].astype(str).agg("\u241f".join, axis=1)
-    mask = out["_key"].isin(matched_keys) & out["Variable"].eq("Device Share")
+    key_columns = ["Branch Path", "Variable", "Scenario"]
+    matched_keys = set(matched[key_columns].astype(str).agg("\u241f".join, axis=1))
+    order_cols = [c for c in ["BranchID", "VariableID", "ScenarioID", "RegionID"] if c in matched.columns]
+    order_source = matched[key_columns + order_cols].drop_duplicates(subset=key_columns).copy()
+    if order_cols:
+        numeric_order = order_source[order_cols].apply(lambda col: pd.to_numeric(col, errors="coerce"))
+        order_source["_reference_order"] = (
+            numeric_order
+            .fillna(1_000_000_000)
+            .astype(float)
+            .agg(tuple, axis=1)
+        )
+    else:
+        order_source["_reference_order"] = range(len(order_source))
+    order_by_key = dict(
+        zip(
+            order_source[key_columns].astype(str).agg("\u241f".join, axis=1),
+            order_source["_reference_order"],
+        )
+    )
+
+    out["_key"] = out[key_columns].astype(str).agg("\u241f".join, axis=1)
+    out["_reference_order"] = out["_key"].map(order_by_key)
+    mask = out["_key"].isin(matched_keys) & out["Variable"].isin(SHARE_SUM_VARIABLES)
     if not mask.any():
-        return out.drop(columns=["_key"], errors="ignore")
+        return out.drop(columns=["_key", "_reference_order"], errors="ignore")
 
     out.loc[mask, "_parent_branch"] = out.loc[mask, "Branch Path"].map(_parent_branch_path)
     group_cols = ["Scenario", "Variable", "year", "_parent_branch"]
-    totals = out.loc[mask].groupby(group_cols, dropna=False)["value"].transform("sum")
-    total_by_row = pd.Series(np.nan, index=out.index, dtype=float)
-    total_by_row.loc[totals.index] = totals
-    scale_mask = mask & total_by_row.gt(0)
-    out.loc[scale_mask, "value"] = out.loc[scale_mask, "value"] / total_by_row.loc[scale_mask] * 100.0
-    return out.drop(columns=["_key", "_parent_branch"], errors="ignore")
+    for _, group in out.loc[mask].groupby(group_cols, dropna=False):
+        if len(group) < 2:
+            continue
+        idx = group.index
+        values = pd.to_numeric(group["value"], errors="coerce").fillna(0.0)
+        total = float(values.sum())
+        if total > 0:
+            out.loc[idx, "value"] = values / total * 100.0
+            continue
+
+        first_idx = group.sort_values(["_reference_order", "Branch Path"]).index[0]
+        out.loc[idx, "value"] = 0.0
+        out.loc[first_idx, "value"] = 100.0
+    return out.drop(columns=["_key", "_reference_order", "_parent_branch"], errors="ignore")
 
 
 def build_leap_import_tables(
@@ -570,8 +603,7 @@ def build_leap_import_tables(
     df_for_values["Scale"] = df_for_values["Scale_matched"].fillna(df_for_values.get("Scale", ""))
     if not export_values_in_raw_units:
         df_for_values["value"] = df_for_values["value"] / df_for_values["Scale"].map(_scale_multiplier)
-    matched_keys = set(matched[key_columns].astype(str).agg("\u241f".join, axis=1))
-    df_for_values = _normalise_matched_device_shares(df_for_values, matched_keys)
+    df_for_values = _normalise_matched_share_groups(df_for_values, matched)
 
     expression_rows = []
     for key, group in df_for_values.groupby(key_columns, dropna=False):

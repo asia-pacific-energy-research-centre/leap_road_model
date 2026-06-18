@@ -360,6 +360,63 @@ def test_build_leap_import_tables_normalises_device_shares_after_reference_match
     assert float(expressions["Demand\\Passenger road\\Motorcycles\\ICE\\Motor gasoline"]) == pytest.approx(98.9898989899)
 
 
+def test_build_leap_import_tables_normalises_sales_and_stock_share_groups():
+    t11 = pd.DataFrame([
+        {
+            "leap_branch_path": path,
+            "variable": variable,
+            "scenario": "Target",
+            "year": 2022,
+            "value": value,
+            "unit": "Share",
+            "scale": "%",
+        }
+        for path, variable, value in [
+            ("Demand\\Passenger road\\Buses\\ICE", "Sales Share", 80.0),
+            ("Demand\\Passenger road\\Buses\\BEV", "Sales Share", 10.0),
+            ("Demand\\Passenger road\\Buses\\ICE", "Stock Share", 0.0),
+            ("Demand\\Passenger road\\Buses\\BEV", "Stock Share", 0.0),
+        ]
+    ])
+    reference = pd.DataFrame([
+        {
+            "BranchID": branch_id,
+            "VariableID": 10 if variable == "Sales Share" else 11,
+            "ScenarioID": 3,
+            "RegionID": 4,
+            "Branch Path": path,
+            "Variable": variable,
+            "Scenario": "Target",
+            "Region": "Australia",
+            "Scale": "%",
+            "Units": "Share",
+            "Per...": "",
+        }
+        for branch_id, path, variable in [
+            (1, "Demand\\Passenger road\\Buses\\ICE", "Sales Share"),
+            (2, "Demand\\Passenger road\\Buses\\BEV", "Sales Share"),
+            (1, "Demand\\Passenger road\\Buses\\ICE", "Stock Share"),
+            (2, "Demand\\Passenger road\\Buses\\BEV", "Stock Share"),
+        ]
+    ])
+
+    leap_sheet, viewing_sheet, warnings, not_needed = build_leap_import_tables(
+        t11,
+        reference,
+        economy_long_name="Australia",
+        region_id=4,
+    )
+
+    sales = viewing_sheet[viewing_sheet["Variable"].eq("Sales Share")].set_index("Branch Path")[2022]
+    stock = viewing_sheet[viewing_sheet["Variable"].eq("Stock Share")].set_index("Branch Path")[2022]
+    assert sales.sum() == pytest.approx(100.0)
+    assert sales["Demand\\Passenger road\\Buses\\ICE"] == pytest.approx(88.8888888889)
+    assert sales["Demand\\Passenger road\\Buses\\BEV"] == pytest.approx(11.1111111111)
+    assert stock.sum() == pytest.approx(100.0)
+    assert stock["Demand\\Passenger road\\Buses\\ICE"] == pytest.approx(100.0)
+    assert stock["Demand\\Passenger road\\Buses\\BEV"] == pytest.approx(0.0)
+
+
 def test_write_leap_import_workbook_writes_row_coverage_diagnostics(tmp_path):
     t11 = pd.DataFrame([
         {
