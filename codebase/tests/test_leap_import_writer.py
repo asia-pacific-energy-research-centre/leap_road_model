@@ -295,6 +295,71 @@ def test_build_leap_import_tables_can_export_raw_values_instead_of_scaled_values
     assert stock_view[2022] == pytest.approx(2_500_000.0)
 
 
+def test_build_leap_import_tables_normalises_device_shares_after_reference_match():
+    t11 = pd.DataFrame([
+        {
+            "leap_branch_path": "Demand\\Passenger road\\Motorcycles\\ICE\\Motor gasoline",
+            "variable": "Device Share",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 98.0,
+            "unit": "Share",
+            "scale": "%",
+        },
+        {
+            "leap_branch_path": "Demand\\Passenger road\\Motorcycles\\ICE\\Biogasoline",
+            "variable": "Device Share",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 1.0,
+            "unit": "Share",
+            "scale": "%",
+        },
+        {
+            "leap_branch_path": "Demand\\Passenger road\\Motorcycles\\ICE\\LPG",
+            "variable": "Device Share",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 1.0,
+            "unit": "Share",
+            "scale": "%",
+        },
+    ])
+    reference = pd.DataFrame([
+        {
+            "BranchID": branch_id,
+            "VariableID": 2,
+            "ScenarioID": 3,
+            "RegionID": 4,
+            "Branch Path": branch_path,
+            "Variable": "Device Share",
+            "Scenario": "Target",
+            "Region": "Australia",
+            "Scale": "%",
+            "Units": "Share",
+            "Per...": "",
+        }
+        for branch_id, branch_path in [
+            (1, "Demand\\Passenger road\\Motorcycles\\ICE\\Motor gasoline"),
+            (2, "Demand\\Passenger road\\Motorcycles\\ICE\\Biogasoline"),
+        ]
+    ])
+
+    leap_sheet, viewing_sheet, warnings, not_needed = build_leap_import_tables(
+        t11,
+        reference,
+        economy_long_name="Australia",
+        region_id=4,
+    )
+
+    values = viewing_sheet.set_index("Branch Path")[2022]
+    assert values["Demand\\Passenger road\\Motorcycles\\ICE\\Motor gasoline"] == pytest.approx(98.9898989899)
+    assert values["Demand\\Passenger road\\Motorcycles\\ICE\\Biogasoline"] == pytest.approx(1.0101010101)
+    assert values.sum() == pytest.approx(100.0)
+    expressions = leap_sheet.set_index("Branch Path")["Expression"]
+    assert float(expressions["Demand\\Passenger road\\Motorcycles\\ICE\\Motor gasoline"]) == pytest.approx(98.9898989899)
+
+
 def test_write_leap_import_workbook_writes_row_coverage_diagnostics(tmp_path):
     t11 = pd.DataFrame([
         {

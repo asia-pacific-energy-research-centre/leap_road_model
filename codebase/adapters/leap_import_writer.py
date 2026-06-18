@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from adapters.leap_expressions import to_leap_expression
@@ -431,6 +432,32 @@ def _not_needed_row(row: pd.Series, side: str, reason: str, message: str) -> dic
     }
 
 
+def _parent_branch_path(branch_path: object) -> str:
+    parts = str(branch_path or "").split("\\")
+    return "\\".join(parts[:-1]) if len(parts) > 1 else ""
+
+
+def _normalise_matched_device_shares(df: pd.DataFrame, matched_keys: set[str]) -> pd.DataFrame:
+    """Renormalise imported Device Share siblings after non-reference rows are dropped."""
+    if df.empty:
+        return df
+
+    out = df.copy()
+    out["_key"] = out[["Branch Path", "Variable", "Scenario"]].astype(str).agg("\u241f".join, axis=1)
+    mask = out["_key"].isin(matched_keys) & out["Variable"].eq("Device Share")
+    if not mask.any():
+        return out.drop(columns=["_key"], errors="ignore")
+
+    out.loc[mask, "_parent_branch"] = out.loc[mask, "Branch Path"].map(_parent_branch_path)
+    group_cols = ["Scenario", "Variable", "year", "_parent_branch"]
+    totals = out.loc[mask].groupby(group_cols, dropna=False)["value"].transform("sum")
+    total_by_row = pd.Series(np.nan, index=out.index, dtype=float)
+    total_by_row.loc[totals.index] = totals
+    scale_mask = mask & total_by_row.gt(0)
+    out.loc[scale_mask, "value"] = out.loc[scale_mask, "value"] / total_by_row.loc[scale_mask] * 100.0
+    return out.drop(columns=["_key", "_parent_branch"], errors="ignore")
+
+
 def build_leap_import_tables(
     leap_ready: pd.DataFrame,
     reference_ids: pd.DataFrame,
@@ -543,6 +570,8 @@ def build_leap_import_tables(
     df_for_values["Scale"] = df_for_values["Scale_matched"].fillna(df_for_values.get("Scale", ""))
     if not export_values_in_raw_units:
         df_for_values["value"] = df_for_values["value"] / df_for_values["Scale"].map(_scale_multiplier)
+    matched_keys = set(matched[key_columns].astype(str).agg("\u241f".join, axis=1))
+    df_for_values = _normalise_matched_device_shares(df_for_values, matched_keys)
 
     expression_rows = []
     for key, group in df_for_values.groupby(key_columns, dropna=False):
