@@ -1084,6 +1084,20 @@ def module3_figures(
             passenger_stock_index = _index_to_base(passenger_stock, base_year)
             projected_passenger_stock_growth = _cagr_from_index(passenger_stock_index)
 
+        motorisation_index = pd.Series(dtype=float)
+        if base_year is not None and "motorisation_level" in t5.columns:
+            mot_sub = t5[
+                (t5["transport_type"].astype(str).str.lower() == "passenger")
+                & t5["motorisation_level"].notna()
+            ].copy()
+            if not mot_sub.empty:
+                mot_series = (mot_sub.groupby("year")["motorisation_level"].mean() * 1000.0).dropna().sort_index()
+                mot_series.index = pd.to_numeric(mot_series.index, errors="coerce")
+                mot_series = mot_series[mot_series.index.notna()]
+                if not mot_series.empty:
+                    mot_series.index = mot_series.index.astype(int)
+                    motorisation_index = _index_to_base(mot_series, base_year)
+
         passenger_energy_index = pd.Series(dtype=float)
         projected_passenger_energy_growth = None
         if (
@@ -1182,6 +1196,14 @@ def module3_figures(
                     name="Projected passenger stock index",
                     line=dict(color="#1565C0", width=3),
                 ))
+            if not motorisation_index.empty:
+                fig.add_trace(go.Scatter(
+                    x=motorisation_index.index.tolist(),
+                    y=motorisation_index.tolist(),
+                    mode="lines+markers",
+                    name="X-LPV-equiv per 1,000 people index",
+                    line=dict(color="#7B1FA2", width=2),
+                ))
             if not passenger_energy_index.empty:
                 fig.add_trace(go.Scatter(
                     x=passenger_energy_index.index.tolist(),
@@ -1218,16 +1240,30 @@ def module3_figures(
                 '</div>'
                 for label, value in kpis
             )
+            has_energy = not passenger_energy_index.empty or not historical_energy_index.empty
+            if has_energy:
+                energy_note = (
+                    "Dotted lines show historical growth before the base year; the dashed passenger energy line uses Module 7 simulated energy, "
+                    "so it reflects stock, mileage, efficiency, turnover, and drive-mix changes."
+                )
+            else:
+                energy_note = (
+                    "Energy data is not yet available at this pre-reconciliation stage. "
+                    "Use the passenger stock index as a rough proxy for expected energy growth direction — "
+                    "actual energy will also be shaped by mileage, efficiency, turnover, and drive-mix assumptions."
+                )
             caption = (
-                f"<p>Passenger energy and GDP per capita are indexed to {base_year} = 100. "
+                f"<p>Passenger stock and GDP per capita are indexed to {base_year} = 100. "
                 "The passenger stock line is the Module 3/4 stock trajectory, which is driven by the GDP-per-capita motorisation envelope. "
-                "Dotted lines show historical growth before the base year; the dashed passenger energy line uses Module 7 simulated energy, "
-                "so it reflects stock, mileage, efficiency, turnover, and drive-mix changes.</p>"
+                "The purple X-LPV-equiv per 1,000 people line shows the projected motorisation rate (X-LPV-equivalent vehicles per 1,000 people), "
+                "which is the per-capita driver of the stock trajectory before scaling by population. "
+                f"{energy_note}</p>"
                 f'<div class="kpi-grid">{kpi_html}</div>'
             )
             figs.append((
                 "Passenger energy growth context",
                 fig,
+                True,
                 caption,
             ))
 
@@ -1285,6 +1321,23 @@ def module3_figures(
                         name="GDP index",
                         line=dict(color="#263238", width=3),
                     ))
+            if population is not None:
+                pop_s = pd.to_numeric(population, errors="coerce").dropna().sort_index()
+                pop_s.index = pd.to_numeric(pop_s.index, errors="coerce")
+                pop_s = pop_s[pop_s.index.notna()]
+                if not pop_s.empty:
+                    pop_s.index = pop_s.index.astype(int)
+                    base_pop = pop_s.get(base_year)
+                    if base_pop is not None and pd.notna(base_pop) and float(base_pop) > 0:
+                        population_index_freight = (pop_s / float(base_pop) * 100).sort_index()
+                        fig.add_trace(go.Scatter(
+                            x=population_index_freight.index.tolist(),
+                            y=population_index_freight.tolist(),
+                            mode="lines",
+                            name="Population index",
+                            line=dict(color="#1565C0", width=2, dash="dot"),
+                            opacity=0.7,
+                        ))
             indexed_stock_series_by_label: dict[str, pd.Series] = {}
             for i, (vt, grp) in enumerate(freight_sub.groupby("vehicle_type")):
                 series = grp.groupby("year")["target_stock"].sum().sort_index()
@@ -4293,6 +4346,8 @@ def write_module_pages(
             scenario_figures = module3_figures(
                 _filter_frame_scenario(t5_for_main, scenario),
                 population=workflow_outputs.get("population"),
+                show_passenger_energy_context=True,
+                gdp=workflow_outputs.get("gdp"),
             )
             scenario_figures.extend(module4_figures(
                 _filter_frame_scenario(t6, scenario),
@@ -4307,6 +4362,8 @@ def write_module_pages(
         stock_sales_figures = module3_figures(
             t5_for_main,
             population=workflow_outputs.get("population"),
+            show_passenger_energy_context=True,
+            gdp=workflow_outputs.get("gdp"),
         )
         stock_sales_figures.extend(module4_figures(t6, t6v))
         stock_sales_figures.extend(module5_figures(t7, t7f))
