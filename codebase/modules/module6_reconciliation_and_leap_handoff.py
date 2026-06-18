@@ -2106,9 +2106,13 @@ def build_leap_ready_table(
             merge_keys = [k for k in size_keys if k in ss_path.columns]
             ss_path = ss_path.merge(size_stock[size_keys + ["_size_fraction"]], on=merge_keys, how="left")
             # For drive types absent from tech_rows (e.g. zero-stock EVs), fall back
-            # to equal split across the number of size variants rather than 1.0 each.
+            # to an equal split across the number of size variants. Count distinct
+            # sizes rather than rows because sales shares usually span many years.
             grp_keys = [k for k in ["economy", "scenario", "vehicle_type", "drive_type"] if k in ss_path.columns]
-            n_sizes = ss_path.groupby(grp_keys, dropna=False)["size"].transform("size")
+            n_sizes = ss_path.groupby(grp_keys, dropna=False)["size"].transform(
+                lambda values: values.nunique(dropna=True)
+            )
+            n_sizes = n_sizes.replace(0, np.nan)
             ss_path["_size_fraction"] = ss_path["_size_fraction"].fillna(1.0 / n_sizes)
             ss_path["sales_share"] = ss_path["sales_share"] * ss_path["_size_fraction"]
 

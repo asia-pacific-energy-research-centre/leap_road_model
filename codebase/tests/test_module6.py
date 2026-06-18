@@ -966,6 +966,58 @@ class TestBuildLeapReadyTable:
         assert sales_share.iloc[0]["value"] == pytest.approx(100.0)
         assert np.isfinite(sales_share.iloc[0]["value"])
 
+    def test_leap_ready_zero_stock_drive_size_split_counts_distinct_sizes(self):
+        t9 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Target",
+                "base_year": 2022,
+                "transport_type": "freight",
+                "vehicle_type": "Trucks",
+                "drive_type": "FCEV",
+                "size": size,
+                "fuel": "Hydrogen",
+                "leap_branch_path": f"Demand\\Freight road\\Trucks\\FCEV {size}\\Hydrogen",
+                "adjusted_stock": 0.0,
+                "adjusted_mileage_km_per_year": 40000.0,
+                "adjusted_efficiency_km_per_gj": 100.0,
+                "final_branch_fuel_pj": 0.0,
+            }
+            for size in ["heavy", "medium"]
+        ])
+        t10 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Target",
+                "leap_branch_path": f"Demand\\Freight road\\Trucks\\FCEV {size}\\Hydrogen",
+                "device_share": 1.0,
+            }
+            for size in ["heavy", "medium"]
+        ])
+        t7 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Target",
+                "year": year,
+                "transport_type": "freight",
+                "vehicle_type": "Trucks",
+                "drive_type": "FCEV",
+                "sales_share": 0.03409090909090909,
+            }
+            for year in [2022, 2023]
+        ])
+
+        t11 = build_leap_ready_table(t9, t10, pd.DataFrame(), t7, projection_years=[2022, 2023])
+        sales_share = t11[
+            (t11["variable"] == "Sales Share")
+            & (t11["year"] == 2022)
+            & (t11["leap_branch_path"].str.startswith("Demand\\Freight road\\Trucks\\FCEV"))
+        ].sort_values("leap_branch_path")
+
+        assert len(sales_share) == 2
+        assert sales_share["value"].sum() == pytest.approx(3.409090909090909)
+        assert set(sales_share["value"].round(12)) == {round(1.7045454545454546, 12)}
+
     def test_leap_ready_table_exports_correction_factors(self):
         t9 = pd.DataFrame([
             {
