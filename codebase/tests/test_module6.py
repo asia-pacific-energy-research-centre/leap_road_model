@@ -123,6 +123,16 @@ class TestPHEVUtilisationRates:
         assert freight.loc[freight["fuel"].eq("Electricity"), "mileage_km_per_year"].iloc[0] == pytest.approx(6000)
         assert freight.loc[freight["fuel"].eq("Motor gasoline"), "mileage_km_per_year"].iloc[0] == pytest.approx(14000)
 
+    def test_initial_branch_energy_zero_efficiency_is_zero_not_inf(self):
+        t4 = _make_t4(
+            _branch("Buses", "BEV", "Electricity", stock=100, mileage=45000, efficiency=0),
+        )
+
+        result = calculate_initial_branch_energy(t4)
+
+        assert result["initial_energy_pj"].iloc[0] == 0.0
+        assert np.isfinite(result["initial_energy_pj"].iloc[0])
+
 
 # ---------------------------------------------------------------------------
 # apply_scalars
@@ -906,6 +916,55 @@ class TestBuildLeapReadyTable:
         assert not t11[(t11["variable"] == "Stock Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")].empty
         assert not t11[(t11["variable"] == "Sales Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs")].empty
         assert not t11[(t11["variable"] == "Sales Share") & (t11["leap_branch_path"] == "Demand\\Freight road\\LCVs\\BEV")].empty
+
+    def test_leap_ready_sales_share_with_null_size_is_finite(self):
+        t9 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Reference",
+                "base_year": 2022,
+                "transport_type": "passenger",
+                "vehicle_type": "Buses",
+                "drive_type": "FCEV",
+                "size": None,
+                "fuel": "Hydrogen",
+                "leap_branch_path": "Demand\\Passenger road\\Buses\\FCEV\\Hydrogen",
+                "adjusted_stock": 10.0,
+                "adjusted_mileage_km_per_year": 45000.0,
+                "adjusted_efficiency_km_per_gj": 120.0,
+                "final_branch_fuel_pj": 0.00375,
+            },
+        ])
+        t10 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Reference",
+                "leap_branch_path": "Demand\\Passenger road\\Buses\\FCEV\\Hydrogen",
+                "device_share": 1.0,
+            }
+        ])
+        t7 = pd.DataFrame([
+            {
+                "economy": "01_AUS",
+                "scenario": "Reference",
+                "year": 2023,
+                "transport_type": "passenger",
+                "vehicle_type": "Buses",
+                "drive_type": "FCEV",
+                "sales_share": 1.0,
+            }
+        ])
+
+        t11 = build_leap_ready_table(t9, t10, pd.DataFrame(), t7, projection_years=[2022, 2023])
+        sales_share = t11[
+            (t11["variable"] == "Sales Share")
+            & (t11["leap_branch_path"] == "Demand\\Passenger road\\Buses\\FCEV")
+            & (t11["year"] == 2023)
+        ]
+
+        assert len(sales_share) == 1
+        assert sales_share.iloc[0]["value"] == pytest.approx(100.0)
+        assert np.isfinite(sales_share.iloc[0]["value"])
 
     def test_leap_ready_table_exports_correction_factors(self):
         t9 = pd.DataFrame([

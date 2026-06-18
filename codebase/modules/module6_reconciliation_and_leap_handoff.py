@@ -453,10 +453,27 @@ def calculate_initial_branch_energy(
     df = base_year_branches.copy()
     if phev_utilisation_rate is not None:
         df = apply_phev_mileage_split(df, phev_utilisation_rate)
-    df["initial_energy_pj"] = (
-        df["stock"] * df["mileage_km_per_year"] / df["efficiency_km_per_gj"] / 1_000_000
+    df["initial_energy_pj"] = _calculate_branch_energy_pj(
+        stock=df["stock"],
+        mileage_km_per_year=df["mileage_km_per_year"],
+        efficiency_km_per_gj=df["efficiency_km_per_gj"],
     )
     return df
+
+
+def _calculate_branch_energy_pj(
+    stock: pd.Series,
+    mileage_km_per_year: pd.Series,
+    efficiency_km_per_gj: pd.Series,
+) -> pd.Series:
+    """Calculate branch energy, treating zero/non-finite inputs as zero energy."""
+    stock_num = pd.to_numeric(stock, errors="coerce").fillna(0.0)
+    mileage_num = pd.to_numeric(mileage_km_per_year, errors="coerce").fillna(0.0)
+    efficiency_num = pd.to_numeric(efficiency_km_per_gj, errors="coerce")
+    energy = pd.Series(0.0, index=stock_num.index, dtype=float)
+    valid = stock_num.gt(0.0) & mileage_num.gt(0.0) & efficiency_num.gt(0.0)
+    energy.loc[valid] = stock_num.loc[valid] * mileage_num.loc[valid] / efficiency_num.loc[valid] / 1_000_000
+    return energy.replace([np.inf, -np.inf], 0.0).fillna(0.0)
 
 
 def bootstrap_zero_stock_fuel_branches(
@@ -777,8 +794,10 @@ def _compute_phev_liquid(
     if phev_liq.empty:
         return pd.DataFrame(columns=["vehicle_type", "drive_type", "fuel", "phev_liquid_pj"])
 
-    phev_liq["phev_liquid_pj"] = (
-        phev_liq["stock"] * phev_liq["mileage_km_per_year"] / phev_liq["efficiency_km_per_gj"] / 1_000_000
+    phev_liq["phev_liquid_pj"] = _calculate_branch_energy_pj(
+        stock=phev_liq["stock"],
+        mileage_km_per_year=phev_liq["mileage_km_per_year"],
+        efficiency_km_per_gj=phev_liq["efficiency_km_per_gj"],
     )
 
     keep = ["vehicle_type", "drive_type", "fuel", "phev_liquid_pj"]
@@ -1201,8 +1220,10 @@ def reconcile_stock_mileage_efficiency(
     merged = t8.merge(base_year_branches[base_cols], on=join_keys, how="left")
 
     # Initial energy from ORIGINAL base_year_branches (pre-electricity-reconciliation)
-    merged["initial_branch_energy_pj"] = (
-        merged["stock"] * merged["mileage_km_per_year"] / merged["efficiency_km_per_gj"] / 1_000_000
+    merged["initial_branch_energy_pj"] = _calculate_branch_energy_pj(
+        stock=merged["stock"],
+        mileage_km_per_year=merged["mileage_km_per_year"],
+        efficiency_km_per_gj=merged["efficiency_km_per_gj"],
     )
 
     ecf_vals = (
@@ -2087,7 +2108,7 @@ def build_leap_ready_table(
             # For drive types absent from tech_rows (e.g. zero-stock EVs), fall back
             # to equal split across the number of size variants rather than 1.0 each.
             grp_keys = [k for k in ["economy", "scenario", "vehicle_type", "drive_type"] if k in ss_path.columns]
-            n_sizes = ss_path.groupby(grp_keys, dropna=False)["size"].transform("count")
+            n_sizes = ss_path.groupby(grp_keys, dropna=False)["size"].transform("size")
             ss_path["_size_fraction"] = ss_path["_size_fraction"].fillna(1.0 / n_sizes)
             ss_path["sales_share"] = ss_path["sales_share"] * ss_path["_size_fraction"]
 
