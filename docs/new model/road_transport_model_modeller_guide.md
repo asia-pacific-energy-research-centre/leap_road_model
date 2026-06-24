@@ -1549,3 +1549,62 @@ Drive or drive-size level:
 Fuel level:
   Mileage and Fuel Economy
 ```
+
+## Appendix C: Known Limitations and Potential Improvements
+
+### Mileage and fuel economy lifecycle profiles
+
+**Current state.** Mileage and Fuel Economy are exposed in the Module 1 interface
+and are passed to the model as single flat values per fuel branch per scenario.
+These are used directly in the base-year branch table (T4) and are carried through
+to T11 and the LEAP import workbook without any age-based adjustment. No method
+exists in the current workflow to create or apply age-based (lifecycle) profiles
+for these variables.
+
+**Why this matters.** In practice, older vehicles are driven fewer kilometres per
+year and often have slightly different effective fuel consumption than a
+fleet-average figure implies. LEAP supports this through its Lifecycle Profiles
+feature: a profile can define how a variable such as Vehicle Distance (mileage)
+changes with vehicle age, expressed as a multiplier series applied across the
+fleet. The LEAP Transport exercise example area contains a ready-made example of
+this using an exponential decay of the form V[t] = V[t-1] × exp(−0.002), which
+produces a gentle reduction in distance as vehicles age. A similar approach could
+be applied to Fuel Economy.
+
+**How to build it.** A complete implementation would involve the following steps:
+
+1. **Define the profile shape.** The simplest approach is an exponential decay
+   parameterised by a single constant (e.g. −0.002 for Vehicle Distance as in the
+   LEAP example). This could be stored either as a single decay constant per
+   branch or as a pre-computed age-by-year percentage table (similar in shape to
+   `Survival Rate` and `Vintage Profile Share` rows in the Module 1 contract).
+
+2. **Extend the Module 1 contract.** Add `Mileage Profile` (and optionally
+   `Fuel Economy Profile`) as new variables at the fuel level, covering ages 0–N
+   as percentage multipliers (age 0 = 100%). These would be included in
+   `road_model_inputs_interface/back-end/data/road_model/config/road_module1_static_contract.csv`
+   and backed by new rows in the appropriate source or manually-filled-rows folder.
+
+3. **Update Module 2 (T4 base-year branches).** When computing fleet-weighted
+   base-year activity, apply the age profile to the mileage (and optionally fuel
+   economy) figures, weighting by the vintage share distribution from `T6v`. This
+   would produce a reconciliation-ready activity figure that already reflects the
+   age structure of the base-year fleet, rather than applying a flat fleet average.
+
+4. **Export to LEAP lifecycle profile workbooks.** The existing lifecycle profile
+   export path under `results/<economy>/lifecycle_profiles/` already handles
+   `Survival Rate` profiles. Extend `road_workflow.py` and the profile writer to
+   include `Vehicle Distance` (and optionally `Fuel Economy`) profiles in the same
+   workbook, formatted to match the LEAP Lifecycle Profiles import structure. The
+   LEAP Transport exercise example area provides the reference format.
+
+5. **Interface support.** Decide whether researchers should be able to edit the
+   profile decay constant (or full profile table) in the browser UI, or whether a
+   single default profile per vehicle/drive type is sufficient for now. Given the
+   complexity, a reasonable first step is a fixed default profile that is included
+   in the generated package without a browser edit control.
+
+The LEAP example (exponential decay, constant ≈ −0.002 for Vehicle Distance) is
+a sensible starting default. Economy-specific calibration could be deferred until
+there is evidence that the default profile materially affects reconciliation or
+LEAP results for a specific economy.

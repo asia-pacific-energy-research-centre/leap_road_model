@@ -17,6 +17,7 @@ Or call per-module functions directly::
 
 from __future__ import annotations
 
+import colorsys
 import json
 import math
 import os
@@ -195,6 +196,40 @@ def _fuel_colour(fuel: str, idx: int) -> str:
 
 def _drive_colour(drive: str, idx: int) -> str:
     return _DRIVE_COLOURS.get(str(drive), _COLOURS[idx % len(_COLOURS)])
+
+
+_SIZE_LIGHTNESS_OFFSETS: dict[str, float] = {
+    "small": 0.22,
+    "medium": 0.11,
+    "large": 0.0,
+}
+
+
+def _drive_size_colour(drive_size_label: str, idx: int) -> str:
+    """Lightness-shifted drive colour for drive+size compound labels.
+
+    Labels like "ICE small" lighten the base ICE colour; "ICE large" uses the
+    base colour unchanged.  Labels with no recognised size suffix (e.g. "BEV")
+    fall back to the base drive colour.
+    """
+    known_sizes = set(_SIZE_LIGHTNESS_OFFSETS)
+    parts = str(drive_size_label).rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].lower() in known_sizes:
+        drive, size = parts[0], parts[1].lower()
+    else:
+        drive, size = str(drive_size_label), ""
+
+    base_hex = _DRIVE_COLOURS.get(drive, _COLOURS[idx % len(_COLOURS)])
+    offset = _SIZE_LIGHTNESS_OFFSETS.get(size, 0.0)
+    if offset == 0.0:
+        return base_hex
+
+    h = base_hex.lstrip("#")
+    r, g, b = int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0
+    hue, light, sat = colorsys.rgb_to_hls(r, g, b)
+    light = min(1.0, max(0.0, light + offset))
+    r2, g2, b2 = colorsys.hls_to_rgb(hue, light, sat)
+    return f"#{int(r2 * 255):02x}{int(g2 * 255):02x}{int(b2 * 255):02x}"
 
 
 _VT_ALIASES: dict[str, str] = {
@@ -2466,6 +2501,11 @@ def _area_chart_with_dropdown(
         _tmp = t13.copy()
         _tmp["_dt"] = _tmp["drive_type"].astype(str) + " × " + _tmp["transport_type"].astype(str)
         grouping_defs.append(("By drive × transport type", _tmp, "_dt", None, metric_col))
+    if {"drive_type", "size"}.issubset(t13.columns):
+        _tmp = t13.copy()
+        _size = _tmp["size"].fillna("").astype(str).str.strip()
+        _tmp["_ds"] = _tmp["drive_type"].astype(str).where(_size == "", _tmp["drive_type"].astype(str) + " " + _size)
+        grouping_defs.append(("By drive + size", _tmp, "_ds", _drive_size_colour, metric_col))
     if (
         t13_fuel is not None
         and not t13_fuel.empty
@@ -3054,6 +3094,11 @@ def _stacked_share_chart_with_dropdown(
         _tmp = t13.copy()
         _tmp["_dt"] = _tmp["drive_type"].astype(str) + " × " + _tmp["transport_type"].astype(str)
         grouping_defs.append(("By drive × transport type", _tmp, "_dt", None))
+    if {"drive_type", "size"}.issubset(t13.columns):
+        _tmp = t13.copy()
+        _size = _tmp["size"].fillna("").astype(str).str.strip()
+        _tmp["_ds"] = _tmp["drive_type"].astype(str).where(_size == "", _tmp["drive_type"].astype(str) + " " + _size)
+        grouping_defs.append(("By drive + size", _tmp, "_ds", _drive_size_colour))
 
     if not grouping_defs:
         return None
@@ -3288,7 +3333,7 @@ def module7_figures(
                 "Stock share",
                 stock_share_fig,
                 "half",
-                "Use the dropdown to switch between: share by drive type, vehicle type, transport type, or compound categories.",
+                "Use the dropdown to switch between: share by drive type, vehicle type, transport type, drive + size, or compound categories.",
             ))
 
     if t7f is not None and not t7f.empty and {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
@@ -3334,7 +3379,7 @@ def module7_figures(
                 "Energy",
                 en_dropdown,
                 True,
-                "Use the dropdown (top-left of chart) to switch between groupings: vehicle type, drive type, transport type, fuel, or compound categories.",
+                "Use the dropdown (top-left of chart) to switch between groupings: vehicle type, drive type, transport type, drive + size, fuel, or compound categories.",
             ))
 
     if not t13.empty and "mirror_stock" in t13.columns:
@@ -3349,7 +3394,7 @@ def module7_figures(
                 "Stock",
                 stock_dropdown,
                 True,
-                "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, or compound categories.",
+                "Use the dropdown to switch between groupings: vehicle type, drive type, transport type, drive + size, or compound categories.",
             ))
 
     if not t13.empty and "mirror_vehicle_km" in t13.columns:
