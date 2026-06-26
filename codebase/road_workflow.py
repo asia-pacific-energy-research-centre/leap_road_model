@@ -2146,13 +2146,6 @@ def run_for_economy(
 
     if auto_source is not None:
         print(f"[road_workflow] Auto-loaded future sales shares from: {auto_source}")
-    elif future_sales_shares is None and auto_load_future_sales_shares:
-        print(
-            "[road_workflow] No external future sales-share file auto-discovered; "
-            "Module 5 will use projected Module 1 Sales Share rows if present, "
-            "otherwise base-year fallback trajectories. Set ROAD_MODEL_FUTURE_SALES_SHARES_PATH "
-            "to provide a file explicitly."
-        )
 
     inputs = RoadWorkflowInputs(
         population=population,
