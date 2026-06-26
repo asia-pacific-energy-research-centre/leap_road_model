@@ -2053,14 +2053,6 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         gaps = pd.to_numeric(chart["gap_pct"], errors="coerce").tolist()
 
         fig = go.Figure()
-        if "pre_reconciliation_model_pj" in chart.columns:
-            fig.add_trace(go.Bar(
-                name="Allocated fuel before scalar adjustment",
-                x=fuels,
-                y=chart["pre_reconciliation_model_pj"].tolist(),
-                marker_color="#8E24AA",
-            ))
-
         fig.add_trace(go.Bar(
             name="ESTO target",
             x=fuels,
@@ -2101,15 +2093,23 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         figs.append((
             "Post-reconciliation vs ESTO target",
             fig,
-            "Compares the fuel allocated to branches before scalar adjustment, the ESTO target after PHEV liquid subtraction, and the post-reconciliation model value. The first bar is not raw bottom-up fuel demand; it is the allocated target passed into the stock/mileage/efficiency scalar step. Post-reconciliation bars are colour-coded by outcome.",
+            "Compares the post-reconciliation model result with the ESTO target after PHEV liquid subtraction. The earlier allocated-fuel bar is intentionally not shown here because it is the target passed into the scalar step, not raw bottom-up pre-reconciliation demand. Post-reconciliation bars are colour-coded by outcome.",
         ))
+
+    t9_for_scalars = t9.copy()
+    if {"stock_scalar", "mileage_scalar", "efficiency_scalar"}.issubset(t9_for_scalars.columns):
+        stock_vals = pd.to_numeric(t9_for_scalars["stock_scalar"], errors="coerce")
+        mileage_vals = pd.to_numeric(t9_for_scalars["mileage_scalar"], errors="coerce")
+        efficiency_vals = pd.to_numeric(t9_for_scalars["efficiency_scalar"], errors="coerce")
+        t9_for_scalars["net_energy_scalar"] = stock_vals * mileage_vals / efficiency_vals.replace(0.0, np.nan)
 
     scalar_label_map = {
         "stock_scalar": "Stock scalar",
         "mileage_scalar": "Mileage scalar (km/vehicle/year)",
         "efficiency_scalar": "Efficiency scalar (km/GJ; higher lowers energy)",
+        "net_energy_scalar": "Net energy scalar",
     }
-    scalar_cols = [c for c in scalar_label_map if not t9.empty and c in t9.columns]
+    scalar_cols = [c for c in scalar_label_map if not t9_for_scalars.empty and c in t9_for_scalars.columns]
     if scalar_cols:
         fig = make_subplots(
             rows=1,
@@ -2117,7 +2117,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             subplot_titles=[scalar_label_map[col] for col in scalar_cols],
         )
         for i, col in enumerate(scalar_cols, 1):
-            vals = _safe_numeric(t9[col])
+            vals = _safe_numeric(t9_for_scalars[col])
             if not vals.empty:
                 change_pct = (vals - 1.0) * 100.0
                 fig.add_trace(
@@ -2141,24 +2141,17 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             "Scalar distributions",
             fig,
             True,
-            "Distribution of branch-level scalar changes. Zero means unchanged for that input value. Energy is proportional to stock x mileage / efficiency, with mileage in km/vehicle/year and efficiency in km/GJ, so a higher efficiency scalar reduces energy use while a higher mileage scalar increases it.",
+            "Distribution of branch-level scalar changes across T9 rows. Zero means unchanged for that input value. Net energy scalar is stock x mileage / efficiency. Mileage is km/vehicle/year; efficiency is km/GJ, so a higher efficiency scalar reduces energy use while a higher mileage scalar increases it.",
         ))
 
-    # Scalar dashboard (faceted bars): stock / mileage / efficiency / energy correction
+    # Scalar dashboard: heatmap of the highest-changing branch groups.
     scalar_specs = [
-        ("stock_scalar", "Stock scalar"),
-        ("mileage_scalar", "Mileage scalar (km/vehicle/year)"),
-        ("efficiency_scalar", "Efficiency scalar (km/GJ; higher lowers energy)"),
-        ("net_energy_scalar", "Net energy scalar"),
-        ("energy_correction_factor", "Energy correction factor"),
+        ("stock_scalar", "Stock"),
+        ("mileage_scalar", "Mileage"),
+        ("efficiency_scalar", "Efficiency"),
+        ("net_energy_scalar", "Net energy"),
+        ("energy_correction_factor", "ECF"),
     ]
-    t9_for_scalars = t9.copy()
-    if {"stock_scalar", "mileage_scalar", "efficiency_scalar"}.issubset(t9_for_scalars.columns):
-        stock_vals = pd.to_numeric(t9_for_scalars["stock_scalar"], errors="coerce")
-        mileage_vals = pd.to_numeric(t9_for_scalars["mileage_scalar"], errors="coerce")
-        efficiency_vals = pd.to_numeric(t9_for_scalars["efficiency_scalar"], errors="coerce")
-        t9_for_scalars["net_energy_scalar"] = stock_vals * mileage_vals / efficiency_vals.replace(0.0, np.nan)
-
     scalar_cols_for_chart = [col for col, _label in scalar_specs if col in t9_for_scalars.columns]
     required_scalar_cols = {"vehicle_type", "drive_type", "fuel", *scalar_cols_for_chart}
     if scalar_cols_for_chart and not t9_for_scalars.empty and required_scalar_cols.issubset(t9_for_scalars.columns):
@@ -2184,76 +2177,100 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         )
         if not agg.empty:
             branch_group_count = len(agg)
-            ranking = (agg.sub(1.0).abs().sum(axis=1)).sort_values(ascending=False)
-            agg = agg.loc[ranking.head(8).index.tolist()]
+            ranking_base = agg["net_energy_scalar"] if "net_energy_scalar" in agg.columns else agg[scalar_cols_for_chart].mean(axis=1)
+            ranking = (np.log(ranking_base.replace(0.0, np.nan)).abs()).replace([np.inf, -np.inf], np.nan)
+            ranking = ranking.fillna(999.0).sort_values(ascending=False)
+            top_n = min(25, branch_group_count)
+            agg = agg.loc[ranking.head(top_n).index.tolist()]
             subplot_specs = [(col, label) for col, label in scalar_specs if col in scalar_cols_for_chart]
-            n_cols = 2
-            n_rows = math.ceil(len(subplot_specs) / n_cols)
-            fig = make_subplots(
-                rows=n_rows, cols=n_cols,
-                subplot_titles=tuple(label for _col, label in subplot_specs),
-                horizontal_spacing=0.28,
-                vertical_spacing=0.18,
-            )
-            for i, (metric_col, _label) in enumerate(subplot_specs, start=1):
-                r = math.ceil(i / n_cols)
-                c = 1 if i % n_cols == 1 else 2
-                fig.add_trace(
-                    go.Bar(
-                        x=agg.index.tolist(),
-                        y=agg[metric_col].tolist(),
-                        marker_color=_COLOURS[(i - 1) % len(_COLOURS)],
-                        showlegend=False,
-                        hovertemplate="%{x}<br>Scalar=%{y:.3f}<extra></extra>",
-                    ),
-                    row=r,
-                    col=c,
-                )
-                fig.update_xaxes(title_text="Branch group (transport|vehicle|drive|size|fuel)", tickangle=-55, row=r, col=c)
-                fig.update_yaxes(title_text="Scalar (1 = unchanged)", row=r, col=c)
+            heat_values = (agg[[col for col, _label in subplot_specs]] - 1.0) * 100.0
+            scalar_values = agg[[col for col, _label in subplot_specs]]
+            text_values = scalar_values.map(lambda value: "" if pd.isna(value) else f"{value:.3g}")
 
+            fig = go.Figure(go.Heatmap(
+                x=[label for _col, label in subplot_specs],
+                y=agg.index.tolist(),
+                z=heat_values.to_numpy(dtype=float),
+                text=text_values.to_numpy(),
+                texttemplate="%{text}",
+                colorscale="RdBu",
+                reversescale=True,
+                zmid=0.0,
+                colorbar={"title": "Change from 1 (%)"},
+                customdata=scalar_values.to_numpy(dtype=float),
+                hovertemplate=(
+                    "%{y}<br>%{x}"
+                    "<br>Change from 1=%{z:.1f}%"
+                    "<br>Scalar=%{customdata:.4g}<extra></extra>"
+                ),
+            ))
             fig.update_layout(
-                **_layout("Module 6 - Adjustment scalars by branch group (top 8 changing groups)"),
-                height=430 + (500 * n_rows),
-                margin=dict(l=78, r=36, t=72, b=260),
+                **_layout(f"Module 6 - Adjustment scalars by branch group (top {top_n} by net energy change)"),
+                height=max(760, 320 + (24 * top_n)),
+                margin=dict(l=260, r=48, t=72, b=80),
+                xaxis_title="Scalar metric",
+                yaxis_title="Branch group (transport|vehicle|drive|size|fuel)",
             )
-            for r in range(1, n_rows + 1):
-                for c in range(1, n_cols + 1):
-                    fig.add_hline(y=1.0, line_dash="dot", line_color="#616161", row=r, col=c)
             figs.append((
                 "Adjustment scalars by branch",
                 fig,
                 True,
-                f"Shows the top {len(agg)} of {branch_group_count} branch groups ranked by scalar movement. Rows are grouped before plotting, so this is not every individual T9 row. Net energy scalar is stock x mileage / efficiency; because efficiency is km/GJ, efficiency increases reduce energy use.",
+                f"Shows the top {top_n} of {branch_group_count} branch groups ranked by absolute net energy scalar movement. Values printed in the heatmap are scalars; colours show percent change from 1. Rows are grouped before plotting, so this is not every individual T9 row. Net energy scalar is stock x mileage / efficiency; because efficiency is km/GJ, efficiency increases reduce energy use.",
             ))
 
-    if not t9.empty and {"fuel", "energy_correction_factor"}.issubset(t9.columns):
-        stats = t9.groupby("fuel")["energy_correction_factor"].mean().sort_values(ascending=False)
+    if not t9.empty and {"fuel", "energy_correction_factor", "initial_branch_energy_pj", "allocated_branch_fuel_pj"}.issubset(t9.columns):
+        factor_df = t9.copy()
+        for col in ["energy_correction_factor", "initial_branch_energy_pj", "allocated_branch_fuel_pj"]:
+            factor_df[col] = pd.to_numeric(factor_df[col], errors="coerce").fillna(0.0)
+        grouped = factor_df.groupby("fuel", dropna=False)
+        stats = grouped.agg(
+            initial_energy_pj=("initial_branch_energy_pj", "sum"),
+            allocated_fuel_pj=("allocated_branch_fuel_pj", "sum"),
+            median_row_ecf=("energy_correction_factor", "median"),
+            row_count=("energy_correction_factor", "size"),
+        ).reset_index()
+        stats["weighted_correction_factor"] = np.where(
+            stats["initial_energy_pj"] > 0,
+            stats["allocated_fuel_pj"] / stats["initial_energy_pj"],
+            np.nan,
+        )
+        stats = stats.sort_values("weighted_correction_factor", ascending=False, na_position="last")
         if not stats.empty:
             fig = go.Figure(go.Bar(
-                x=stats.index.tolist(), y=stats.tolist(), marker_color="#00897B",
+                x=stats["fuel"].tolist(),
+                y=stats["weighted_correction_factor"].tolist(),
+                marker_color="#00897B",
+                customdata=stats[["initial_energy_pj", "allocated_fuel_pj", "median_row_ecf", "row_count"]].to_numpy(),
+                hovertemplate=(
+                    "%{x}<br>Weighted correction factor=%{y:.4g}"
+                    "<br>Initial branch energy=%{customdata[0]:.2f} PJ"
+                    "<br>Allocated fuel=%{customdata[1]:.2f} PJ"
+                    "<br>Median row ECF=%{customdata[2]:.4g}"
+                    "<br>T9 rows=%{customdata[3]:.0f}<extra></extra>"
+                ),
             ))
-            yaxis: dict[str, Any] = {"title": "Average correction factor"}
-            positive = stats[stats > 0]
+            yaxis: dict[str, Any] = {"title": "Allocated fuel / initial branch energy"}
+            positive = stats.loc[stats["weighted_correction_factor"] > 0, "weighted_correction_factor"]
             if not positive.empty and positive.max() / positive.min() > 20:
                 min_power = int(math.floor(math.log10(positive.min())))
                 max_power = int(math.ceil(math.log10(positive.max())))
                 tickvals = [10 ** p for p in range(min_power, max_power + 1)]
                 yaxis.update({
                     "type": "log",
-                    "title": "Average correction factor (log scale)",
+                    "title": "Allocated fuel / initial branch energy (log scale)",
                     "tickmode": "array",
                     "tickvals": tickvals,
                     "ticktext": [f"{v:g}" for v in tickvals],
                 })
             fig.update_layout(
-                **_layout("Module 6 - Average correction factor by fuel"),
+                **_layout("Module 6 - Initial-energy weighted correction factor by fuel"),
                 yaxis=yaxis,
+                xaxis_title="Fuel",
             )
             figs.append((
-                "Average correction factor by fuel",
+                "Correction factor by fuel",
                 fig,
-                "Unweighted mean energy correction factor by fuel across T9 branch-fuel rows. Values near 1 imply low scalar pressure; values far from 1 imply the allocated ESTO fuel differs strongly from the branch's initial stock x mileage / efficiency energy.",
+                "Shows fuel-level correction pressure as total allocated fuel divided by total initial branch energy in T9. This replaces the previous unweighted average of row-level ECFs, which could be misleading when many tiny or zero-energy rows were present. Hover also shows the median row-level ECF.",
             ))
 
     if not t12_phev.empty and {
@@ -3530,13 +3547,6 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         statuses = g["reconciliation_status"].fillna("unknown").astype(str).tolist()
         post_vals = g["post_reconciliation_model_pj"].tolist()
         fig = go.Figure()
-        if "pre_reconciliation_model_pj" in g.columns:
-            fig.add_trace(go.Bar(
-                name="Allocated fuel before scalar adjustment",
-                x=fuels,
-                y=g["pre_reconciliation_model_pj"].tolist(),
-                marker_color="#8E24AA",
-            ))
         fig.add_trace(go.Bar(
             name="ESTO target",
             x=fuels,
@@ -3605,7 +3615,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
 
     # Correction factors only if non-trivial
     if _include_ecf:
-        ecf_item = m6_by_title.get("Average correction factor by fuel")
+        ecf_item = m6_by_title.get("Correction factor by fuel")
         if ecf_item is not None:
             figs.append(ecf_item)
 
@@ -3777,7 +3787,7 @@ _CHART_DENSITY: dict[str, str] = {
     # --- Module 6 (reconciliation) ---
     "Post-reconciliation vs ESTO target": "less",
     "Spread of stock / mileage / efficiency — pre vs post reconciliation": "less",
-    "Average correction factor by fuel": "less",
+    "Correction factor by fuel": "less",
     "Scalar distributions": "less",
     "Device share by drive/fuel": "more",
     "Final fuel allocation share by vehicle type and drive": "more",  # prefix-matched

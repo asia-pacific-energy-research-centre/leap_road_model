@@ -432,13 +432,12 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
     t5_pre = module6_outputs.get("T5_pre_reconciliation", pd.DataFrame())
     t5_post = module6_outputs.get("T5_post_reconciliation", pd.DataFrame())
 
-    if t12 is not None and not t12.empty and {"fuel", "remaining_esto_pj", "post_reconciliation_model_pj", "pre_reconciliation_model_pj"}.issubset(t12.columns):
+    if t12 is not None and not t12.empty and {"fuel", "remaining_esto_pj", "post_reconciliation_model_pj"}.issubset(t12.columns):
         x = np.arange(len(t12))
         width = 0.25
         fig, ax = plt.subplots(figsize=(11, 4))
-        ax.bar(x - width, t12["pre_reconciliation_model_pj"], width=width, label="pre_model")
-        ax.bar(x, t12["post_reconciliation_model_pj"], width=width, label="post_model")
-        ax.bar(x + width, t12["remaining_esto_pj"], width=width, label="esto_target")
+        ax.bar(x - width / 2, t12["remaining_esto_pj"], width=width, label="esto_target")
+        ax.bar(x + width / 2, t12["post_reconciliation_model_pj"], width=width, label="post_model")
         ax.set_xticks(x, t12["fuel"], rotation=30, ha="right")
         ax.set_title("Module 6: Fuel reconciliation check")
         ax.set_ylabel("Energy (PJ)")
@@ -459,13 +458,23 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
         fig.suptitle("Module 6: Reconciliation scalar distributions")
         saved.append(_save(fig, out / "module6_scalar_distributions.png"))
 
-    if t9 is not None and not t9.empty and {"fuel", "energy_correction_factor"}.issubset(t9.columns):
-        stats = t9.groupby("fuel")["energy_correction_factor"].median().sort_values(ascending=False)
+    if t9 is not None and not t9.empty and {"fuel", "initial_branch_energy_pj", "allocated_branch_fuel_pj"}.issubset(t9.columns):
+        df = t9.copy()
+        df["initial_branch_energy_pj"] = pd.to_numeric(df["initial_branch_energy_pj"], errors="coerce").fillna(0.0)
+        df["allocated_branch_fuel_pj"] = pd.to_numeric(df["allocated_branch_fuel_pj"], errors="coerce").fillna(0.0)
+        stats = (
+            df.groupby("fuel")[["initial_branch_energy_pj", "allocated_branch_fuel_pj"]]
+            .sum()
+        )
+        stats["weighted_correction_factor"] = (
+            stats["allocated_branch_fuel_pj"] / stats["initial_branch_energy_pj"].replace(0.0, np.nan)
+        )
+        stats = stats["weighted_correction_factor"].sort_values(ascending=False)
         if not stats.empty:
             fig, ax = plt.subplots(figsize=(9, 4))
             ax.bar(stats.index, stats.values, color="#00897B")
-            ax.set_title("Module 6: Median energy correction factor by fuel")
-            ax.set_ylabel("Median ECF")
+            ax.set_title("Module 6: Initial-energy weighted correction factor by fuel")
+            ax.set_ylabel("Allocated fuel / initial branch energy")
             ax.tick_params(axis="x", rotation=35)
             ax.grid(axis="y", alpha=0.3)
             saved.append(_save(fig, out / "module6_ecf_by_fuel.png"))
