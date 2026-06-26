@@ -2120,11 +2120,6 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         mileage_vals = pd.to_numeric(t9_for_scalars["mileage_scalar"], errors="coerce")
         efficiency_vals = pd.to_numeric(t9_for_scalars["efficiency_scalar"], errors="coerce")
         t9_for_scalars["realised_energy_scalar"] = stock_vals * mileage_vals / efficiency_vals.replace(0.0, np.nan)
-    if {"final_branch_fuel_pj", "initial_branch_energy_pj"}.issubset(t9_for_scalars.columns):
-        final_energy = pd.to_numeric(t9_for_scalars["final_branch_fuel_pj"], errors="coerce")
-        initial_energy = pd.to_numeric(t9_for_scalars["initial_branch_energy_pj"], errors="coerce")
-        t9_for_scalars["energy_movement_pj"] = final_energy - initial_energy
-
     scalar_label_map = {
         "stock_scalar": "Stock scalar",
         "mileage_scalar": "Mileage scalar (km/vehicle/year)",
@@ -2173,7 +2168,6 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         ("mileage_scalar", "Mileage"),
         ("efficiency_scalar", "Efficiency"),
         ("realised_energy_scalar", "Realised scalar effect"),
-        ("energy_movement_pj", "Energy movement (PJ)"),
     ]
     scalar_cols_for_chart = [col for col, _label in scalar_specs if col in t9_for_scalars.columns]
     required_scalar_cols = {"vehicle_type", "drive_type", "fuel", *scalar_cols_for_chart}
@@ -2206,8 +2200,6 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             .dropna(how="all")
         )
         if not agg.empty:
-            if {"final_branch_fuel_pj", "initial_branch_energy_pj"}.issubset(agg.columns):
-                agg["energy_movement_pj"] = agg["final_branch_fuel_pj"] - agg["initial_branch_energy_pj"]
             if {"allocated_branch_fuel_pj", "initial_branch_energy_pj"}.issubset(agg.columns):
                 agg["energy_correction_factor"] = (
                     agg["allocated_branch_fuel_pj"] / agg["initial_branch_energy_pj"].replace(0.0, np.nan)
@@ -2218,27 +2210,19 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 )
 
             branch_group_count = len(agg)
-            if "energy_movement_pj" in agg.columns:
-                ranking = agg["energy_movement_pj"].abs().sort_values(ascending=False)
-                ranking_note = "absolute realised energy movement"
-            elif "energy_correction_factor" in agg.columns:
+            if "energy_correction_factor" in agg.columns:
                 ranking = (np.log(agg["energy_correction_factor"].replace(0.0, np.nan)).abs()).replace([np.inf, -np.inf], np.nan)
                 ranking = ranking.fillna(999.0).sort_values(ascending=False)
                 ranking_note = "absolute ECF movement from 1"
             else:
                 ranking = (agg[scalar_cols_for_chart].sub(1.0).abs().sum(axis=1)).sort_values(ascending=False)
                 ranking_note = "scalar movement"
-            top_n = min(25, branch_group_count)
-            agg = agg.loc[ranking.head(top_n).index.tolist()]
+            agg = agg.loc[ranking.index.tolist()]
             subplot_specs = [(col, label) for col, label in scalar_specs if col in scalar_cols_for_chart]
             scalar_values = agg[[col for col, _label in subplot_specs]]
             heat_values = scalar_values.copy()
             for col, _label in subplot_specs:
-                if col == "energy_movement_pj":
-                    max_abs = heat_values[col].abs().max()
-                    heat_values[col] = heat_values[col] / max_abs * 100.0 if pd.notna(max_abs) and max_abs > 0 else 0.0
-                else:
-                    heat_values[col] = (heat_values[col] - 1.0) * 100.0
+                heat_values[col] = (heat_values[col] - 1.0) * 100.0
             text_values = scalar_values.map(lambda value: "" if pd.isna(value) else f"{value:.3g}")
             custom_data = np.dstack([
                 scalar_values.to_numpy(dtype=float),
@@ -2254,7 +2238,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 colorscale="RdBu",
                 reversescale=True,
                 zmid=0.0,
-                colorbar={"title": "Scalar change from 1 (%) / energy movement intensity"},
+                colorbar={"title": "Change from 1 (%)"},
                 customdata=custom_data,
                 hovertemplate=(
                     "%{y}<br>%{x}"
@@ -2263,8 +2247,8 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 ),
             ))
             fig.update_layout(
-                **_layout(f"Module 6 - ECF and adjustment scalars by branch group (top {top_n})"),
-                height=max(760, 320 + (24 * top_n)),
+                **_layout("Module 6 - ECF and adjustment scalars by branch group (all rows)"),
+                height=max(760, 320 + (24 * branch_group_count)),
                 margin=dict(l=260, r=48, t=72, b=80),
                 xaxis_title="Metric",
                 yaxis_title="Branch group (transport|vehicle|drive|size|fuel)",
@@ -2274,7 +2258,8 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 fig,
                 True,
                 "Energy correction factor (ECF) is allocated fuel divided by initial branch energy; it shows the reconciliation pressure before scalar bounds and zero-energy handling. "
-                f"This table shows the top {top_n} of {branch_group_count} branch groups ranked by {ranking_note}. Values printed in the heatmap are scalars or PJ for energy movement; colours show change from 1 for scalar/ECF columns and relative intensity for energy movement. "
+                f"This table shows all {branch_group_count} branch groups ranked by {ranking_note}. Values printed in the heatmap are scalars; colours show percent change from 1. "
+                "A separate PJ energy-movement column is intentionally not shown here because T9 initial branch energy is duplicated across eligible fuel alternatives for multi-fuel branches, so final minus initial is not a clean branch-level reconciliation-change measure. "
                 "Mileage below 1 lowers energy. Efficiency above 1 also lowers energy because efficiency is km/GJ. The realised scalar effect combines stock, mileage, and efficiency, so mileage decreases and efficiency increases compound rather than cancel out. "
                 "Rows are grouped before plotting, so this is not every individual T9 row.",
             ))

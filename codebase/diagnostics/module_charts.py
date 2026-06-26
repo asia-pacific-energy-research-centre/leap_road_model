@@ -476,8 +476,6 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
         df["realised_energy_scalar"] = (
             df["stock_scalar"] * df["mileage_scalar"] / df["efficiency_scalar"].replace(0.0, np.nan)
         )
-        if {"final_branch_fuel_pj", "initial_branch_energy_pj"}.issubset(df.columns):
-            df["energy_movement_pj"] = df["final_branch_fuel_pj"] - df["initial_branch_energy_pj"]
         parts = []
         for col in ["transport_type", "vehicle_type", "drive_type", "size", "fuel"]:
             if col in df.columns:
@@ -496,17 +494,11 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
             "efficiency_scalar": ("efficiency_scalar", "median"),
             "realised_energy_scalar": ("realised_energy_scalar", "median"),
         }
-        if "energy_movement_pj" in df.columns:
-            agg_spec["energy_movement_pj"] = ("energy_movement_pj", "sum")
         agg = df.groupby("branch_group", dropna=False).agg(**agg_spec).replace([np.inf, -np.inf], np.nan).dropna(how="all")
         if not agg.empty:
-            if "energy_movement_pj" in agg.columns:
-                ranking = agg["energy_movement_pj"].abs().sort_values(ascending=False)
-            else:
-                ranking = (np.log(agg["energy_correction_factor"].replace(0.0, np.nan)).abs()).replace([np.inf, -np.inf], np.nan)
-                ranking = ranking.fillna(999.0).sort_values(ascending=False)
-            top_n = min(25, len(agg))
-            agg = agg.loc[ranking.head(top_n).index]
+            ranking = (np.log(agg["energy_correction_factor"].replace(0.0, np.nan)).abs()).replace([np.inf, -np.inf], np.nan)
+            ranking = ranking.fillna(999.0).sort_values(ascending=False)
+            agg = agg.loc[ranking.index]
             display_cols = [
                 ("energy_correction_factor", "ECF"),
                 ("stock_scalar", "Stock"),
@@ -514,18 +506,12 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
                 ("efficiency_scalar", "Efficiency"),
                 ("realised_energy_scalar", "Realised"),
             ]
-            if "energy_movement_pj" in agg.columns:
-                display_cols.append(("energy_movement_pj", "Energy move\n(PJ)"))
             values = agg[[col for col, _label in display_cols]].copy()
             colours = values.copy()
             for col, _label in display_cols:
-                if col == "energy_movement_pj":
-                    max_abs = colours[col].abs().max()
-                    colours[col] = colours[col] / max_abs if pd.notna(max_abs) and max_abs > 0 else 0.0
-                else:
-                    colours[col] = (colours[col] - 1.0).clip(-1.0, 1.0)
+                colours[col] = (colours[col] - 1.0).clip(-1.0, 1.0)
 
-            fig, ax = plt.subplots(figsize=(12, max(7, 0.34 * top_n + 2)))
+            fig, ax = plt.subplots(figsize=(12, max(7, 0.28 * len(agg) + 2)))
             im = ax.imshow(colours.to_numpy(dtype=float), cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
             ax.set_xticks(np.arange(len(display_cols)), [label for _col, label in display_cols])
             ax.set_yticks(np.arange(len(agg)), [str(idx)[:52] for idx in agg.index], fontsize=7)
@@ -536,7 +522,7 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
                     label = "" if pd.isna(value) else f"{value:.3g}"
                     ax.text(col_i, row_i, label, ha="center", va="center", fontsize=7, color="black")
             ax.set_xlabel("ECF is allocated fuel / initial branch energy; realised = stock x mileage / efficiency")
-            fig.colorbar(im, ax=ax, shrink=0.75, label="Scalar change from 1 / energy movement intensity")
+            fig.colorbar(im, ax=ax, shrink=0.75, label="Scalar change from 1")
             saved.append(_save(fig, out / "module6_branch_scalar_ecf_heatmap.png"))
 
     if t9 is not None and not t9.empty and {"fuel", "initial_branch_energy_pj", "allocated_branch_fuel_pj"}.issubset(t9.columns):
