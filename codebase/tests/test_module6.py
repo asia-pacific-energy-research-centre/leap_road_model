@@ -24,6 +24,8 @@ from modules.module6_reconciliation_and_leap_handoff import (
     apply_scalars_with_cumulative_bounds,
     build_phev_utilisation_diagnostics,
     bootstrap_zero_stock_fuel_branches,
+    build_pre_reconciliation_fuel_attribution,
+    build_reconciliation_diagnostics,
     build_leap_ready_table,
     calculate_device_shares,
     calculate_initial_branch_energy,
@@ -132,6 +134,57 @@ class TestPHEVUtilisationRates:
 
         assert result["initial_energy_pj"].iloc[0] == 0.0
         assert np.isfinite(result["initial_energy_pj"].iloc[0])
+
+
+class TestPreReconciliationFuelAttribution:
+    def test_multi_fuel_branch_is_attributed_once_by_esto_blend_share(self):
+        t4 = _make_t4(
+            _branch("LPVs", "ICE", "Motor gasoline", stock=100, mileage=10000, efficiency=100),
+            _branch("LPVs", "ICE", "Biogasoline", stock=100, mileage=10000, efficiency=100),
+        )
+        branch_energy = calculate_initial_branch_energy(t4)
+        result = build_pre_reconciliation_fuel_attribution(
+            branch_energy,
+            _make_esto({"Motor gasoline": 90.0, "Biogasoline": 10.0}),
+        )
+
+        by_fuel = result.set_index("fuel")["pre_reconciliation_model_pj"]
+
+        # The branch's bottom-up energy is 0.01 PJ. It should be split 90/10,
+        # not counted once for gasoline and again for biogasoline.
+        assert pytest.approx(by_fuel["Motor gasoline"]) == 0.009
+        assert pytest.approx(by_fuel["Biogasoline"]) == 0.001
+        assert pytest.approx(by_fuel.sum()) == 0.01
+
+    def test_t12_uses_pre_reconciliation_fuel_attribution_when_provided(self):
+        t9 = pd.DataFrame([
+            {
+                "economy": "12_NZ",
+                "scenario": "Reference",
+                "fuel": "Motor gasoline",
+                "allocated_branch_fuel_pj": 5.0,
+                "final_branch_fuel_pj": 9.5,
+            },
+        ])
+        pre = pd.DataFrame([
+            {
+                "economy": "12_NZ",
+                "scenario": "Reference",
+                "fuel": "Motor gasoline",
+                "pre_reconciliation_model_pj": 2.5,
+                "pre_reconciliation_attribution_method": "test",
+            },
+        ])
+
+        result = build_reconciliation_diagnostics(
+            t9,
+            _make_esto({"Motor gasoline": 10.0}),
+            pd.DataFrame(),
+            match_tolerance=0.01,
+            pre_reconciliation_fuel=pre,
+        )
+
+        assert result["pre_reconciliation_model_pj"].iloc[0] == pytest.approx(2.5)
 
 
 # ---------------------------------------------------------------------------

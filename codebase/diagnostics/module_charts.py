@@ -436,8 +436,14 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
         x = np.arange(len(t12))
         width = 0.25
         fig, ax = plt.subplots(figsize=(11, 4))
-        ax.bar(x - width / 2, t12["remaining_esto_pj"], width=width, label="esto_target")
-        ax.bar(x + width / 2, t12["post_reconciliation_model_pj"], width=width, label="post_model")
+        has_pre = "pre_reconciliation_model_pj" in t12.columns
+        if has_pre:
+            ax.bar(x - width, t12["pre_reconciliation_model_pj"], width=width, label="pre_model")
+            ax.bar(x, t12["remaining_esto_pj"], width=width, label="esto_target")
+            ax.bar(x + width, t12["post_reconciliation_model_pj"], width=width, label="post_model")
+        else:
+            ax.bar(x - width / 2, t12["remaining_esto_pj"], width=width, label="esto_target")
+            ax.bar(x + width / 2, t12["post_reconciliation_model_pj"], width=width, label="post_model")
         ax.set_xticks(x, t12["fuel"], rotation=30, ha="right")
         ax.set_title("Module 6: Fuel reconciliation check")
         ax.set_ylabel("Energy (PJ)")

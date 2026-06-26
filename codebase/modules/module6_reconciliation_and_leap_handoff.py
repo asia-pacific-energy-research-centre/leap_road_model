@@ -377,6 +377,15 @@ def run_module6(
         phev_electric_utilisation_rate,
     )
     branch_energy = bootstrap_zero_stock_fuel_branches(branch_energy, esto_fuel_totals)
+    pre_phev_liquid = distribute_phev_liquid_by_esto_mix(
+        _compute_phev_liquid(branch_energy, phev_electric_utilisation_rate),
+        esto_fuel_totals,
+    )
+    pre_reconciliation_fuel = build_pre_reconciliation_fuel_attribution(
+        branch_energy,
+        esto_fuel_totals,
+        pre_phev_liquid,
+    )
 
     # Step 2: BEV/PHEV electricity reconciliation
     electricity_esto = _get_esto_fuel(esto_fuel_totals, "Electricity")
@@ -398,7 +407,13 @@ def run_module6(
     t10 = calculate_device_shares(t9)
 
     # Step 9: Validate
-    t12 = build_reconciliation_diagnostics(t9, esto_fuel_totals, phev_liquid, match_tolerance)
+    t12 = build_reconciliation_diagnostics(
+        t9,
+        esto_fuel_totals,
+        phev_liquid,
+        match_tolerance,
+        pre_reconciliation_fuel=pre_reconciliation_fuel,
+    )
     t12_phev = build_phev_utilisation_diagnostics(
         t9,
         phev_electric_utilisation_rate,
@@ -419,7 +434,15 @@ def run_module6(
     errors = validate_table(t11, "T11_leap_ready")
     for err in errors:
         log.warning("Validation: %s", err)
-    outputs = {"T8": t8, "T9": t9, "T10": t10, "T11": t11, "T12": t12, "T12_phev": t12_phev}
+    outputs = {
+        "T8": t8,
+        "T9": t9,
+        "T10": t10,
+        "T11": t11,
+        "T12": t12,
+        "T12_phev": t12_phev,
+        "T12_pre_reconciliation_fuel": pre_reconciliation_fuel,
+    }
 
     if diagnostics_dir is not None:
         try:
@@ -937,6 +960,139 @@ def calculate_remaining_esto(
 # ===========================================================================
 # Step 4 — Fuel allocation
 # ===========================================================================
+
+def build_pre_reconciliation_fuel_attribution(
+    branch_energy: pd.DataFrame,
+    esto_fuel_totals: pd.DataFrame,
+    phev_liquid_table: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """
+    Attribute pre-scalar bottom-up branch energy to fuels without double counting.
+
+    The branch skeleton can contain one row per eligible fuel for the same
+    vehicle/drive branch. Those rows are alternatives before allocation, not
+    separate full fuel demands. This diagnostic attributes each branch's initial
+    energy once, using ESTO shares only to split ambiguous multi-fuel branches
+    and biofuel blends.
+    """
+    cols = ["economy", "scenario", "fuel", "pre_reconciliation_model_pj", "pre_reconciliation_attribution_method"]
+    if branch_energy.empty:
+        return pd.DataFrame(columns=cols)
+
+    required = {
+        "economy", "scenario", "transport_type", "vehicle_type", "drive_type",
+        "fuel", "initial_energy_pj",
+    }
+    if not required.issubset(branch_energy.columns):
+        return pd.DataFrame(columns=cols)
+
+    eligibility = _get_fuel_eligibility()
+    df = branch_energy.copy()
+    df["initial_energy_pj"] = pd.to_numeric(df["initial_energy_pj"], errors="coerce").fillna(0.0)
+    df = df[df.apply(lambda row: row["fuel"] in eligibility.get(row["drive_type"], []), axis=1)].copy()
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    esto = esto_fuel_totals.copy()
+    if not esto.empty and {"fuel", "energy_pj"}.issubset(esto.columns):
+        esto["energy_pj"] = pd.to_numeric(esto["energy_pj"], errors="coerce").fillna(0.0)
+        esto_weights = esto.groupby("fuel")["energy_pj"].sum().to_dict()
+    else:
+        esto_weights = {}
+
+    out_rows: list[dict[str, Any]] = []
+
+    def _append_from_rows(source: pd.DataFrame, energy_col: str, method: str) -> None:
+        if source.empty or energy_col not in source.columns:
+            return
+        part = source.copy()
+        part[energy_col] = pd.to_numeric(part[energy_col], errors="coerce").fillna(0.0)
+        grouped = (
+            part.groupby(["economy", "scenario", "fuel"], dropna=False)[energy_col]
+            .sum()
+            .reset_index()
+        )
+        for _, item in grouped.iterrows():
+            value = float(item[energy_col])
+            if value == 0.0:
+                continue
+            out_rows.append({
+                "economy": item["economy"],
+                "scenario": item["scenario"],
+                "fuel": item["fuel"],
+                "pre_reconciliation_model_pj": value,
+                "pre_reconciliation_attribution_method": method,
+            })
+
+    single_mask = df["drive_type"].isin(_SINGLE_FUEL_DRIVES)
+    plugin_mask = df["drive_type"].isin(_PLUGIN_HYBRID_DRIVES)
+    plugin_electric_mask = plugin_mask & df["fuel"].eq("Electricity")
+
+    _append_from_rows(df[single_mask], "initial_energy_pj", "single_fuel_initial_energy")
+    _append_from_rows(df[plugin_electric_mask], "initial_energy_pj", "plugin_electric_initial_energy")
+
+    if phev_liquid_table is not None and not phev_liquid_table.empty:
+        _append_from_rows(phev_liquid_table, "phev_liquid_pj", "plugin_liquid_esto_blend_share")
+
+    normal = df[~(single_mask | plugin_mask)].copy()
+    if not normal.empty:
+        tech_keys = ["economy", "scenario", "transport_type", "vehicle_type", "drive_type"]
+        if "size" in normal.columns:
+            tech_keys.append("size")
+
+        for _key, group in normal.groupby(tech_keys, dropna=False):
+            positive_energy = group["initial_energy_pj"][group["initial_energy_pj"] > 0]
+            if positive_energy.empty:
+                continue
+            branch_energy_pj = float(positive_energy.median())
+            if branch_energy_pj <= 0:
+                continue
+
+            fuel_rows = group[["economy", "scenario", "fuel", "initial_energy_pj"]].drop_duplicates("fuel").copy()
+            fuels = fuel_rows["fuel"].tolist()
+            weights = pd.Series(
+                [max(0.0, float(esto_weights.get(fuel, 0.0))) for fuel in fuels],
+                index=fuel_rows.index,
+                dtype=float,
+            )
+            method = "multi_fuel_esto_share"
+            if weights.sum() <= 0:
+                weights = pd.to_numeric(fuel_rows["initial_energy_pj"], errors="coerce").fillna(0.0).clip(lower=0.0)
+                method = "multi_fuel_initial_energy_share_fallback"
+            if weights.sum() <= 0:
+                weights = pd.Series(1.0, index=fuel_rows.index, dtype=float)
+                method = "multi_fuel_equal_share_fallback"
+
+            shares = weights / weights.sum()
+            for idx, fuel_row in fuel_rows.iterrows():
+                value = branch_energy_pj * float(shares.loc[idx])
+                if value == 0.0:
+                    continue
+                out_rows.append({
+                    "economy": fuel_row["economy"],
+                    "scenario": fuel_row["scenario"],
+                    "fuel": fuel_row["fuel"],
+                    "pre_reconciliation_model_pj": value,
+                    "pre_reconciliation_attribution_method": method,
+                })
+
+    if not out_rows:
+        return pd.DataFrame(columns=cols)
+
+    out = pd.DataFrame(out_rows)
+    grouped = (
+        out.groupby(["economy", "scenario", "fuel"], dropna=False)
+        .agg(
+            pre_reconciliation_model_pj=("pre_reconciliation_model_pj", "sum"),
+            pre_reconciliation_attribution_method=(
+                "pre_reconciliation_attribution_method",
+                lambda values: "; ".join(sorted(set(map(str, values)))),
+            ),
+        )
+        .reset_index()
+    )
+    return grouped[cols]
+
 
 def allocate_esto_fuel_to_branches(
     branch_energy: pd.DataFrame,
@@ -1709,6 +1865,7 @@ def build_reconciliation_diagnostics(
     esto_fuel_totals: pd.DataFrame,
     phev_liquid_table: pd.DataFrame,
     match_tolerance: float,
+    pre_reconciliation_fuel: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build T12_reconciliation_diagnostics table.
 
@@ -1735,7 +1892,24 @@ def build_reconciliation_diagnostics(
             else {}
         )
 
-        pre_by_fuel = scenario_scalars.groupby("fuel")["allocated_branch_fuel_pj"].sum().to_dict()
+        if (
+            pre_reconciliation_fuel is not None
+            and not pre_reconciliation_fuel.empty
+            and {"scenario", "fuel", "pre_reconciliation_model_pj"}.issubset(pre_reconciliation_fuel.columns)
+        ):
+            scenario_pre = pre_reconciliation_fuel[pre_reconciliation_fuel["scenario"].eq(scenario)]
+            pre_by_fuel = scenario_pre.groupby("fuel")["pre_reconciliation_model_pj"].sum().to_dict()
+            if "pre_reconciliation_attribution_method" in scenario_pre.columns:
+                pre_method_by_fuel = (
+                    scenario_pre.groupby("fuel")["pre_reconciliation_attribution_method"]
+                    .agg(lambda values: "; ".join(sorted(set(map(str, values)))))
+                    .to_dict()
+                )
+            else:
+                pre_method_by_fuel = {}
+        else:
+            pre_by_fuel = scenario_scalars.groupby("fuel")["allocated_branch_fuel_pj"].sum().to_dict()
+            pre_method_by_fuel = {}
         post_by_fuel = scenario_scalars.groupby("fuel")["final_branch_fuel_pj"].sum().to_dict()
 
         for _, esto_row in esto_fuel_totals.iterrows():
@@ -1763,6 +1937,7 @@ def build_reconciliation_diagnostics(
                 "phev_liquid_pj": phev_liquid,
                 "remaining_esto_pj": remaining,
                 "pre_reconciliation_model_pj": pre,
+                "pre_reconciliation_attribution_method": pre_method_by_fuel.get(fuel, "allocated_fuel_fallback"),
                 "post_reconciliation_model_pj": post,
                 "gap_pj": gap_pj,
                 "gap_pct": gap_pct,

@@ -2053,6 +2053,24 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         gaps = pd.to_numeric(chart["gap_pct"], errors="coerce").tolist()
 
         fig = go.Figure()
+        if "pre_reconciliation_model_pj" in chart.columns:
+            pre_methods = (
+                chart["pre_reconciliation_attribution_method"].fillna("unknown").astype(str).tolist()
+                if "pre_reconciliation_attribution_method" in chart.columns
+                else ["unknown"] * len(chart)
+            )
+            fig.add_trace(go.Bar(
+                name="Previous model energy (pre-reconciliation)",
+                x=fuels,
+                y=chart["pre_reconciliation_model_pj"].tolist(),
+                marker_color="#8E24AA",
+                customdata=pre_methods,
+                hovertemplate=(
+                    "%{x}<br>Previous model energy=%{y:.2f} PJ"
+                    "<br>Attribution=%{customdata}<extra></extra>"
+                ),
+            ))
+
         fig.add_trace(go.Bar(
             name="ESTO target",
             x=fuels,
@@ -2093,7 +2111,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
         figs.append((
             "Post-reconciliation vs ESTO target",
             fig,
-            "Compares the post-reconciliation model result with the ESTO target after PHEV liquid subtraction. The earlier allocated-fuel bar is intentionally not shown here because it is the target passed into the scalar step, not raw bottom-up pre-reconciliation demand. Post-reconciliation bars are colour-coded by outcome.",
+            "Compares bottom-up model energy before reconciliation, the ESTO target after PHEV liquid subtraction, and the post-reconciliation model result. The previous-model bar attributes each vehicle/drive branch's initial energy to fuels once, using ESTO fuel/blend shares for ambiguous multi-fuel branches so biofuels are not counted as full duplicate demand. Post-reconciliation bars are colour-coded by outcome.",
         ))
 
     t9_for_scalars = t9.copy()
@@ -3547,6 +3565,23 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         statuses = g["reconciliation_status"].fillna("unknown").astype(str).tolist()
         post_vals = g["post_reconciliation_model_pj"].tolist()
         fig = go.Figure()
+        if "pre_reconciliation_model_pj" in g.columns:
+            pre_methods = (
+                g["pre_reconciliation_attribution_method"].fillna("unknown").astype(str).tolist()
+                if "pre_reconciliation_attribution_method" in g.columns
+                else ["unknown"] * len(g)
+            )
+            fig.add_trace(go.Bar(
+                name="Previous model energy (pre-reconciliation)",
+                x=fuels,
+                y=g["pre_reconciliation_model_pj"].tolist(),
+                marker_color="#8E24AA",
+                customdata=pre_methods,
+                hovertemplate=(
+                    "%{x}<br>Previous model energy=%{y:.2f} PJ"
+                    "<br>Attribution=%{customdata}<extra></extra>"
+                ),
+            ))
         fig.add_trace(go.Bar(
             name="ESTO target",
             x=fuels,
