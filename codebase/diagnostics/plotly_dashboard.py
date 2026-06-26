@@ -2161,7 +2161,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             "Distribution of branch-level scalar changes across T9 rows. Zero means unchanged for that input value. Realised scalar effect is stock scalar x mileage scalar / efficiency scalar. Mileage is km/vehicle/year; efficiency is km/GJ, so a higher efficiency scalar reduces energy use while a higher mileage scalar increases it.",
         ))
 
-    # Scalar dashboard: heatmap-style table of the highest-changing branch groups.
+    # Scalar dashboard: ordered table of branch groups.
     scalar_specs = [
         ("energy_correction_factor", "Energy correction factor (ECF)"),
         ("stock_scalar", "Stock"),
@@ -2218,47 +2218,39 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
                 ranking = (agg[scalar_cols_for_chart].sub(1.0).abs().sum(axis=1)).sort_values(ascending=False)
                 ranking_note = "scalar movement"
             agg = agg.loc[ranking.index.tolist()]
-            subplot_specs = [(col, label) for col, label in scalar_specs if col in scalar_cols_for_chart]
-            scalar_values = agg[[col for col, _label in subplot_specs]]
-            heat_values = scalar_values.copy()
-            for col, _label in subplot_specs:
-                heat_values[col] = (heat_values[col] - 1.0) * 100.0
-            text_values = scalar_values.map(lambda value: "" if pd.isna(value) else f"{value:.3g}")
-            custom_data = np.dstack([
-                scalar_values.to_numpy(dtype=float),
-                heat_values.to_numpy(dtype=float),
-            ])
+            table_specs = [(col, label) for col, label in scalar_specs if col in scalar_cols_for_chart]
+            values = agg[[col for col, _label in table_specs]]
+            formatted_values = values.map(lambda value: "" if pd.isna(value) else f"{value:.4g}")
+            table_values = [agg.index.tolist()]
+            table_values.extend(formatted_values[col].tolist() for col, _label in table_specs)
 
-            fig = go.Figure(go.Heatmap(
-                x=[label for _col, label in subplot_specs],
-                y=agg.index.tolist(),
-                z=heat_values.to_numpy(dtype=float),
-                text=text_values.to_numpy(),
-                texttemplate="%{text}",
-                colorscale="RdBu",
-                reversescale=True,
-                zmid=0.0,
-                colorbar={"title": "Change from 1 (%)"},
-                customdata=custom_data,
-                hovertemplate=(
-                    "%{y}<br>%{x}"
-                    "<br>Display value=%{customdata[0]:.4g}"
-                    "<br>Colour value=%{customdata[1]:.1f}<extra></extra>"
+            fig = go.Figure(go.Table(
+                columnwidth=[3.8] + [1.0] * len(table_specs),
+                header=dict(
+                    values=["Branch group", *[label for _col, label in table_specs]],
+                    fill_color="#ECEFF1",
+                    align=["left", *["right"] * len(table_specs)],
+                    font=dict(size=12, color="#263238"),
+                ),
+                cells=dict(
+                    values=table_values,
+                    fill_color="white",
+                    align=["left", *["right"] * len(table_specs)],
+                    height=24,
+                    font=dict(size=11, color="#263238"),
                 ),
             ))
             fig.update_layout(
-                **_layout("Module 6 - ECF and adjustment scalars by branch group (all rows)"),
+                **_layout("Module 6 - ECF and adjustment scalars by branch group (all rows table)"),
                 height=max(760, 320 + (24 * branch_group_count)),
                 margin=dict(l=260, r=48, t=72, b=80),
-                xaxis_title="Metric",
-                yaxis_title="Branch group (transport|vehicle|drive|size|fuel)",
             )
             figs.append((
                 "Adjustment scalars by branch",
                 fig,
                 True,
                 "Energy correction factor (ECF) is allocated fuel divided by initial branch energy; it shows the reconciliation pressure before scalar bounds and zero-energy handling. "
-                f"This table shows all {branch_group_count} branch groups ranked by {ranking_note}. Values printed in the heatmap are scalars; colours show percent change from 1. "
+                f"This table shows all {branch_group_count} branch groups ranked by {ranking_note}. Values are scalars. "
                 "A separate PJ energy-movement column is intentionally not shown here because T9 initial branch energy is duplicated across eligible fuel alternatives for multi-fuel branches, so final minus initial is not a clean branch-level reconciliation-change measure. "
                 "Mileage below 1 lowers energy. Efficiency above 1 also lowers energy because efficiency is km/GJ. The realised scalar effect combines stock, mileage, and efficiency, so mileage decreases and efficiency increases compound rather than cancel out. "
                 "Rows are grouped before plotting, so this is not every individual T9 row.",

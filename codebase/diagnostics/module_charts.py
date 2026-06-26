@@ -507,23 +507,41 @@ def write_module6_charts(module6_outputs: dict[str, pd.DataFrame], diagnostics_d
                 ("realised_energy_scalar", "Realised"),
             ]
             values = agg[[col for col, _label in display_cols]].copy()
-            colours = values.copy()
-            for col, _label in display_cols:
-                colours[col] = (colours[col] - 1.0).clip(-1.0, 1.0)
+            table_rows = [
+                [str(idx)[:58], *["" if pd.isna(value) else f"{value:.4g}" for value in values.loc[idx].tolist()]]
+                for idx in agg.index
+            ]
 
-            fig, ax = plt.subplots(figsize=(12, max(7, 0.28 * len(agg) + 2)))
-            im = ax.imshow(colours.to_numpy(dtype=float), cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
-            ax.set_xticks(np.arange(len(display_cols)), [label for _col, label in display_cols])
-            ax.set_yticks(np.arange(len(agg)), [str(idx)[:52] for idx in agg.index], fontsize=7)
+            fig, ax = plt.subplots(figsize=(13, max(7, 0.28 * len(agg) + 2)))
+            ax.axis("off")
             ax.set_title("Module 6: ECF and adjustment scalars by branch group")
-            for row_i in range(values.shape[0]):
-                for col_i in range(values.shape[1]):
-                    value = values.iloc[row_i, col_i]
-                    label = "" if pd.isna(value) else f"{value:.3g}"
-                    ax.text(col_i, row_i, label, ha="center", va="center", fontsize=7, color="black")
-            ax.set_xlabel("ECF is allocated fuel / initial branch energy; realised = stock x mileage / efficiency")
-            fig.colorbar(im, ax=ax, shrink=0.75, label="Scalar change from 1")
-            saved.append(_save(fig, out / "module6_branch_scalar_ecf_heatmap.png"))
+            table = ax.table(
+                cellText=table_rows,
+                colLabels=["Branch group", *[label for _col, label in display_cols]],
+                cellLoc="right",
+                colLoc="right",
+                loc="center",
+                colWidths=[0.48, 0.10, 0.10, 0.10, 0.10, 0.12],
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(6.5)
+            table.scale(1, 1.15)
+            for (row, col), cell in table.get_celld().items():
+                if row == 0:
+                    cell.set_facecolor("#ECEFF1")
+                    cell.set_text_props(weight="bold")
+                if col == 0:
+                    cell.set_text_props(ha="left")
+            ax.text(
+                0.0,
+                -0.03,
+                "ECF is allocated fuel / initial branch energy; realised = stock x mileage / efficiency.",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=8,
+            )
+            saved.append(_save(fig, out / "module6_branch_scalar_ecf_table.png"))
 
     if t9 is not None and not t9.empty and {"fuel", "initial_branch_energy_pj", "allocated_branch_fuel_pj"}.issubset(t9.columns):
         df = t9.copy()
