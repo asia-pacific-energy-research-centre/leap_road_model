@@ -4412,6 +4412,16 @@ def _filter_outputs_scenario(workflow_outputs: dict[str, Any], scenario: str) ->
     return filtered
 
 
+def _representative_scenario_label(scenarios: list[str]) -> str | None:
+    """Return the scenario to use for scenario-invariant dashboard pages."""
+    if not scenarios:
+        return None
+    for scenario in scenarios:
+        if str(scenario).casefold() == "target":
+            return scenario
+    return scenarios[0]
+
+
 # ---------------------------------------------------------------------------
 # Public entrypoint
 # ---------------------------------------------------------------------------
@@ -4569,12 +4579,12 @@ def write_module_pages(
     m6_sub = {k: workflow_outputs.get(k) for k in ("T4", "T8", "T9", "T10", "T12", "T12_phev")}
     m6_scenarios = _scenario_labels_from_frames(*m6_sub.values())
     if m6_scenarios:
-        m6_figures: list[tuple[str, Any]] = []
-        for scenario in m6_scenarios:
-            m6_sub_scenario = {k: _filter_frame_scenario(v, scenario) for k, v in m6_sub.items()}
-            m6_figures.extend(_with_scenario(module6_figures(m6_sub_scenario), scenario))
-    else:
-        m6_figures = module6_figures(m6_sub)
+        # Module 6 reconciliation is a base-year diagnostic. The workflow
+        # replicates these rows by scenario, so rendering each scenario creates
+        # duplicate charts and an unnecessary page-level scenario selector.
+        scenario = _representative_scenario_label(m6_scenarios)
+        m6_sub = {k: _filter_frame_scenario(v, scenario) for k, v in m6_sub.items()}
+    m6_figures = module6_figures(m6_sub)
     _write("module6.html", m6_figures, extra=recon_alert)
 
     m7_sub = {k: workflow_outputs.get(k) for k in ("T13", "T13_fuel")}
