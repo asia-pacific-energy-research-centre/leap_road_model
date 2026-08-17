@@ -22,6 +22,7 @@ from openpyxl.workbook.defined_name import DefinedName
 # Stable output settings
 MANIFEST_FILENAME = "lifecycle_profile_manifest.csv"
 XLSX_FILENAME_TEMPLATE = "{economy}_lifecycle_profiles.xlsx"
+CONSTANT_PROFILE_NAME = "Constant"
 
 
 #%%
@@ -307,6 +308,48 @@ def export_lifecycle_profiles_from_t6v(
 
     if not manifest_rows:
         raise ValueError("No lifecycle profiles were exported; T6v had no transport_type rows.")
+
+    # LEAP requires a degradation profile for Mileage and Fuel Economy even
+    # when neither variable should change with vehicle age. Include a ready-to-
+    # use Constant profile so researchers do not need to create its Excel data
+    # or named range manually.
+    maximum_age = int(pd.to_numeric(t6v["age"], errors="coerce").max())
+    constant_profile = pd.Series(
+        100.0,
+        index=range(maximum_age + 1),
+        dtype=float,
+    )
+    constant_sheet_name = _normalise_excel_profile_name(CONSTANT_PROFILE_NAME)
+    constant_diagnostics = validate_lifecycle_profile(
+        constant_profile,
+        profile_type="degradation",
+        profile_name=CONSTANT_PROFILE_NAME,
+    )
+    used_profile_names.add(constant_sheet_name)
+    sheet_data.append(
+        (
+            constant_sheet_name,
+            _profile_rows(
+                area_name=area,
+                profile_name=CONSTANT_PROFILE_NAME,
+                profile=constant_profile,
+            ),
+            len(constant_profile),
+        )
+    )
+    manifest_rows.append(
+        {
+            "economy": economy,
+            "transport_type": "all",
+            "profile_type": "degradation",
+            "profile_name": CONSTANT_PROFILE_NAME,
+            "area_name": area,
+            "sheet_name": constant_sheet_name,
+            "named_range": constant_sheet_name,
+            "named_range_cells": f"B5:B{4 + len(constant_profile)}",
+            **constant_diagnostics,
+        }
+    )
 
     manifest = pd.DataFrame(manifest_rows)
     manifest_path = out_dir / MANIFEST_FILENAME
