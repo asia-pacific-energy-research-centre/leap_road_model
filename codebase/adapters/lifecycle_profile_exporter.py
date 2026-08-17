@@ -115,12 +115,21 @@ def _annual_survival_to_cumulative_percent(annual_survival: pd.Series) -> pd.Ser
 
 
 def _vintage_to_percent(vintage_share: pd.Series) -> pd.Series:
-    """Convert Module 4 vintage shares to percent and renormalise to 100."""
+    """Convert Module 4 vintage shares to LEAP stock-vintage percentages.
+
+    LEAP requires stock-vintage profiles to have zero vehicles at age zero,
+    because base-year stock excludes vehicles sold during the base year. Keep
+    the model distribution intact by shifting every model age forward one year
+    and prepending the required zero rather than discarding the model's age-zero
+    cohort.
+    """
     vintage = pd.Series(vintage_share, dtype=float).sort_index().clip(lower=0.0)
     total = float(vintage.sum())
     if total <= 0.0:
         raise ValueError("vintage_share must sum to a positive value.")
-    return (vintage / total) * 100.0
+    normalised = (vintage / total) * 100.0
+    normalised.index = normalised.index.astype(int) + 1
+    return pd.concat([pd.Series({0: 0.0}, dtype=float), normalised])
 
 
 def validate_lifecycle_profile(profile: pd.Series, *, profile_type: str, profile_name: str) -> dict[str, float | int | bool]:
@@ -144,6 +153,8 @@ def validate_lifecycle_profile(profile: pd.Series, *, profile_type: str, profile
         if (series.diff().dropna() > 1e-6).any():
             raise ValueError(f"{profile_name} survival profile must be non-increasing.")
     elif profile_type_norm == "vintage":
+        if int(series.index[0]) != 0 or abs(float(series.iloc[0])) > 1e-6:
+            raise ValueError(f"{profile_name} vintage profile must start at age 0 with value 0.")
         if abs(total - 100.0) > 1e-6:
             raise ValueError(f"{profile_name} vintage profile must sum to 100; got {total}.")
 
@@ -187,6 +198,13 @@ def _add_profile_named_range(
     return cell_reference
 
 
+def _format_profile_sheet(writer: pd.ExcelWriter, *, sheet_name: str) -> None:
+    """Keep metadata and profile values legible in Excel's default view."""
+    worksheet = writer.sheets[sheet_name]
+    worksheet.column_dimensions["A"].width = 12
+    worksheet.column_dimensions["B"].width = 38
+
+
 def write_lifecycle_profile_excel(
     output_path: str | Path,
     *,
@@ -207,6 +225,7 @@ def write_lifecycle_profile_excel(
             sheet_name=excel_profile_name,
             profile_row_count=len(profile),
         )
+        _format_profile_sheet(writer, sheet_name=excel_profile_name)
     return path
 
 
@@ -302,6 +321,7 @@ def export_lifecycle_profiles_from_t6v(
                 sheet_name=sheet_name,
                 profile_row_count=profile_row_count,
             )
+            _format_profile_sheet(writer, sheet_name=sheet_name)
 
     return {
         "manifest_path": manifest_path,
