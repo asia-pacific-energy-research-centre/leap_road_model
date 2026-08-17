@@ -10,10 +10,13 @@ Area/Profile metadata rows, a blank separator, then Year/Value profile rows.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from openpyxl.utils.cell import quote_sheetname
+from openpyxl.workbook.defined_name import DefinedName
 
 
 # Stable output settings
@@ -29,6 +32,17 @@ def _normalise_vehicle_token(vehicle_type: str) -> str:
     """Create a filesystem-safe vehicle token while preserving readable names."""
     token = str(vehicle_type).strip().replace(" ", "_").replace("/", "_")
     return "".join(ch for ch in token if ch.isalnum() or ch in {"_", "-"})
+
+
+def _normalise_excel_profile_name(value: str) -> str:
+    """Create one Excel-safe identifier for both a sheet and its named range."""
+    identifier = re.sub(r"[^A-Za-z0-9_]+", "_", str(value).strip())
+    identifier = re.sub(r"_+", "_", identifier).strip("_")
+    if not identifier:
+        raise ValueError("Lifecycle profile name must contain letters or numbers.")
+    if identifier[0].isdigit():
+        identifier = f"Profile_{identifier}"
+    return identifier.capitalize()[:31]
 
 
 def _validate_t6v_columns(t6v: pd.DataFrame) -> None:
@@ -158,6 +172,21 @@ def _profile_rows(area_name: str, profile_name: str, profile: pd.Series) -> pd.D
     return pd.DataFrame(rows)
 
 
+def _add_profile_named_range(
+    writer: pd.ExcelWriter,
+    *,
+    sheet_name: str,
+    profile_row_count: int,
+) -> str:
+    """Add a workbook-level name for the value cells written from row 5."""
+    if profile_row_count <= 0:
+        raise ValueError("Lifecycle profile named ranges require at least one value row.")
+    last_row = 4 + profile_row_count
+    cell_reference = f"{quote_sheetname(sheet_name)}!$B$5:$B${last_row}"
+    writer.book.defined_names.add(DefinedName(sheet_name, attr_text=cell_reference))
+    return cell_reference
+
+
 def write_lifecycle_profile_excel(
     output_path: str | Path,
     *,
@@ -169,9 +198,15 @@ def write_lifecycle_profile_excel(
     """Write one LEAP-compatible lifecycle profile workbook."""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    excel_profile_name = _normalise_excel_profile_name(sheet_name)
     out_df = _profile_rows(area_name=area_name, profile_name=profile_name, profile=profile)
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
-        out_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+        out_df.to_excel(writer, sheet_name=excel_profile_name, index=False, header=False)
+        _add_profile_named_range(
+            writer,
+            sheet_name=excel_profile_name,
+            profile_row_count=len(profile),
+        )
     return path
 
 
@@ -201,7 +236,8 @@ def export_lifecycle_profiles_from_t6v(
     area = area_name or f"{economy} transport"
 
     manifest_rows: list[dict[str, object]] = []
-    sheet_data: list[tuple[str, pd.DataFrame]] = []
+    sheet_data: list[tuple[str, pd.DataFrame, int]] = []
+    used_profile_names: set[str] = set()
 
     profile_specs = [
         ("vehicle_survival", "Vehicle Survival"),
@@ -228,9 +264,14 @@ def export_lifecycle_profiles_from_t6v(
                 profile_type=profile_type,
                 profile_name=profile_name,
             )
-            sheet_name = f"{transport_type} {label}"[:31]
+            sheet_name = _normalise_excel_profile_name(f"{transport_type}_{label}")
+            if sheet_name in used_profile_names:
+                raise ValueError(
+                    f"Lifecycle profile names are not unique after Excel normalisation: {sheet_name}."
+                )
+            used_profile_names.add(sheet_name)
             out_df = _profile_rows(area_name=area, profile_name=profile_name, profile=profile)
-            sheet_data.append((sheet_name, out_df))
+            sheet_data.append((sheet_name, out_df, len(profile)))
             manifest_rows.append(
                 {
                     "economy": economy,
@@ -239,6 +280,8 @@ def export_lifecycle_profiles_from_t6v(
                     "profile_name": profile_name,
                     "area_name": area,
                     "sheet_name": sheet_name,
+                    "named_range": sheet_name,
+                    "named_range_cells": f"B5:B{4 + len(profile)}",
                     **diagnostics,
                 }
             )
@@ -252,8 +295,13 @@ def export_lifecycle_profiles_from_t6v(
 
     xlsx_path = out_dir / XLSX_FILENAME_TEMPLATE.format(economy=economy)
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-        for sheet_name, out_df in sheet_data:
+        for sheet_name, out_df, profile_row_count in sheet_data:
             out_df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+            _add_profile_named_range(
+                writer,
+                sheet_name=sheet_name,
+                profile_row_count=profile_row_count,
+            )
 
     return {
         "manifest_path": manifest_path,

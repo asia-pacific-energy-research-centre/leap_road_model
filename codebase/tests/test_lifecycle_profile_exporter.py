@@ -1,7 +1,11 @@
 import pandas as pd
 import pytest
+from openpyxl import load_workbook
 
-from adapters.lifecycle_profile_exporter import export_lifecycle_profiles_from_t6v
+from adapters.lifecycle_profile_exporter import (
+    _normalise_excel_profile_name,
+    export_lifecycle_profiles_from_t6v,
+)
 
 
 def _read_profile_sheet(xlsx_path, sheet_name):
@@ -44,13 +48,13 @@ def test_export_lifecycle_profiles_structure_against_small_fixture(tmp_path):
 
     xlsx_path = result["xlsx_path"]
 
-    survival = _read_profile_sheet(xlsx_path, "passenger Vehicle Survival")
+    survival = _read_profile_sheet(xlsx_path, "Passenger_vehicle_survival")
     assert survival["area"] == "Test transport"
     assert survival["profile"] == "99_TST passenger Vehicle Survival"
     assert survival["years"] == [0, 1, 2]
     assert survival["values"] == pytest.approx([100.0, 90.0, 72.0])
 
-    vintage = _read_profile_sheet(xlsx_path, "passenger Vintage Profile")
+    vintage = _read_profile_sheet(xlsx_path, "Passenger_vintage_profile")
     assert vintage["profile"] == "99_TST passenger Vintage Profile"
     assert vintage["years"] == [0, 1, 2]
     assert sum(vintage["values"]) == pytest.approx(100.0)
@@ -58,11 +62,25 @@ def test_export_lifecycle_profiles_structure_against_small_fixture(tmp_path):
 
     xl = pd.ExcelFile(xlsx_path)
     assert set(xl.sheet_names) == {
-        "passenger Vehicle Survival",
-        "passenger Vintage Profile",
-        "freight Vehicle Survival",
-        "freight Vintage Profile",
+        "Passenger_vehicle_survival",
+        "Passenger_vintage_profile",
+        "Freight_vehicle_survival",
+        "Freight_vintage_profile",
     }
+
+    workbook = load_workbook(xlsx_path, read_only=False, data_only=False)
+    expected_named_ranges = {
+        "Passenger_vehicle_survival": "'Passenger_vehicle_survival'!$B$5:$B$7",
+        "Passenger_vintage_profile": "'Passenger_vintage_profile'!$B$5:$B$7",
+        "Freight_vehicle_survival": "'Freight_vehicle_survival'!$B$5:$B$6",
+        "Freight_vintage_profile": "'Freight_vintage_profile'!$B$5:$B$6",
+    }
+    assert set(workbook.defined_names) == set(expected_named_ranges)
+    for range_name, cell_reference in expected_named_ranges.items():
+        assert workbook.defined_names[range_name].attr_text == cell_reference
+
+    assert set(manifest["named_range"]) == set(expected_named_ranges)
+    assert set(manifest["named_range_cells"]) == {"B5:B6", "B5:B7"}
 
 
 def test_export_lifecycle_profiles_rejects_non_contiguous_ages(tmp_path):
@@ -75,3 +93,10 @@ def test_export_lifecycle_profiles_rejects_non_contiguous_ages(tmp_path):
 
     with pytest.raises(ValueError, match="contiguous"):
         export_lifecycle_profiles_from_t6v(t6v, tmp_path, economy="99_TST")
+
+
+def test_excel_profile_name_uses_sentence_case_underscores_and_no_special_characters():
+    assert (
+        _normalise_excel_profile_name("freight / vehicle survival!")
+        == "Freight_vehicle_survival"
+    )

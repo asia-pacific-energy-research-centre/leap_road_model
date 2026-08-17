@@ -667,7 +667,7 @@ The workflow writes LEAP-compatible lifecycle profile workbooks from the final a
 results/<economy>/lifecycle_profiles/
 ```
 
-Survival profiles are exported as cumulative percent curves reconstructed from Module 4 annual survival probabilities. Vintage profiles are exported as percent age distributions that sum to 100. The output directory includes one workbook per vehicle/profile type, a `lifecycle_profile_manifest.csv`, and a downloadable `<economy>_lifecycle_profiles.zip`.
+Survival profiles are exported as cumulative percent curves reconstructed from Module 4 annual survival probabilities. Vintage profiles are exported as percent age distributions that sum to 100. Each worksheet uses a clean Excel identifier such as `Freight_vehicle_survival`, and the workbook defines a range with the same name over that sheet's value cells (`B5` through the final profile row). In LEAP, use the worksheet name for both the new lifecycle profile name and its Excel Range. The output directory includes the combined workbook, a `lifecycle_profile_manifest.csv`, and a downloadable `<economy>_lifecycle_profiles.zip`.
 
 ## Module 5 - Vehicle Sales Share Preparation
 
