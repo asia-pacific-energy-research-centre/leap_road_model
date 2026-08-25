@@ -2028,6 +2028,7 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
 
     spread_fig = _spread_pre_vs_post_chart(t4, t9)
     if spread_fig is not None:
+        filter_options = (spread_fig.layout.meta or {}).get("spread_filter_options", {})
         figs.append((
             "Spread of stock / mileage / efficiency — pre vs post reconciliation",
             spread_fig,
@@ -2035,7 +2036,9 @@ def module6_figures(module6_outputs: dict[str, Any]) -> list[tuple[str, Any]]:
             "Each line connects one branch's pre-reconciliation value (blue, from base-year input data T4) to its "
             "post-reconciliation value (red, from Module 6's adjusted output T9), so the shift caused by "
             "reconciliation is visible per branch. Categories are sorted by median value (highest to lowest). Use "
-            "the dropdown to switch between vehicle type, drive type, and transport type groupings.",
+            "the grouping dropdown to switch between vehicle type, drive type, and transport type. Use the additional "
+            "filters to show only selected drive, vehicle, or fuel categories.",
+            _spread_filter_controls(filter_options),
         ))
 
     if not t12.empty and {
@@ -2846,6 +2849,25 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
     initial_axis_updates: dict[str, Any] = {}
     n_traces = 0
 
+    filter_columns = [
+        ("drive_type", "Drive type"),
+        ("vehicle_type", "Vehicle type"),
+        ("fuel", "Fuel type"),
+    ]
+    filter_options = {
+        column: sorted(
+            {
+                str(value).strip()
+                for frame in (pre, post)
+                if column in frame.columns
+                for value in frame[column].dropna().tolist()
+                if str(value).strip()
+            },
+            key=str.casefold,
+        )
+        for column, _label in filter_columns
+    }
+
     for grp_idx, (grp_label, grp_col) in enumerate(grouping_defs):
         is_first = grp_idx == 0
         indices: list[int] = []
@@ -2875,9 +2897,18 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
             branch["_x"] = branch[grp_col].map(cat_pos) + span
 
             hover = (
-                branch[key_cols].fillna("").astype(str).agg(" / ".join, axis=1)
+                branch[key_cols].fillna("").astype(str).agg(" / ".join, axis=1).tolist()
                 if key_cols else [""] * len(branch)
             )
+            customdata = [
+                [
+                    hover_text,
+                    str(row.get("drive_type", "") or "").strip(),
+                    str(row.get("vehicle_type", "") or "").strip(),
+                    str(row.get("fuel", "") or "").strip(),
+                ]
+                for hover_text, (_, row) in zip(hover, branch.iterrows())
+            ]
 
             # Offset pre/post dots slightly either side of each branch's x slot
             # so both are visible without a connecting line.
@@ -2890,8 +2921,11 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
                     legendgroup="pre",
                     showlegend=(j == 1),
                     marker=dict(color=_PRE_RECONCILIATION_COLOUR, size=6),
-                    customdata=hover,
-                    hovertemplate="%{customdata}<br>Pre: %{y:,.3g}<extra></extra>",
+                    customdata=customdata,
+                    selectedpoints=list(range(len(branch))),
+                    selected=dict(marker=dict(opacity=1.0)),
+                    unselected=dict(marker=dict(opacity=0.0)),
+                    hovertemplate="%{customdata[0]}<br>Pre: %{y:,.3g}<extra></extra>",
                     visible=is_first,
                 ),
                 row=1,
@@ -2909,8 +2943,11 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
                     legendgroup="post",
                     showlegend=(j == 1),
                     marker=dict(color=_POST_RECONCILIATION_COLOUR, size=6),
-                    customdata=hover,
-                    hovertemplate="%{customdata}<br>Post: %{y:,.3g}<extra></extra>",
+                    customdata=customdata,
+                    selectedpoints=list(range(len(branch))),
+                    selected=dict(marker=dict(opacity=1.0)),
+                    unselected=dict(marker=dict(opacity=0.0)),
+                    hovertemplate="%{customdata[0]}<br>Post: %{y:,.3g}<extra></extra>",
                     visible=is_first,
                 ),
                 row=1,
@@ -2956,6 +2993,7 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
         **_layout("Spread of stock, mileage and efficiency — pre vs post reconciliation"),
         legend=dict(orientation="h", x=0.0, y=1.18),
         margin=dict(t=130),
+        meta={"spread_filter_options": filter_options},
         updatemenus=[dict(
             type="dropdown",
             direction="down",
@@ -2972,6 +3010,63 @@ def _spread_pre_vs_post_chart(t4: pd.DataFrame, t9: pd.DataFrame) -> "go.Figure 
         **initial_axis_updates,
     )
     return fig
+
+
+def _spread_filter_controls(filter_options: dict[str, list[str]]) -> str:
+    """Return independent HTML filters for the pre/post spread chart."""
+    controls: list[str] = []
+    for column, label in [
+        ("drive_type", "Drive type"),
+        ("vehicle_type", "Vehicle type"),
+        ("fuel", "Fuel type"),
+    ]:
+        options = ['<option value="">All</option>']
+        options.extend(
+            f'<option value="{escape(value)}">{escape(value)}</option>'
+            for value in filter_options.get(column, [])
+        )
+        disabled = " disabled" if not filter_options.get(column) else ""
+        controls.append(
+            f'<label style="display:flex;align-items:center;gap:4px">{label}'
+            f'<select data-spread-filter="{column}"{disabled}>'
+            f'{"".join(options)}</select></label>'
+        )
+
+    return (
+        '<div class="spread-filter-controls" '
+        'style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;'
+        'margin:8px 0 4px 0;font-size:.82rem;color:#1a237e">'
+        '<strong>Filter branches:</strong>'
+        f'{"".join(controls)}'
+        '<button type="button" data-spread-filter-reset '
+        'style="border:1px solid #ccc;border-radius:4px;background:white;padding:3px 8px">Reset</button>'
+        '</div>'
+        '<script>(function(){'
+        'const script=document.currentScript;'
+        'const card=script.closest(".chart-card");'
+        'const graph=card && card.querySelector(".plotly-graph-div");'
+        'if(!graph){return;}'
+        'const selects=Array.from(card.querySelectorAll("[data-spread-filter]"));'
+        'function apply(){'
+        'const wanted={};'
+        'selects.forEach(function(select){wanted[select.dataset.spreadFilter]=select.value;});'
+        'const selected=(graph.data||[]).map(function(trace){'
+        'const points=trace.customdata||[];'
+        'const indices=[];'
+        'points.forEach(function(point,index){'
+        'if((!wanted.drive_type||String(point[1]||"")===wanted.drive_type)&&'
+        '(!wanted.vehicle_type||String(point[2]||"")===wanted.vehicle_type)&&'
+        '(!wanted.fuel||String(point[3]||"")===wanted.fuel)){indices.push(index);}'
+        '});'
+        'return indices;'
+        '});'
+        'Plotly.restyle(graph,{selectedpoints:selected});'
+        '}'
+        'selects.forEach(function(select){select.addEventListener("change",apply);});'
+        'const reset=card.querySelector("[data-spread-filter-reset]");'
+        'if(reset){reset.addEventListener("click",function(){selects.forEach(function(select){select.value="";});apply();});}'
+        '})();</script>'
+    )
 
 
 def _spread_dot_chart(df: pd.DataFrame, title: str) -> "go.Figure | None":

@@ -1,7 +1,14 @@
 import pandas as pd
 import pytest
 
-from diagnostics.plotly_dashboard import _can_plot, module3_figures, module5_figures, module6_figures, write_module_pages
+from diagnostics.plotly_dashboard import (
+    _can_plot,
+    _spread_pre_vs_post_chart,
+    module3_figures,
+    module5_figures,
+    module6_figures,
+    write_module_pages,
+)
 from road_workflow import run_for_economy
 
 
@@ -145,6 +152,56 @@ def test_module6_final_fuel_share_chart_uses_t9_final_energy():
 
     shares = {trace.name: list(trace.y)[0] for trace in fig.data}
     assert shares == pytest.approx({"Electricity": 75.0, "Motor gasoline": 25.0})
+
+
+@pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
+def test_spread_pre_post_chart_carries_filter_categories_on_both_metrics():
+    keys = {
+        "economy": "01_AUS",
+        "scenario": "Target",
+        "transport_type": "passenger",
+        "vehicle_type": "LPVs",
+        "drive_type": "BEV",
+        "fuel": "Electricity",
+        "size": "all",
+    }
+    t4 = pd.DataFrame([{**keys, "stock": 10.0, "mileage_km_per_year": 20.0, "efficiency_km_per_gj": 30.0}])
+    t9 = pd.DataFrame([{**keys, "adjusted_stock": 11.0, "adjusted_mileage_km_per_year": 21.0, "adjusted_efficiency_km_per_gj": 31.0}])
+
+    fig = _spread_pre_vs_post_chart(t4, t9)
+
+    assert fig is not None
+    assert fig.layout.meta["spread_filter_options"] == {
+        "drive_type": ["BEV"],
+        "vehicle_type": ["LPVs"],
+        "fuel": ["Electricity"],
+    }
+    assert all(len(trace.customdata) == 1 for trace in fig.data)
+    assert all(trace.customdata[0][1:] == ["BEV", "LPVs", "Electricity"] for trace in fig.data)
+
+
+@pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
+def test_spread_chart_renders_independent_category_filters(tmp_path):
+    keys = {
+        "economy": "01_AUS",
+        "scenario": "Target",
+        "transport_type": "passenger",
+        "vehicle_type": "LPVs",
+        "drive_type": "BEV",
+        "fuel": "Electricity",
+        "size": "all",
+    }
+    t4 = pd.DataFrame([{**keys, "stock": 10.0, "mileage_km_per_year": 20.0, "efficiency_km_per_gj": 30.0}])
+    t9 = pd.DataFrame([{**keys, "adjusted_stock": 11.0, "adjusted_mileage_km_per_year": 21.0, "adjusted_efficiency_km_per_gj": 31.0}])
+
+    written = write_module_pages({"T4": t4, "T9": t9}, tmp_path / "dashboard", economy="01_AUS")
+    module6_html = (tmp_path / "dashboard" / "module6.html").read_text(encoding="utf-8")
+
+    assert any(path.name == "module6.html" for path in written)
+    assert module6_html.count('data-spread-filter="drive_type"') == 1
+    assert module6_html.count('data-spread-filter="vehicle_type"') == 1
+    assert module6_html.count('data-spread-filter="fuel"') == 1
+    assert "Plotly.restyle(graph,{selectedpoints:selected})" in module6_html
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
