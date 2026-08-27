@@ -83,6 +83,13 @@ python codebase\road_workflow.py 20_USA --module6-match-tolerance 0.02
 
 ## Module 1 data-source contract
 
+Base-year defaults are economy-specific in `codebase/config/economies.yaml`
+(including Russia's existing 2021 exception). `--base-year` is an explicit,
+auditable run override. A runtime Module 1 package may include
+`road_module1_package_manifest.json`; if it records a base year that differs
+from the run, the workflow stops before modelling. Older packages without the
+manifest remain readable and are labelled `legacy_inferred`.
+
 Module 1 input values should not be hard-coded in `leap_road_model`. The authoritative data sources are maintained in `road_model_inputs_interface`, mainly under:
 
 ```text

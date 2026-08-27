@@ -5,7 +5,6 @@
 # packages.
 
 scenario: Target
-base_year: 2022
 final_year: 2060
 
 module1_defaults_dir: input_data/module1_defaults

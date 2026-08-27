@@ -110,6 +110,7 @@ from adapters.leap_import_writer import (
     load_reference_id_table,
     write_leap_import_workbook as write_strict_leap_import_workbook,
 )
+from adapters.base_year_contract import resolve_base_year, validate_package_base_year
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -615,7 +616,7 @@ class RoadWorkflowConfig:
     scenarios: list[str] = field(default_factory=lambda: ["Target"])
 
     # Time
-    base_year: int = 2022
+    base_year: int | None = None
     final_year: int = 2060
 
     # Paths (default to env vars, fallback to local dev paths)
@@ -663,6 +664,8 @@ class RoadWorkflowConfig:
     leap_import_export_values_in_raw_units: bool = False
 
     def projection_years(self) -> list[int]:
+        if self.base_year is None:
+            raise ValueError("RoadWorkflowConfig base_year must be resolved before projection years are requested")
         return list(range(self.base_year, self.final_year + 1))
 
 
@@ -927,6 +930,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 
     log_file = output_root / "workflow.log" if config.save_csv_outputs else None
     logger = StructuredLogger("road_workflow", log_file=log_file, print_to_console=False)
+    config.base_year, config_base_year_provenance = resolve_base_year(config.economy, config.base_year)
 
     if config.save_csv_outputs:
         output_root.mkdir(parents=True, exist_ok=True)
@@ -944,6 +948,9 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         config.module1_defaults_dir,
         economy=config.economy,
         version=config.module1_defaults_version,
+    )
+    package_base_year_provenance = validate_package_base_year(
+        m1.get("package_metadata"), config.base_year
     )
 
     lifecycle_factors = pd.DataFrame()
@@ -1574,6 +1581,8 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         "economy": config.economy,
         "scenarios": config.scenarios,
         "base_year": config.base_year,
+        "base_year_resolution": config_base_year_provenance,
+        "base_year_provenance": package_base_year_provenance,
         "final_year": config.final_year,
         "enable_visualisations": config.enable_visualisations,
         "diagnostics_root": str(diagnostics_dir) if diagnostics_dir else None,
@@ -2088,7 +2097,7 @@ def run_for_economy(
     scenario = str(scenario or _workflow_defaults_value(workflow_defaults, "scenario", "Target"))
     scenario_list = _normalise_scenario_list(scenarios) or [scenario]
     _validate_configured_projection_scenarios(scenario_list)
-    base_year = int(base_year if base_year is not None else _workflow_defaults_value(workflow_defaults, "base_year", 2022))
+    base_year, base_year_provenance = resolve_base_year(economy, base_year)
     final_year = int(final_year if final_year is not None else _workflow_defaults_value(workflow_defaults, "final_year", 2060))
     enable_visualisations = bool(
         enable_visualisations

@@ -40,6 +40,9 @@ def _run_and_assert(economy: str, tmp_path: Path) -> None:
     result = run_for_economy(
         economy,
         scenario="Reference",
+        # The committed smoke fixture is a legacy 2022 package for every economy,
+        # including Russia. Exercise the registry exception in contract tests instead.
+        base_year=2022,
         enable_visualisations=False,
         output_root=tmp_path / economy,
         module1_defaults_version=_DEFAULTS_VERSION,

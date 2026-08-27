@@ -18,6 +18,7 @@ Economy codes are converted to canonical '12_NZ' format on load.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_FILE = "road_module1_default_filled_inputs.csv"
 _DEFAULT_FILE_PREFIX = "road_module1_default_filled_inputs_"
 _VALUES_FILE_PREFIX = "road_module1_values_"
+_PACKAGE_MANIFEST_FILE = "road_module1_package_manifest.json"
 
 _PASSENGER_VEHICLE_TYPES = ("LPVs", "Motorcycles", "Buses")
 _FREIGHT_VEHICLE_TYPES = ("Trucks", "LCVs")
@@ -407,6 +409,32 @@ def _find_default_inputs_csv(econ_dir: Path, economy_code: str) -> Path | None:
     if globbed:
         return globbed[0]
     return None
+
+
+def load_module1_package_metadata(
+    defaults_dir: str | Path,
+    economy: str,
+    version: str | None = None,
+) -> dict[str, object]:
+    """Read an optional per-economy manifest; old packages have no metadata."""
+    root = Path(defaults_dir)
+    if version is None:
+        versions = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not versions:
+            return {}
+        version = versions[0].name
+    compact_economy = str(economy).replace("_", "")
+    for path in (
+        root / str(version) / str(economy) / _PACKAGE_MANIFEST_FILE,
+        root / str(version) / compact_economy / _PACKAGE_MANIFEST_FILE,
+    ):
+        if path.is_file():
+            with path.open(encoding="utf-8") as stream:
+                metadata = json.load(stream)
+            if not isinstance(metadata, dict):
+                raise ValueError(f"Module 1 package manifest must be a JSON object: {path}")
+            return metadata
+    return {}
 
 
 def _find_col(df: pd.DataFrame, canonical_name: str) -> str | None:
@@ -1365,9 +1393,11 @@ def load_module1_for_economy(
         )
 
     raw_leap_df = load_module1_leap_df(defaults_dir, economy, version)
+    package_metadata = load_module1_package_metadata(defaults_dir, economy, version)
 
     return {
         "raw_leap_df": raw_leap_df,
+        "package_metadata": package_metadata,
         "survival_curves": build_survival_curves(defaults_df, economy),
         "vintage_profiles": build_vintage_profiles(defaults_df, economy),
         "phev_utilisation_rate": get_phev_utilisation_rate(defaults_df, economy),
