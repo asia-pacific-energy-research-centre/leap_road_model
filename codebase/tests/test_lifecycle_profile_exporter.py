@@ -51,19 +51,19 @@ def test_export_lifecycle_profiles_structure_against_small_fixture(tmp_path):
     survival = _read_profile_sheet(xlsx_path, "Passenger_vehicle_survival")
     assert survival["area"] == "Test transport"
     assert survival["profile"] == "99_TST passenger Vehicle Survival"
-    assert survival["years"] == [0, 1, 2]
-    assert survival["values"] == pytest.approx([100.0, 90.0, 72.0])
+    assert survival["years"] == list(range(39))
+    assert survival["values"] == pytest.approx([100.0, 90.0, 72.0] + [0.0] * 36)
 
     vintage = _read_profile_sheet(xlsx_path, "Passenger_vintage_profile")
     assert vintage["profile"] == "99_TST passenger Vintage Profile"
-    assert vintage["years"] == [0, 1, 2, 3]
+    assert vintage["years"] == list(range(39))
     assert sum(vintage["values"]) == pytest.approx(100.0)
-    assert vintage["values"] == pytest.approx([0.0, 50.0, 30.0, 20.0])
+    assert vintage["values"] == pytest.approx([0.0, 50.0, 30.0, 20.0] + [0.0] * 35)
 
     constant = _read_profile_sheet(xlsx_path, "Constant")
     assert constant["profile"] == "Constant"
-    assert constant["years"] == [0, 1, 2]
-    assert constant["values"] == pytest.approx([100.0, 100.0, 100.0])
+    assert constant["years"] == list(range(39))
+    assert constant["values"] == pytest.approx([100.0] * 39)
 
     xl = pd.ExcelFile(xlsx_path)
     assert set(xl.sheet_names) == {
@@ -76,22 +76,22 @@ def test_export_lifecycle_profiles_structure_against_small_fixture(tmp_path):
 
     workbook = load_workbook(xlsx_path, read_only=False, data_only=False)
     expected_named_ranges = {
-        "Passenger_vehicle_survival": "'Passenger_vehicle_survival'!$B$5:$B$7",
-        "Passenger_vintage_profile": "'Passenger_vintage_profile'!$B$5:$B$8",
-        "Freight_vehicle_survival": "'Freight_vehicle_survival'!$B$5:$B$6",
-        "Freight_vintage_profile": "'Freight_vintage_profile'!$B$5:$B$7",
-        "Constant": "'Constant'!$B$5:$B$7",
+        "Passenger_vehicle_survival": "'Passenger_vehicle_survival'!$B$5:$B$43",
+        "Passenger_vintage_profile": "'Passenger_vintage_profile'!$B$5:$B$43",
+        "Freight_vehicle_survival": "'Freight_vehicle_survival'!$B$5:$B$43",
+        "Freight_vintage_profile": "'Freight_vintage_profile'!$B$5:$B$43",
+        "Constant": "'Constant'!$B$5:$B$43",
     }
     assert set(workbook.defined_names) == set(expected_named_ranges)
     for range_name, cell_reference in expected_named_ranges.items():
         assert workbook.defined_names[range_name].attr_text == cell_reference
 
     assert set(manifest["named_range"]) == set(expected_named_ranges)
-    assert set(manifest["named_range_cells"]) == {"B5:B6", "B5:B7", "B5:B8"}
+    assert set(manifest["named_range_cells"]) == {"B5:B43"}
 
     constant_manifest = manifest.loc[manifest["sheet_name"].eq("Constant")].iloc[0]
     assert constant_manifest["profile_type"] == "degradation"
-    assert constant_manifest["value_sum"] == pytest.approx(300.0)
+    assert constant_manifest["value_sum"] == pytest.approx(3900.0)
 
 
 def test_export_lifecycle_profiles_rejects_non_contiguous_ages(tmp_path):

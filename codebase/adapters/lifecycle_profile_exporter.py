@@ -23,6 +23,7 @@ from openpyxl.workbook.defined_name import DefinedName
 MANIFEST_FILENAME = "lifecycle_profile_manifest.csv"
 XLSX_FILENAME_TEMPLATE = "{economy}_lifecycle_profiles.xlsx"
 CONSTANT_PROFILE_NAME = "Constant"
+LIFECYCLE_PROFILE_MAX_AGE = 38
 
 
 #%%
@@ -131,6 +132,47 @@ def _vintage_to_percent(vintage_share: pd.Series) -> pd.Series:
     normalised = (vintage / total) * 100.0
     normalised.index = normalised.index.astype(int) + 1
     return pd.concat([pd.Series({0: 0.0}, dtype=float), normalised])
+
+
+def _pad_profile_to_lifecycle_max_age(
+    profile: pd.Series,
+    *,
+    profile_name: str,
+) -> pd.Series:
+    """Pad a profile with zeros so every lifecycle output reaches age 38."""
+    series = pd.Series(profile, dtype=float).sort_index()
+    if int(series.index.max()) > LIFECYCLE_PROFILE_MAX_AGE:
+        raise ValueError(
+            f"{profile_name} extends beyond the lifecycle profile maximum age "
+            f"of {LIFECYCLE_PROFILE_MAX_AGE}."
+        )
+    return series.reindex(range(LIFECYCLE_PROFILE_MAX_AGE + 1), fill_value=0.0)
+
+
+def _extend_survival_profile_to_lifecycle_max_age(
+    cumulative_survival: pd.Series,
+    annual_survival: pd.Series,
+    *,
+    profile_name: str,
+) -> pd.Series:
+    """Extend survival to age 38, using the final annual survival transition.
+
+    Module 4 stores the annual survival probability at each age. Its final
+    probability therefore defines survival into the next age. Ages beyond the
+    modelled curve have no survival probability and are explicitly zero.
+    """
+    series = pd.Series(cumulative_survival, dtype=float).sort_index().copy()
+    annual = pd.Series(annual_survival, dtype=float).sort_index()
+    if int(series.index.max()) > LIFECYCLE_PROFILE_MAX_AGE:
+        raise ValueError(
+            f"{profile_name} extends beyond the lifecycle profile maximum age "
+            f"of {LIFECYCLE_PROFILE_MAX_AGE}."
+        )
+
+    for age in range(int(series.index.max()) + 1, LIFECYCLE_PROFILE_MAX_AGE + 1):
+        series.loc[age] = float(series.loc[age - 1]) * float(annual.get(age - 1, 0.0))
+
+    return series.reindex(range(LIFECYCLE_PROFILE_MAX_AGE + 1), fill_value=0.0)
 
 
 def validate_lifecycle_profile(profile: pd.Series, *, profile_type: str, profile_name: str) -> dict[str, float | int | bool]:
@@ -273,8 +315,15 @@ def export_lifecycle_profiles_from_t6v(
         )
         by_age = rows.set_index("age")
 
-        survival_profile = _annual_survival_to_cumulative_percent(by_age["survival_probability"])
-        vintage_profile = _vintage_to_percent(by_age["vintage_share"])
+        survival_profile = _extend_survival_profile_to_lifecycle_max_age(
+            _annual_survival_to_cumulative_percent(by_age["survival_probability"]),
+            by_age["survival_probability"],
+            profile_name=f"{economy} {transport_type} Vehicle Survival",
+        )
+        vintage_profile = _pad_profile_to_lifecycle_max_age(
+            _vintage_to_percent(by_age["vintage_share"]),
+            profile_name=f"{economy} {transport_type} Vintage Profile",
+        )
 
         for profile_type, label in profile_specs:
             profile = survival_profile if profile_type == "vehicle_survival" else vintage_profile
@@ -313,10 +362,9 @@ def export_lifecycle_profiles_from_t6v(
     # when neither variable should change with vehicle age. Include a ready-to-
     # use Constant profile so researchers do not need to create its Excel data
     # or named range manually.
-    maximum_age = int(pd.to_numeric(t6v["age"], errors="coerce").max())
     constant_profile = pd.Series(
         100.0,
-        index=range(maximum_age + 1),
+        index=range(LIFECYCLE_PROFILE_MAX_AGE + 1),
         dtype=float,
     )
     constant_sheet_name = _normalise_excel_profile_name(CONSTANT_PROFILE_NAME)
