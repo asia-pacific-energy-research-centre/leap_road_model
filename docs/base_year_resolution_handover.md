@@ -1,0 +1,156 @@
+# Base-year resolution handover
+
+## Scope and policy confirmed by the user
+
+Implement a reversible base-year system across `leap_road_model` and its sibling
+`road_model_inputs_interface`.
+
+- The economy registry is the authoritative default base-year source.
+- Per-run overrides are allowed only when explicit and auditable.
+- Keep Russia's configured 2021 exception.
+- Exact-year native observations must beat earlier carried-forward observations.
+- No future observations may seed an earlier base year.
+- ESTO energy balances remain exact-year reconciliation anchors.
+- Generated outputs must never be read back as source inputs.
+- Do not alter production Drive, Secrets, production source/default/static data,
+  deployment configuration, model inputs, or model results.
+
+The user explicitly accepted an unrelated pre-existing test failure and asked
+the work to continue.
+
+## Repository status
+
+`leap_road_model` has one pre-existing untracked directory, `outputs/`; leave it
+untouched. `road_model_inputs_interface` was clean after the commits below.
+
+Completed commits:
+
+| Repository | Commit | Content |
+|---|---|---|
+| `road_model_inputs_interface` | `1b2e713` | Phase 1 hand-off: static-index base-year metadata, browser/API base-year field, runtime package manifest, mismatch check. |
+| `leap_road_model` | `3f56691` | Phase 1 model contract: economy-registry resolver, manifest/run validation, legacy package handling. |
+| `road_model_inputs_interface` | `23b8c62` | Phase 2 schema: archive normalizer and browser preserve four provenance fields. |
+| `leap_road_model` | `d532487` | Phase 2 adapter accepts provenance aliases. |
+| `road_model_inputs_interface` | `e068207` | Partial Phase 3: fallback selection retains observation year and records carried-forward treatment. |
+
+## What exists now
+
+### Phase 1 contract
+
+- `leap_road_model/codebase/adapters/base_year_contract.py`
+  - Reads `codebase/config/economies.yaml`.
+  - `resolve_base_year()` returns registry default or explicit override.
+  - `validate_package_base_year()` marks no-manifest packages
+    `legacy_inferred`, or raises on disagreement.
+- `road_workflow.py` resolves the run year from that registry and validates the
+  Module 1 runtime manifest before model work begins.
+- The interface static builder writes `base_year` per economy into new
+  `index.json` builds; do **not** regenerate the production static bundle as
+  part of this task.
+- Browser state sends `base_year` to `/run-model`; the API writes
+  `road_module1_package_manifest.json` next to the runtime CSV and passes
+  `--base-year` to the model.
+- Existing static bundles/packages without metadata remain readable. They are
+  legacy rather than silently treated as native.
+
+### Phase 2 provenance schema
+
+Canonical long fields now include:
+
+```text
+Source Data Year
+Source Classification
+Base Year Treatment
+Derivation Method
+```
+
+Accepted classifications:
+
+```text
+native_observation, projection, structural_assumption,
+model_assumption, legacy_unknown
+```
+
+Accepted treatments:
+
+```text
+native, carried_forward, transformed, legacy_unrecorded
+```
+
+Missing fields are conservatively normalised as `legacy_unknown` and
+`legacy_unrecorded`. Browser wide-row conversion stores provenance in
+`_provenanceByYear` so it can export per-year metadata losslessly.
+
+### Partial Phase 3 resolver change
+
+`road_model_inputs_interface/back-end/core/road_module1_defaults.py`
+`load_processed_source_inputs()` still needs a dedicated resolver. The old
+copy-and-relabel block was only partially corrected:
+
+- it now ranks eligible prior rows by `_priority_sort`, year descending, then
+  `_source_name`;
+- it records `Source Data Year`, `carried_forward`, and
+  `prior_observation_seed` before setting the model `Year` to `BASE_YEAR`.
+
+It is **not** yet sufficient: the resolver is global-`BASE_YEAR` based, does
+not emit an audit/rejections table, has no variable-policy registry, and the
+new fields are not fully propagated through every source-generation path.
+
+## Required next work, in order
+
+1. Finish Phase 2 before adding more resolver behaviour:
+   - add schema/round-trip tests for all four fields;
+   - test unknown values and malformed source year;
+   - ensure the static build and model adapter preserve the fields;
+   - update source/update and hand-off documentation.
+2. Replace the partial fallback with a dedicated pure resolver module:
+   - inputs: native source candidates only, model base year, canonical row key,
+     variable policy;
+   - exact-year native winner first;
+   - otherwise eligible historical winner using quality tier, observation year
+     descending, configured priority, source-name tie-break;
+   - never accept generated folders or future years;
+   - return selected/rejected candidates and reason codes.
+3. Introduce a variable-policy registry. Start with energy reconciliation rows
+   as exact-year required, and all other requested categories as seed eligible.
+   Do not invent age thresholds or source-quality definitions; report age only
+   until policy is approved.
+4. Write generated resolution outputs to a new, clearly generated temporary or
+   versioned build location: package, manifest, audit, needs-newer-data report,
+   validation report. Do not write to source directories.
+5. Implement Phase 5 UI provenance badges/filter/inspector and protect edits
+   from silently changing treatment to native.
+6. Complete dynamic base-year work in Modules 2–7 and reconciliation. Audit
+   every semantically active `2022`; do not mass replace historical endpoints.
+7. Upgrade archive/batch metadata with backward read support for formats 1/2,
+   base-year validation, checksum, full key including model year, and compact
+   decision sheets.
+8. Add the end-to-end reversibility/migration tests listed in the user request.
+
+## Important current risks
+
+- The interface source builder still has many direct `BASE_YEAR = 2022`
+  dependencies. Do not claim dynamic source builds work yet.
+- The per-economy static index can state Russia 2021 while an existing production
+  static CSV has 2022 rows. The API's declared-base-year-row validation is meant
+  to fail early rather than silently run this inconsistent package.
+- The runtime package manifest is overwritten in the runtime input cache; this
+  is acceptable for the current cache semantics, but archive metadata must later
+  pin the exact package checksum/year.
+- The partial resolver change has no selection audit and must be replaced rather
+  than extended opportunistically.
+
+## Tests already run
+
+- Interface full suite after Phase 1: `57 passed`.
+- Interface focused provenance/router tests after Phase 2: `44 passed`.
+- Model adapter/base-year focused tests after Phase 2: `34 passed`.
+- Model full suite after Phase 1: `247 passed, 1 failed`.
+  The known unrelated failure is
+  `codebase/tests/test_plotly_dashboard.py::test_dashboard_writes_pre_and_post_reconciliation_stock_pages`.
+  Its expectation excludes `Passenger energy growth context`, but the generated
+  dashboard includes it. The user authorized proceeding despite this.
+
+Before each future commit: run focused tests, both full suites, `git diff --check`,
+confirm no production/generated data changed, update docs, and commit only that
+phase's files using a `codex:` prefix.
