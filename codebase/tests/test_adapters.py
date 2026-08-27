@@ -31,6 +31,7 @@ from adapters.road_module1_defaults import (
     build_survival_curves,
     load_road_module1_defaults,
     load_module1_leap_df,
+    load_module1_for_economy,
 )
 from road_workflow import parse_leap_format_inputs
 
@@ -414,6 +415,23 @@ class TestModule1DefaultsSaturationUnits:
 
         assert loaded.loc[0, "Scale"] == "Millions"
         assert parsed.loc[0, "value"] == pytest.approx(1_250_000.0)
+
+    def test_russia_legacy_package_is_explicitly_rebased_to_registry_base_year(self, tmp_path: Path):
+        economy_dir = tmp_path / "vtest" / "16RUS"
+        economy_dir.mkdir(parents=True)
+        pd.DataFrame([{
+            "Branch Path": "Demand\\Passenger road\\LPVs\\ICE small\\Motor gasoline",
+            "Variable": "Stock", "Scenario": "Current Accounts", "Region": "Russia",
+            "Units": "Vehicle", "2022": 100.0,
+        }]).to_csv(economy_dir / "road_module1_values_16RUS.csv", index=False)
+
+        loaded = load_module1_for_economy(
+            tmp_path, economy="16_RUS", version="vtest", expected_base_year=2021,
+        )
+
+        assert "2021" in loaded["raw_leap_df"].columns
+        assert "2022" not in loaded["raw_leap_df"].columns
+        assert loaded["legacy_package_rebase"] == {"source_base_year": 2022, "target_base_year": 2021}
 
     def test_vehicle_type_stock_shares_use_only_exact_vehicle_branches(self):
         # Long-format defaults_df — mirrors what load_road_module1_defaults() produces.

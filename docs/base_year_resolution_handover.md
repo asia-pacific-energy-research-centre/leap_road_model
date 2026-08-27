@@ -138,16 +138,18 @@ new fields are not fully propagated through every source-generation path.
   package version, and base year, and its rows must actually include the
   required base year. Packages without a manifest remain explicitly labelled
   `legacy_inferred`; they are never implicitly native.
-- Russia remains a 2021 registry economy. The existing 2022-only legacy package
-  is therefore an intentional preflight failure for a normal Russia run. Do not
-  substitute, relabel, or use a future row to seed 2021. Restoring availability
-  needs an approved source-data or migration decision.
+- Russia remains a 2021 registry economy. The approved temporary compatibility
+  bridge rebases an unmanifested, 2022-only Russia package to 2021 at load time,
+  without changing the source/static package. It is limited to `16_RUS`, records
+  `future_year_seed` provenance and `{source_base_year: 2022,
+  target_base_year: 2021}` in workflow metadata, and emits a warning on every
+  run. A manifest-bearing package is never rebased.
 
 - The interface source builder still has many direct `BASE_YEAR = 2022`
   dependencies. Do not claim dynamic source builds work yet.
-- The per-economy static index can state Russia 2021 while an existing production
-  static CSV has 2022 rows. The API's declared-base-year-row validation is meant
-  to fail early rather than silently run this inconsistent package.
+- Russia’s bridge is a temporary modelling policy, not evidence that the
+  2022-only package is native 2021 data. Replace it with a reviewed 2021 package
+  before any release or source-data promotion.
 - The runtime package manifest is overwritten in the runtime input cache; this
   is acceptable for the current cache semantics, but archive metadata must later
   pin the exact package checksum/year.

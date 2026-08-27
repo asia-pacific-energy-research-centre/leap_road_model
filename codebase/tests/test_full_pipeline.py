@@ -61,6 +61,19 @@ def test_full_pipeline_smoke_nz(tmp_path: Path) -> None:
     _run_and_assert("12_NZ", tmp_path)
 
 
+def test_russia_registry_run_explicitly_rebases_legacy_2022_package(tmp_path: Path) -> None:
+    result = run_for_economy(
+        "16_RUS", scenario="Reference", final_year=2023,
+        enable_visualisations=False, output_root=tmp_path / "russia",
+        save_csv_outputs=False, run_m7=False,
+    )
+    assert result["workflow_meta"]["base_year"] == 2021
+    assert result["workflow_meta"]["base_year_provenance"] == "future_year_seed"
+    assert result["workflow_meta"]["legacy_package_rebase"] == {
+        "source_base_year": 2022, "target_base_year": 2021,
+    }
+
+
 def _copy_module1_csv_to_package(
     source_csv: Path,
     package_root: Path,

@@ -58,10 +58,19 @@ def validate_package_base_year(
     economy: str | None = None,
     package_version: str | None = None,
     package_rows: pd.DataFrame | None = None,
+    legacy_package_rebase: dict[str, int] | None = None,
 ) -> str:
     """Validate package identity and required base-year data before modelling."""
     metadata = package_metadata or {}
     expected_base_year = _validate_base_year(expected_base_year)
+    if legacy_package_rebase is not None:
+        source_year = _validate_base_year(legacy_package_rebase.get("source_base_year"))
+        target_year = _validate_base_year(legacy_package_rebase.get("target_base_year"))
+        if metadata or target_year != expected_base_year or source_year <= target_year:
+            raise ValueError("Invalid legacy future-year package rebase metadata.")
+        provenance = "future_year_seed"
+    else:
+        provenance = None
     if economy is not None and metadata.get("economy") not in (None, ""):
         if canonical_economy_code(str(metadata["economy"])) != canonical_economy_code(economy):
             raise ValueError("Module 1 package economy does not match the model run.")
@@ -69,7 +78,9 @@ def validate_package_base_year(
         if str(metadata["package_version"]) != str(package_version):
             raise ValueError("Module 1 package version does not match the selected package version.")
     package_base_year = metadata.get("base_year")
-    if package_base_year in (None, ""):
+    if provenance is not None:
+        pass
+    elif package_base_year in (None, ""):
         provenance = "legacy_inferred"
     elif _validate_base_year(package_base_year) != expected_base_year:
         raise ValueError(

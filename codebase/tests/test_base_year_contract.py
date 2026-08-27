@@ -41,6 +41,13 @@ def test_legacy_wide_package_rows_are_checked_for_the_required_year() -> None:
         validate_package_base_year({}, 2021, package_rows=pd.DataFrame({"2022": [1.0]}))
 
 
+def test_approved_russia_legacy_future_seed_is_auditable() -> None:
+    assert validate_package_base_year(
+        {}, 2021, package_rows=pd.DataFrame({"2021": [1.0]}),
+        legacy_package_rebase={"source_base_year": 2022, "target_base_year": 2021},
+    ) == "future_year_seed"
+
+
 def test_base_year_range_is_rejected() -> None:
     with pytest.raises(ValueError, match="outside the supported range"):
         resolve_base_year("16_RUS", 1800)
