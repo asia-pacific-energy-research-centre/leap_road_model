@@ -617,6 +617,7 @@ class RoadWorkflowConfig:
 
     # Time
     base_year: int | None = None
+    base_year_resolution: str | None = None
     final_year: int = 2060
 
     # Paths (default to env vars, fallback to local dev paths)
@@ -930,7 +931,13 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
 
     log_file = output_root / "workflow.log" if config.save_csv_outputs else None
     logger = StructuredLogger("road_workflow", log_file=log_file, print_to_console=False)
-    config.base_year, config_base_year_provenance = resolve_base_year(config.economy, config.base_year)
+    if config.base_year is None:
+        config.base_year, config_base_year_provenance = resolve_base_year(config.economy)
+    else:
+        config.base_year, config_base_year_provenance = (
+            int(config.base_year),
+            config.base_year_resolution or resolve_base_year(config.economy, config.base_year)[1],
+        )
 
     if config.save_csv_outputs:
         output_root.mkdir(parents=True, exist_ok=True)
@@ -950,7 +957,10 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         version=config.module1_defaults_version,
     )
     package_base_year_provenance = validate_package_base_year(
-        m1.get("package_metadata"), config.base_year
+        m1.get("package_metadata"), config.base_year,
+        economy=config.economy,
+        package_version=config.module1_defaults_version,
+        package_rows=m1.get("raw_leap_df"),
     )
 
     lifecycle_factors = pd.DataFrame()
@@ -2133,6 +2143,7 @@ def run_for_economy(
         "economy": economy,
         "scenarios": scenario_list,
         "base_year": base_year,
+        "base_year_resolution": base_year_provenance,
         "final_year": final_year,
         "enable_visualisations": enable_visualisations,
         "config_dir": _repo_root / "codebase" / "config",

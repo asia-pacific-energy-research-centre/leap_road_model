@@ -129,6 +129,20 @@ new fields are not fully propagated through every source-generation path.
 
 ## Important current risks
 
+## Repair checkpoint: archive, provenance, and package preflight
+
+- The model resolves a registry base year only once. `run_for_economy()` passes
+  that resolution provenance into `run_with_config()`; an actual supplied base
+  year remains an `explicit_override`.
+- Before modelling, a manifest-bearing package must match the selected economy,
+  package version, and base year, and its rows must actually include the
+  required base year. Packages without a manifest remain explicitly labelled
+  `legacy_inferred`; they are never implicitly native.
+- Russia remains a 2021 registry economy. The existing 2022-only legacy package
+  is therefore an intentional preflight failure for a normal Russia run. Do not
+  substitute, relabel, or use a future row to seed 2021. Restoring availability
+  needs an approved source-data or migration decision.
+
 - The interface source builder still has many direct `BASE_YEAR = 2022`
   dependencies. Do not claim dynamic source builds work yet.
 - The per-economy static index can state Russia 2021 while an existing production

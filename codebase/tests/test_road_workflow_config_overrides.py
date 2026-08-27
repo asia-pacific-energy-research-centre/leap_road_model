@@ -55,6 +55,7 @@ def test_run_for_economy_allows_module1_defaults_dir_override(monkeypatch, tmp_p
     assert isinstance(config, road_workflow.RoadWorkflowConfig)
     assert Path(config.module1_defaults_dir) == module1_dir
     assert config.module1_defaults_version == "v_test"
+    assert config.base_year_resolution == "economy_registry"
 
 
 def test_run_for_economy_accepts_multiple_projection_scenarios(monkeypatch, tmp_path: Path) -> None:
