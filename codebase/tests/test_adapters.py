@@ -373,6 +373,10 @@ class TestModule1DefaultsSaturationUnits:
                 "Year": 2022,
                 "Value": 100.0,
                 "Units": "Vehicle",
+                "Source Data Year": 2020,
+                "Source Classification": "projection",
+                "Base Year Treatment": "carried_forward",
+                "Derivation Method": "prior_observation_seed",
             }
         ])
         df.to_csv(economy_dir / "road_module1_values_20USA_vtest_20260603.csv", index=False)
@@ -382,6 +386,10 @@ class TestModule1DefaultsSaturationUnits:
         assert "2022" in loaded.columns
         assert loaded.loc[0, "Region"] == "20_USA"
         assert loaded.loc[0, "2022"] == pytest.approx(100.0)
+        assert loaded.loc[0, "source_data_year"] == 2020
+        assert loaded.loc[0, "source_classification"] == "projection"
+        assert loaded.loc[0, "base_year_treatment"] == "carried_forward"
+        assert loaded.loc[0, "derivation_method"] == "prior_observation_seed"
 
     def test_long_module1_scale_survives_loader_and_parses_to_devices(self, tmp_path: Path):
         version_dir = tmp_path / "vtest"
