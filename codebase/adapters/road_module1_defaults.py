@@ -77,6 +77,10 @@ _LONG_COLUMN_ALIASES = {
     "Version": ["Version", "version", "default_version"],
     "Scale": ["Scale", "scale"],
     "Per...": ["Per...", "Per", "per", "per_unit"],
+    "Source Data Year": ["Source Data Year", "source_data_year"],
+    "Source Classification": ["Source Classification", "source_classification"],
+    "Base Year Treatment": ["Base Year Treatment", "base_year_treatment"],
+    "Derivation Method": ["Derivation Method", "derivation_method"],
 }
 
 # Map multinode Variable names → T2 variable names where they differ
@@ -481,6 +485,11 @@ def _normalise_long_module1_df(
     else:
         out["source_type"] = "module1_long_csv"
 
+    out["source_data_year"] = out.get("Source Data Year", pd.Series(pd.NA, index=out.index))
+    out["source_classification"] = out.get("Source Classification", "legacy_unknown")
+    out["base_year_treatment"] = out.get("Base Year Treatment", "legacy_unrecorded")
+    out["derivation_method"] = out.get("Derivation Method", "legacy_unrecorded")
+
     if "Input Status" in out.columns:
         out["input_source"] = out["Input Status"]
     else:
@@ -504,7 +513,7 @@ def _normalise_long_module1_df(
         "Branch Path", "Variable", "Scenario", "Region", "Scale", "Units", "Per...",
         "Year", "Value", "input_source", "source_type", "source_name", "source_scope",
         "source_date", "default_version", "researcher_review_recommended", "review_reason",
-        "notes",
+        "notes", "source_data_year", "source_classification", "base_year_treatment", "derivation_method",
     ]
     return out[[col for col in keep if col in out.columns]].copy()
 
@@ -521,7 +530,7 @@ def _long_to_legacy_wide(long_df: pd.DataFrame) -> pd.DataFrame:
             *_WIDE_ID_COLS,
             "input_source", "source_type", "source_name", "source_scope",
             "source_date", "default_version", "researcher_review_recommended",
-            "review_reason", "notes",
+            "review_reason", "notes", "source_data_year", "source_classification", "base_year_treatment", "derivation_method",
         ]
         if col in long_df.columns
     ]
