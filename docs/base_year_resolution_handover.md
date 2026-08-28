@@ -9,7 +9,9 @@ Implement a reversible base-year system across `leap_road_model` and its sibling
 - Per-run overrides are allowed only when explicit and auditable.
 - Keep Russia's configured 2021 exception.
 - Exact-year native observations must beat earlier carried-forward observations.
-- No future observations may seed an earlier base year.
+- A future observation may seed an earlier base year only when there is no
+  eligible exact-year or earlier observation; it must be recorded as future
+  use, never as native to the requested year.
 - ESTO energy balances remain exact-year reconciliation anchors.
 - Generated outputs must never be read back as source inputs.
 - Do not alter production Drive, Secrets, production source/default/static data,
@@ -74,14 +76,34 @@ model_assumption, legacy_unknown
 Accepted treatments:
 
 ```text
-native, carried_forward, transformed, legacy_unrecorded
+native, carried_forward, carried_backward, transformed, legacy_unrecorded
 ```
 
 Missing fields are conservatively normalised as `legacy_unknown` and
 `legacy_unrecorded`. Browser wide-row conversion stores provenance in
 `_provenanceByYear` so it can export per-year metadata losslessly.
 
-### Partial Phase 3 resolver change
+`carried_backward` is the canonical treatment for a future observation used as
+an earlier requested base year. Exact-year non-native candidates retain their
+source classification and use `transformed`; they are never relabelled native.
+
+### Phase 3 resolver contract
+
+`road_model_inputs_interface/back-end/core/base_year_candidate_resolver.py`
+now provides a small pure resolver over explicit original candidate records.
+It validates candidate identity/key/source fields, source-data years,
+classification and policy configuration; rejects duplicate candidate IDs; and
+returns the selected candidate plus structured rejection reasons. Its ordering
+is exact year, latest eligible earlier, then earliest eligible future; quality
+and source priority are configured tie-breakers, followed by stable candidate
+identity. It neither reads nor writes production files.
+
+The supplied policy identifiers are `energy_balance_exact_year` and
+`seed_eligible`. Variable-to-policy assignment is intentionally left to a later
+reviewed integration: this phase does not invent production assignments, source
+quality rankings, or age limits, and does not alter static/generated packages.
+
+### Superseded partial Phase 3 resolver change
 
 `road_model_inputs_interface/back-end/core/road_module1_defaults.py`
 `load_processed_source_inputs()` still needs a dedicated resolver. The old
@@ -103,17 +125,10 @@ new fields are not fully propagated through every source-generation path.
    - test unknown values and malformed source year;
    - ensure the static build and model adapter preserve the fields;
    - update source/update and hand-off documentation.
-2. Replace the partial fallback with a dedicated pure resolver module:
-   - inputs: native source candidates only, model base year, canonical row key,
-     variable policy;
-   - exact-year native winner first;
-   - otherwise eligible historical winner using quality tier, observation year
-     descending, configured priority, source-name tie-break;
-   - never accept generated folders or future years;
-   - return selected/rejected candidates and reason codes.
-3. Introduce a variable-policy registry. Start with energy reconciliation rows
-   as exact-year required, and all other requested categories as seed eligible.
-   Do not invent age thresholds or source-quality definitions; report age only
+2. Connect the Phase 3 resolver only after approving a variable-to-policy map
+   and source quality tiers. Keep its original-candidate-only boundary and
+   preserve its selected/rejected audit contract.
+3. Do not invent age thresholds or source-quality definitions; report age only
    until policy is approved.
 4. Write generated resolution outputs to a new, clearly generated temporary or
    versioned build location: package, manifest, audit, needs-newer-data report,
@@ -153,8 +168,9 @@ new fields are not fully propagated through every source-generation path.
 - The runtime package manifest is overwritten in the runtime input cache; this
   is acceptable for the current cache semantics, but archive metadata must later
   pin the exact package checksum/year.
-- The partial resolver change has no selection audit and must be replaced rather
-  than extended opportunistically.
+- The legacy source-loader fallback remains globally `BASE_YEAR` based. It is
+  deliberately not connected to the Phase 3 resolver until an approved
+  variable-to-policy map exists; do not extend it opportunistically.
 
 ## Tests already run
 
