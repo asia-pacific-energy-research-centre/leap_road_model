@@ -99,9 +99,29 @@ and source priority are configured tie-breakers, followed by stable candidate
 identity. It neither reads nor writes production files.
 
 The supplied policy identifiers are `energy_balance_exact_year` and
-`seed_eligible`. Variable-to-policy assignment is intentionally left to a later
-reviewed integration: this phase does not invent production assignments, source
-quality rankings, or age limits, and does not alter static/generated packages.
+`seed_eligible`.
+
+### Phase 3 variable-family policy checkpoint
+
+`road_model_inputs_interface/back-end/core/base_year_variable_policy.py`
+provides the approved compact variable-level registry. It inventories exact
+canonical `Variable` names from the maintained Module 1 static contract and
+fails coverage for unknown, missing, duplicate, or conflicting assignments.
+No current variable needs a `Branch Path` exception.
+
+- `exact_year_required`: the seven `Reconciliation Weight ...` and
+  `Reconciliation Bound ...` variables; these map to
+  `energy_balance_exact_year`.
+- `seed_eligible`: the 16 original observation/assumption variables, including
+  stock, mileage, fuel economy, sales shares, survival/vintage assumptions,
+  PHEV use, projection assumptions, turnover bounds, and vehicle-equivalent
+  weights/bounds.
+- `derived`: `Stock Share` only, recalculated from resolved `Stock` rather than
+  independently shifted.
+
+This checkpoint does not connect the resolver to generation, change source
+eligibility or ranking, add source quality tiers or age limits, or alter any
+static/generated package.
 
 ### Superseded partial Phase 3 resolver change
 
@@ -125,9 +145,10 @@ new fields are not fully propagated through every source-generation path.
    - test unknown values and malformed source year;
    - ensure the static build and model adapter preserve the fields;
    - update source/update and hand-off documentation.
-2. Connect the Phase 3 resolver only after approving a variable-to-policy map
-   and source quality tiers. Keep its original-candidate-only boundary and
-   preserve its selected/rejected audit contract.
+2. Connect the Phase 3 resolver using the approved variable-family registry.
+   Keep its original-candidate-only boundary and preserve its selected/rejected
+   audit contract. Decide source-classification eligibility separately before
+   treating structural/model assumptions as resolver candidates.
 3. Do not invent age thresholds or source-quality definitions; report age only
    until policy is approved.
 4. Write generated resolution outputs to a new, clearly generated temporary or
@@ -169,13 +190,16 @@ new fields are not fully propagated through every source-generation path.
   is acceptable for the current cache semantics, but archive metadata must later
   pin the exact package checksum/year.
 - The legacy source-loader fallback remains globally `BASE_YEAR` based. It is
-  deliberately not connected to the Phase 3 resolver until an approved
-  variable-to-policy map exists; do not extend it opportunistically.
+  deliberately not connected to the Phase 3 resolver in this checkpoint; do
+  not extend it opportunistically. The variable map is approved, but assumption
+  source-classification eligibility and generation integration are still
+  separate reviewed decisions.
 
 ## Tests already run
 
 - Interface full suite after Phase 1: `57 passed`.
 - Interface focused provenance/router tests after Phase 2: `44 passed`.
+- Interface variable-policy checkpoint focused tests: `59 passed`.
 - Model adapter/base-year focused tests after Phase 2: `34 passed`.
 - Model full suite after Phase 1: `247 passed, 1 failed`.
   The known unrelated failure is
