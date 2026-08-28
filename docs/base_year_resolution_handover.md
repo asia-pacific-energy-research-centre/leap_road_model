@@ -109,12 +109,13 @@ canonical `Variable` names from the maintained Module 1 static contract and
 fails coverage for unknown, missing, duplicate, or conflicting assignments.
 No current variable needs a `Branch Path` exception.
 
-- `exact_year_required`: the seven `Reconciliation Weight ...` and
-  `Reconciliation Bound ...` variables; these map to
-  `energy_balance_exact_year`.
-- `seed_eligible`: the 16 original observation/assumption variables, including
-  stock, mileage, fuel economy, sales shares, survival/vintage assumptions,
-  PHEV use, projection assumptions, turnover bounds, and vehicle-equivalent
+- `exact_year_required`: no current canonical Module 1 variables. The family and
+  resolver policy remain available for external anchors. ESTO energy-balance
+  data sits outside this registry and remains exact-year required.
+- `seed_eligible`: all 23 original researcher/source or model-judgement inputs,
+  including stock, mileage, fuel economy, sales shares, survival/vintage
+  assumptions, PHEV use, projection assumptions, turnover bounds,
+  vehicle-equivalent weights/bounds, and the seven reconciliation
   weights/bounds.
 - `derived`: `Stock Share` only, recalculated from resolved `Stock` rather than
   independently shifted.
@@ -199,7 +200,7 @@ new fields are not fully propagated through every source-generation path.
 
 - Interface full suite after Phase 1: `57 passed`.
 - Interface focused provenance/router tests after Phase 2: `44 passed`.
-- Interface variable-policy checkpoint focused tests: `59 passed`.
+- Interface corrected variable-policy checkpoint focused tests: `61 passed`.
 - Model adapter/base-year focused tests after Phase 2: `34 passed`.
 - Model full suite after Phase 1: `247 passed, 1 failed`.
   The known unrelated failure is
