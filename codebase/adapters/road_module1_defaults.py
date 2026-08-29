@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from adapters.base_year_contract import _validate_base_year
+
 log = logging.getLogger(__name__)
 
 # Default file name within each economy folder.
@@ -574,6 +576,7 @@ def load_road_module1_defaults(
     economy_filter: list[str] | None = None,
     include_survival_curves: bool = True,
     include_reconciliation_params: bool = True,
+    base_year: int = 2022,
 ) -> pd.DataFrame:
     """
     Load road module default inputs from multinode_energy_balance outputs.
@@ -591,16 +594,18 @@ def load_road_module1_defaults(
             Profile Share rows (useful when loading only scalar defaults).
         include_reconciliation_params: If False, drop reconciliation bound
             and weight rows.
+        base_year: Integer year whose Current Accounts values seed the model.
 
     Returns:
         DataFrame with columns:
         [economy, version, scope, variable, transport_type, vehicle_type,
-         drive_type, size, fuel, leap_branch_path, value_2022, unit,
+         drive_type, size, fuel, leap_branch_path, value, unit,
          source, review_recommended, notes]
 
         Efficiency values are converted from MJ/100km → km/GJ.
     """
     defaults_dir = Path(defaults_dir)
+    base_year = _validate_base_year(base_year)
 
     package_root = _resolve_package_root(defaults_dir, version)
     economy_csvs = _iter_package_csvs(package_root, economy_filter=economy_filter)
@@ -609,7 +614,9 @@ def load_road_module1_defaults(
     frames = []
     for economy_code, csv_path in economy_csvs:
         try:
-            df = _load_single_economy(csv_path, economy_code, package_root.name)
+            df = _load_single_economy(
+                csv_path, economy_code, package_root.name, base_year=base_year,
+            )
             frames.append(df)
         except Exception as exc:
             log.warning("Failed to load %s: %s", economy_code, exc)
@@ -634,15 +641,18 @@ def _load_single_economy(
     csv_path: Path,
     economy_code: str,
     version_name: str,
+    base_year: int = 2022,
 ) -> pd.DataFrame:
     """Load one economy's default CSV and parse into long format."""
     df = _read_module1_csv_as_wide(csv_path, economy_code=economy_code, version_name=version_name)
 
-    # Filter to year 2022 (base year) — other years (2030, 2040, 2050) are projection
+    # Filter to the selected base year — later years are projection
     # assumptions that go through Module 5's future-share logic, not the T2 defaults path.
-    # Survival curves and vintage profiles use 2022 as age-0 anchor.
-    if "2022" not in df.columns:
-        log.warning("%s: no '2022' column found — skipping", csv_path)
+    # Survival curves and vintage profiles use the selected base year as their age-0 anchor.
+    base_year = _validate_base_year(base_year)
+    base_year_column = str(base_year)
+    if base_year_column not in df.columns:
+        log.warning("%s: no %r base-year column found — skipping", csv_path, base_year_column)
         return pd.DataFrame()
 
     rows = []
@@ -655,15 +665,15 @@ def _load_single_economy(
         review = row.get("researcher_review_recommended", False)
         notes = str(row.get("review_reason", ""))
         source = str(row.get("source_name", "multinode_energy_balance"))
-        value_2022 = row.get("2022")
+        base_year_value = row.get(base_year_column)
 
-        if pd.isna(value_2022):
+        if pd.isna(base_year_value):
             continue
 
         # Convert efficiency: MJ/100km → km/GJ
         if unit == _EFFICIENCY_UNIT:
-            if value_2022 > 0:
-                value_2022 = 100_000 / value_2022
+            if base_year_value > 0:
+                base_year_value = 100_000 / base_year_value
             unit = "km/GJ"
             variable = "efficiency"
 
@@ -672,7 +682,7 @@ def _load_single_economy(
         if variable == "saturation_level":
             per_lower = per_unit.strip().lower()
             if "1000" in per_lower and "people" in per_lower:
-                value_2022 = float(value_2022) / 1000.0
+                base_year_value = float(base_year_value) / 1000.0
                 unit = "Device"
 
         parsed = _parse_branch_path(branch_path)
@@ -699,7 +709,7 @@ def _load_single_economy(
             "economy":           economy_code,
             "version":           version_name,
             "scope":             economy_code,
-            "year":              int(row.get("_source_year", 2022)),
+            "year":              int(row.get("_source_year", base_year)),
             "variable":          variable,
             "transport_type":    parsed["transport_type"],
             "vehicle_type":      parsed["vehicle_type"],
@@ -707,7 +717,7 @@ def _load_single_economy(
             "size":              parsed["size"],
             "fuel":              parsed["fuel"],
             "leap_branch_path":  branch_path,
-            "value":             value_2022,
+            "value":             base_year_value,
             "unit":              unit,
             "source":            source,
             "review_recommended": bool(review),
@@ -1435,10 +1445,21 @@ def load_module1_for_economy(
             "    python scripts/generate_module1_defaults.py"
         )
 
+    package_metadata = load_module1_package_metadata(defaults_dir, economy, version)
+    selected_base_year = _validate_base_year(
+        expected_base_year if expected_base_year is not None else 2022
+    )
+    if (
+        economy == _RUSSIA_LEGACY_PACKAGE_ECONOMY
+        and selected_base_year == _RUSSIA_REGISTRY_BASE_YEAR
+        and not package_metadata
+    ):
+        selected_base_year = _RUSSIA_LEGACY_SOURCE_BASE_YEAR
     defaults_df = load_road_module1_defaults(
         defaults_dir,
         version=version,
         economy_filter=[economy],
+        base_year=selected_base_year,
     )
 
     if defaults_df.empty:
@@ -1448,7 +1469,6 @@ def load_module1_for_economy(
             "    python scripts/generate_module1_defaults.py"
         )
 
-    package_metadata = load_module1_package_metadata(defaults_dir, economy, version)
     raw_leap_df = load_module1_leap_df(defaults_dir, economy, version)
     raw_leap_df, defaults_df, legacy_package_rebase = _rebase_russia_legacy_package(
         raw_leap_df,

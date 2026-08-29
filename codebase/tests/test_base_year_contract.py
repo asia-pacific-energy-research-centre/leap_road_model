@@ -51,3 +51,9 @@ def test_approved_russia_legacy_future_seed_is_auditable() -> None:
 def test_base_year_range_is_rejected() -> None:
     with pytest.raises(ValueError, match="outside the supported range"):
         resolve_base_year("16_RUS", 1800)
+
+
+@pytest.mark.parametrize("value", [2022.5, "2022.5", True])
+def test_fractional_or_boolean_base_year_is_rejected(value) -> None:
+    with pytest.raises(ValueError, match="integer"):
+        resolve_base_year("20_USA", value)

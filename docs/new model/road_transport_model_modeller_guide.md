@@ -90,6 +90,13 @@ auditable run override. A runtime Module 1 package may include
 from the run, the workflow stops before modelling. Older packages without the
 manifest remain readable and are labelled `legacy_inferred`.
 
+The Module 1 adapter selects the declared run/package base-year column rather
+than assuming 2022. Canonical long packages for later base years are therefore
+converted using their 2023, 2024, or other validated base-year rows. Fractional
+and boolean years are rejected rather than truncated. Russia's documented
+manifest-free 2022-to-2021 compatibility bridge remains a separate explicit
+legacy exception.
+
 Module 1 input values should not be hard-coded in `leap_road_model`. The authoritative data sources are maintained in `road_model_inputs_interface`, mainly under:
 
 ```text

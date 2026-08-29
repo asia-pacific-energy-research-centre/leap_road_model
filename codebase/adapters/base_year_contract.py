@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
+import re
 
 import pandas as pd
 import yaml
@@ -35,10 +37,15 @@ def _validate_base_year(value: object) -> int:
     """Reject malformed or implausible base-year values at the boundary."""
     if isinstance(value, bool):
         raise ValueError("Base year must be an integer year, not a boolean.")
-    try:
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError(f"Base year must be an integer, got {value!r}.")
         year = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Base year must be an integer, got {value!r}.") from exc
+    else:
+        text = str(value).strip()
+        if not re.fullmatch(r"[+-]?\d+(?:\.0+)?", text):
+            raise ValueError(f"Base year must be an integer, got {value!r}.")
+        year = int(float(text))
     if not 1900 <= year <= 2100:
         raise ValueError(f"Base year {year} is outside the supported range 1900–2100.")
     return year

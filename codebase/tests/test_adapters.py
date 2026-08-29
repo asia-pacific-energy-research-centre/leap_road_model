@@ -187,6 +187,31 @@ class TestBranchPathParsing:
 # ===========================================================================
 
 class TestModule1DefaultsSaturationUnits:
+    def test_loader_uses_requested_base_year_for_canonical_long_package(self, tmp_path: Path):
+        df = pd.DataFrame([{
+            "Economy": "20_USA",
+            "Scenario": "Current Accounts",
+            "Branch Path": "Demand\\Passenger road",
+            "Variable": "Passenger Vehicle Saturation",
+            "Year": 2024,
+            "Value": 0.75,
+            "Units": "Device",
+        }])
+        csv_path = tmp_path / "road_module1_values_20_USA.csv"
+        df.to_csv(csv_path, index=False)
+
+        loaded = _load_single_economy(
+            csv_path, economy_code="20_USA", version_name="test", base_year=2024,
+        )
+
+        assert get_passenger_saturation_level(loaded, economy="20_USA") == pytest.approx(0.75)
+        assert set(loaded["year"]) == {2024}
+
+        with pytest.raises(ValueError, match="integer"):
+            _load_single_economy(
+                csv_path, economy_code="20_USA", version_name="test", base_year=2024.5,
+            )
+
     def test_saturation_per_1000_people_converted_to_per_capita(self, tmp_path: Path):
         df = pd.DataFrame([
             {
