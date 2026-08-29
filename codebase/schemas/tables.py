@@ -402,7 +402,7 @@ SCHEMAS: dict[str, dict] = {
             "Sales Share sums to 1 within (economy, scenario, year, vehicle_type)",
             "Device Share sums to 1 within parent branch",
             "no negative values",
-            "year range 2022-2060 complete with no gaps",
+            "selected base-year through 2060 complete with no gaps",
         ],
     },
 

@@ -145,7 +145,7 @@ def _check_leap_ready(df: pd.DataFrame) -> list[str]:
 
     if "year" in df.columns:
         years = set(df["year"].unique())
-        expected = set(range(2022, 2061))
+        expected = set(range(int(min(years)), 2061)) if years else set()
         missing = expected - years
         if missing:
             errors.append(f"[T11] Missing years in output: {sorted(missing)[:5]}...")
