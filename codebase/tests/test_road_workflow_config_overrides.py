@@ -58,6 +58,48 @@ def test_run_for_economy_allows_module1_defaults_dir_override(monkeypatch, tmp_p
     assert config.base_year_resolution == "economy_registry"
 
 
+def test_run_for_economy_passes_explicit_esto_csv_to_both_loaders(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, Path]] = []
+    years = [2023, 2024]
+    esto_csv = tmp_path / "00APEC_2025_low_with_subtotals.csv"
+    esto_csv.write_text("placeholder", encoding="utf-8")
+
+    monkeypatch.setattr(
+        esto_inputs, "load_population",
+        lambda economy, scenario: pd.Series([1.0, 1.1], index=years),
+    )
+    monkeypatch.setattr(
+        esto_inputs, "load_gdp",
+        lambda economy, scenario: pd.Series([2.0, 2.2], index=years),
+    )
+
+    def fake_road_energy(economy, esto_csv):
+        calls.append(("history", Path(esto_csv)))
+        return pd.DataFrame(
+            [{"year": year, "transport_type": "passenger", "energy_pj": 1.0} for year in years]
+        )
+
+    def fake_fuel_totals(economy, base_year, esto_csv):
+        calls.append(("fuel_totals", Path(esto_csv)))
+        return pd.DataFrame([{"fuel": "Electricity", "energy_pj": 1.0}])
+
+    monkeypatch.setattr(esto_inputs, "load_esto_road_energy", fake_road_energy)
+    monkeypatch.setattr(esto_inputs, "load_esto_fuel_totals", fake_fuel_totals)
+    monkeypatch.setattr(road_workflow, "_validate_macro_inputs", lambda *args: None)
+    monkeypatch.setattr(road_workflow, "run_with_config", lambda config, inputs: {"timings": {}})
+
+    run_for_economy(
+        "15_PHL",
+        base_year=2023,
+        final_year=2024,
+        enable_visualisations=False,
+        auto_load_future_sales_shares=False,
+        esto_csv=esto_csv,
+    )
+
+    assert calls == [("history", esto_csv), ("fuel_totals", esto_csv)]
+
+
 def test_run_for_economy_accepts_multiple_projection_scenarios(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
     years = [2022, 2023]

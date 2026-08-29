@@ -57,6 +57,25 @@ class TestEstoInputs:
         assert default_path.parent.name == "input_data"
         assert default_path.exists()
 
+    def test_road_energy_uses_all_years_present_in_selected_esto_table(self, tmp_path):
+        path = tmp_path / "esto_2025.csv"
+        pd.DataFrame(
+            [
+                {
+                    "economy": "20USA",
+                    "flows": "15.02 Road",
+                    "products": "19 Total",
+                    "is_subtotal": True,
+                    "2022": 100.0,
+                    "2023": 110.0,
+                }
+            ]
+        ).to_csv(path, index=False)
+
+        result = esto_inputs.load_esto_road_energy("20_USA", esto_csv=path)
+
+        assert set(result["year"]) == {2022, 2023}
+
 
 class TestRoadModule1Defaults:
     def test_build_survival_curves_converts_cumulative_percent_to_annual_probability(self):

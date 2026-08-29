@@ -288,7 +288,7 @@ def load_esto_road_energy(
         )
 
     df = pd.read_csv(csv, low_memory=False)
-    year_cols = sorted([c for c in df.columns if c.isdigit() and int(c) <= 2022], key=int)
+    year_cols = sorted([c for c in df.columns if c.isdigit()], key=int)
 
     road_total = df[
         (df["economy"] == econ_esto)

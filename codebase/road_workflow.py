@@ -2067,6 +2067,7 @@ def run_for_economy(
     future_sales_shares: pd.DataFrame | None = None,
     auto_load_future_sales_shares: bool | None = None,
     workflow_config_path: str | Path | None = None,
+    esto_csv: str | Path | None = None,
     **config_overrides: Any,
 ) -> dict[str, Any]:
     """
@@ -2093,6 +2094,9 @@ def run_for_economy(
                                auto-discover a future sales-share input file. Defaults
                                to workflow_defaults.yaml.
         workflow_config_path:  Optional YAML file with workflow defaults.
+        esto_csv:              Explicit ESTO table for historical road energy and
+                               base-year fuel reconciliation. Defaults to the
+                               adapter's environment/local deployment resolution.
         **config_overrides:    Any RoadWorkflowConfig field overrides.
 
     Returns:
@@ -2125,8 +2129,14 @@ def run_for_economy(
 
     population = load_population(economy, scenario=scenario)
     gdp = load_gdp(economy, scenario=scenario)
-    esto_road_energy = load_esto_road_energy(economy)
-    esto_fuel_totals = load_esto_fuel_totals(economy, base_year=base_year)
+    if esto_csv is None:
+        esto_road_energy = load_esto_road_energy(economy)
+        esto_fuel_totals = load_esto_fuel_totals(economy, base_year=base_year)
+    else:
+        esto_road_energy = load_esto_road_energy(economy, esto_csv=esto_csv)
+        esto_fuel_totals = load_esto_fuel_totals(
+            economy, base_year=base_year, esto_csv=esto_csv,
+        )
 
     projection_years = list(range(base_year, final_year + 1))
     _validate_macro_inputs(population, gdp, esto_road_energy, projection_years)
@@ -2220,6 +2230,8 @@ Examples:
                         help="Output directory (default: results/<economy>)")
     parser.add_argument("--workflow-config", default=None, dest="workflow_config_path",
                         help="Workflow defaults YAML (default: codebase/config/workflow_defaults.yaml)")
+    parser.add_argument("--esto-csv", default=None, dest="esto_csv",
+                        help="Explicit ESTO table used for history and base-year reconciliation")
     parser.add_argument("--module1-defaults-dir", default=None, dest="module1_defaults_dir",
                         help="Module 1 defaults root directory (default: workflow config)")
     parser.add_argument("--module1-defaults-version", default=None, dest="module1_defaults_version",
@@ -2286,6 +2298,7 @@ Examples:
         output_root=args.output_root,
         auto_load_future_sales_shares=args.auto_load_future_sales_shares,
         workflow_config_path=args.workflow_config_path,
+        esto_csv=args.esto_csv,
         **cli_config_overrides,
     )
     timings = result.get("timings", {})

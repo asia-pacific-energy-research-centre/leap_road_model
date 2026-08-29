@@ -689,6 +689,12 @@ Explicit function arguments and `ROAD_MODEL_ESTO_CSV` can override it for a
 one-off run, but routine model runs should use the repo-local file so local,
 interface, and deployment behavior match. This file is a snapshot of the ESTO transport energy data as of the last update. It is not automatically updated from the upstream source; update it with the `prepare_esto_for_deployment.py` script when the upstream ESTO file changes. ESTO is the APERC team responsible for creating the energy balances which are inputs to the energy outlook.
 
+When the interface launches a registered newer ESTO vintage, it passes the
+validated table explicitly with `--esto-csv`. Both Module 3 history and Module 6
+base-year reconciliation must use that same file. The history loader uses every
+year column present in the selected table; it must not cap newer vintages at
+2022.
+
 ### Relationship to the upstream ESTO file
 
 The source-of-record upstream file is normally:
