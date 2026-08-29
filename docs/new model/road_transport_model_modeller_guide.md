@@ -266,6 +266,10 @@ Current scope rules (important when comparing to the 9th edition and earlier 10t
 - Trucks use `medium` and `heavy` size labels where truck-size splits are needed.
 - `Fuel Economy` is the canonical Module 1 efficiency variable. `Final On-Road Fuel Economy` can be accepted only as a legacy input alias.
 
+For the investigated process, design decisions, and executable feasibility
+proof for extending this matrix, see
+[Adding a road drive type: truck PHEV case study](adding_a_drive_case_study_truck_phev.md).
+
 The changes were generally intended to 
 The same vehicle/drive/size matrix should be used by Module 1 validation and
 Module 2 branch generation. Module 1 rows outside this matrix should be rejected
