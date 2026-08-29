@@ -97,6 +97,13 @@ and boolean years are rejected rather than truncated. Russia's documented
 manifest-free 2022-to-2021 compatibility bridge remains a separate explicit
 legacy exception.
 
+The researcher interface currently configures ESTO 2024 / base year 2022 as
+the default vintage, with ESTO 2025 / 2023 and preliminary ESTO 2026 / 2024 as
+explicit alternatives. That default is owned by the interface's validated
+vintage registry; do not reproduce it as a separate hard-coded choice in this
+model repository. The model consumes and validates the package/base year sent
+by the interface.
+
 Module 1 input values should not be hard-coded in `leap_road_model`. The authoritative data sources are maintained in `road_model_inputs_interface`, mainly under:
 
 ```text
