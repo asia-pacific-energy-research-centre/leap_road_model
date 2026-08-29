@@ -1295,8 +1295,13 @@ def module3_figures(
                 f"{energy_note}</p>"
                 f'<div class="kpi-grid">{kpi_html}</div>'
             )
+            context_title = (
+                "Passenger energy growth context"
+                if has_energy
+                else "Passenger stock and motorisation context"
+            )
             figs.append((
-                "Passenger energy growth context",
+                context_title,
                 fig,
                 True,
                 caption,
@@ -3742,6 +3747,7 @@ def workflow_summary_figures(workflow_outputs: dict[str, Any]) -> list[tuple[str
         "Passenger X-LPV-equivalent vehicles vs saturation",
         "Freight stock growth assumption",
         "Passenger energy growth context",
+        "Passenger stock and motorisation context",
         # Drive-type technology mix
         "Sales shares (base-year)",
         "Sales shares (projected)",
@@ -3924,6 +3930,7 @@ _CHART_DENSITY: dict[str, str] = {
     "Passenger X-LPV-equivalent vehicles vs saturation": "more",
     "Freight stock growth assumption": "more",
     "Passenger energy growth context": "more",
+    "Passenger stock and motorisation context": "more",
     "Population": "more",
     "Sales shares (base-year)": "more",   # prefix-matched (title includes year)
     "Sales shares (projected)": "more",   # prefix-matched
@@ -4614,6 +4621,7 @@ def write_module_pages(
         "Passenger X-LPV-equivalent vehicles vs saturation",
         "Passenger X-LPV weight calibration",
         "Passenger energy growth context",
+        "Passenger stock and motorisation context",
     }
     if post_stock_scenarios:
         for scenario in post_stock_scenarios:

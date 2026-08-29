@@ -363,6 +363,7 @@ def test_dashboard_writes_pre_and_post_reconciliation_stock_pages(tmp_path):
     assert "Implied projected freight energy growth" not in module3_html
     assert "Projected freight energy use is not shown because the base year has not yet been reconciled" in module3_html
     assert "Passenger energy growth context" not in module3_html
+    assert "Passenger stock and motorisation context" in module3_html
     assert "Freight stock growth assumption" in post_html
     assert "Freight stock growth compared with GDP" in post_html
     assert "Passenger energy growth context" in post_html
