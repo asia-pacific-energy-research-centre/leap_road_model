@@ -12,16 +12,18 @@ branches:
 - the model retains, projects, turns over, reconciles, and exports the branches;
 - truck-specific fuel eligibility prevents the LPV/LCV gasoline rule leaking
   into trucks;
-- a full `20_USA` Target run completes Modules 1--7; and
-- the strict writer matches every active truck-PHEV row to real LEAP IDs in the
-  upstream Target export.
+- the canonical LEAP reference now contains the truck-PHEV metadata for Current
+  Accounts, Reference, and Target;
+- a browser-launched `20_USA` Target + Reference run completes Modules 1--7 and
+  creates the downloadable LEAP workbook and QA dashboard; and
+- the final writer has zero truck-PHEV warnings and matches every active
+  truck-PHEV row to real LEAP IDs.
 
-This proves implementation feasibility. It is not yet an approval to merge the
-case-study assumptions into production. The truck utilisation values are
-explicit LCV proxies with grade-D provenance, the three-fuel scope needs
-modeller approval, and the canonical reference workbook at
-`config/road model leap export.xlsx` has not yet been promoted from the newer
-upstream LEAP export.
+This proves technical implementation feasibility across both repositories and
+the locally hosted researcher workflow. It is not yet an approval of the
+case-study assumptions for production. The truck utilisation values are
+explicit LCV proxies with grade-D provenance and the three-fuel scope still
+needs modeller approval.
 
 ## Scope and decisions
 
@@ -35,7 +37,7 @@ upstream LEAP export.
 | Enabled liquid branches | `Gas and diesel oil`, `Biodiesel` | Confirm |
 | Utilisation granularity | `freight:Trucks`, with older `freight` fallback | Method is implemented; values need review |
 | Sales-share size handling | size inputs aggregate to truck-PHEV, then fan back by stock proportions | Confirm this is adequate for policy work |
-| LEAP structure | existing `PHEV heavy` and `PHEV medium` transport-stock-turnover branches | Promote reviewed export to canonical reference |
+| LEAP structure | existing `PHEV heavy` and `PHEV medium` transport-stock-turnover branches | Technically promoted; retain normal model review |
 
 The selected tree is:
 
@@ -88,8 +90,9 @@ Stock Turnover demand method.
 | Turnover and sales | Do downstream modules preserve it? | Full run reaches Modules 4 and 5. Existing behavior aggregates medium/heavy sales shares, then fans them back by stock. |
 | Reconciliation | Are electric and liquid modes allocated correctly? | Module 6 completes, writes utilisation diagnostics, and all fuel totals are within tolerance. |
 | LEAP metadata | Do correct transport branches and IDs exist? | Upstream Target and Reference exports contain the branches and variables. Read-only audit matches all 20 required Target row keys. |
-| Strict export | Does a complete economy produce an import workbook? | `20_USA` Target run completes Modules 1--7 and writes 66 truck-PHEV reference rows, including all active model rows. |
-| Production approval | Are assumptions and canonical files approved? | Pending utilisation/fuel review and canonical reference promotion. |
+| Strict export | Does a complete economy produce an import workbook? | Browser-launched `20_USA` Target + Reference run completes Modules 1--7, writes 86 truck-PHEV import rows, and reports zero truck-PHEV warnings. |
+| Local proof | Can a researcher do this from the hosted interface and inspect the result? | Yes. The interface sent 21,112 long rows, completed in 93.7 seconds, and exposed the workbook and timestamped QA dashboard. |
+| Production approval | Are assumptions approved? | Technical integration is complete; grade-D utilisation and the diesel/Biodiesel scope still require modeller review. |
 
 ## Detailed reusable procedure
 
@@ -288,11 +291,9 @@ Before production activation:
    upstream liquid branches;
 3. decide whether medium/heavy sales trajectories need a preserved size
    dimension in Module 5;
-4. promote a reviewed LEAP export to the canonical reference path;
-5. rerun the full model and interface test suites;
-6. import the workbook into a disposable correct LEAP area and inspect results;
-7. update current modeller/methodology branch descriptions; and
-8. merge the paired model and interface commits together.
+4. import the workbook into a disposable correct LEAP area and inspect results;
+5. update current modeller/methodology branch descriptions; and
+6. merge the paired model and interface commits together.
 
 Rollback must also be paired: revert source/contract rows, regenerated static
 files, model scope/fuel rules, and LEAP reference together. Never leave the
@@ -314,8 +315,148 @@ from the canonical LEAP reference.
 - [ ] Run the read-only reference audit.
 - [ ] Run one strict end-to-end economy and inspect T11, diagnostics, warnings,
       and the XLSX.
+- [ ] Run through the locally hosted interface and retain dashboard evidence.
 - [ ] Obtain assumption approval and promote model/interface/LEAP files as one
       reviewed release.
+
+## Local site and dashboard proof — 30 August 2026
+
+This is the reproducible browser-side acceptance test. It exercises the same
+static CSV that a researcher edits, the API hand-off, both projected scenarios,
+Modules 1--7, the LEAP writer, and the generated dashboard.
+
+### Start the paired feature version
+
+From the interface worktree, point the backend at the paired model worktree and
+the macro source, then start the local server:
+
+```powershell
+cd C:\Users\Work\github\worktrees\truck_phev_case_study\road_model_inputs_interface
+$env:LEAP_ROAD_MODEL_DIR = 'C:\Users\Work\github\worktrees\truck_phev_case_study\leap_road_model'
+$env:ROAD_MODEL_MACRO_CSV = 'C:\Users\Work\github\leap_transport\data\9th_macro_data.csv'
+python back-end\run.py
+```
+
+Open `http://127.0.0.1:8000/`, choose `20USA`, then select `Trucks` and
+`PHEV heavy`. The browser displays the source-backed stock/sales rows, electric
+and liquid fuel-economy rows, shared truck mileage, and truck-specific PHEV
+utilisation before anything is run.
+
+![20USA truck-PHEV inputs](evidence/truck_phev_inputs_20USA.png)
+
+Click **Run Road Model** without removing either projected scenario. The
+acceptance run sent 21,112 canonical long rows for Target and Reference. The
+server reported:
+
+| Stage | Result |
+|---|---:|
+| Module 1 base inputs | 936 rows |
+| Module 2 branches | 274 rows |
+| Module 3 stock targets | 390 rows |
+| Module 4 sales/turnover | 390 rows |
+| Module 5 future sales shares | 3,471 rows |
+| Module 6 LEAP-ready output | 22,502 rows |
+| Total timed work | 93.7 seconds |
+| Dashboard generation | 13.54 seconds |
+
+![Successful locally hosted model run](evidence/truck_phev_local_run_complete_20USA.png)
+
+The timestamped result from this run is:
+
+```text
+http://127.0.0.1:8000/road-results/20_USA/diagnostics/dashboard_20260830_185359/index.html
+results/20_USA/diagnostics/dashboard_20260830_185359/index.html
+```
+
+On **Simulated outputs**, select `By drive × vehicle type` for stock and
+`Trucks` for sales. The legend explicitly contains `PHEV × Trucks`, and the
+truck sales plot contains a non-zero PHEV band.
+
+![Truck-PHEV stock and sales](evidence/truck_phev_stock_and_sales_dashboard_20USA.png)
+
+The Module 7 values are a Python mirror of what LEAP should calculate, used for
+QA rather than claimed as results from a LEAP execution. For Target in 2060 the
+mirror produces:
+
+| Size | Stock | Vehicle-km | Energy (PJ) |
+|---|---:|---:|---:|
+| heavy | 84,217.955 | 1.751958 billion | 14.497568 |
+| medium | 84,217.955 | 1.502306 billion | 10.359684 |
+| **total** | **168,435.910** | **3.254264 billion** | **24.857252** |
+
+For both sizes, device shares are 48.8368% Electricity, 47.3358% Gas and
+diesel oil, and 3.8273% Biodiesel. The corresponding heavy/medium energy is
+7.080151/5.059340 PJ electricity, 6.862545/4.903843 PJ diesel, and
+0.554872/0.396501 PJ biodiesel.
+
+![Truck-PHEV energy in the simulated-output dashboard](evidence/truck_phev_energy_dashboard_20USA.png)
+
+The reconciliation page also exposes the two branches in the plug-in-hybrid
+utilisation back-check, labelled `Trucks | PHEV | heavy` and
+`Trucks | PHEV | medium`.
+
+![Truck-PHEV reconciliation back-check](evidence/truck_phev_reconciliation_dashboard_20USA.png)
+
+### What failed before the final pass, and how it was resolved
+
+The first browser run was computationally successful but reported 90
+truck-PHEV `model_row_not_in_leap_reference` warnings. This correctly showed
+that adding source/model rows alone was insufficient: the repository's
+canonical LEAP reference was older than the upstream transport export.
+
+The canonical workbook was promoted in a controlled spreadsheet edit:
+
+- 62 genuine truck-PHEV rows were copied from the exported transport metadata;
+- 36 correction-factor rows were derived for the same six fuel leaves and
+  three scenarios using the canonical variable definitions: Fuel Economy
+  Correction Factor VariableID `1661` and Mileage Correction Factor VariableID
+  `1667`, both with expression `1` and scale `Percent`;
+- the resulting reference contains 98 unique truck-PHEV
+  `(Branch Path, Variable, Scenario)` keys and no duplicate keys; and
+- Target and Reference audits each match 20/20 required drive-addition keys.
+
+The final interface rerun writes 86 truck-PHEV rows to
+`results/20_USA/module6/20_USA_leap_import.xlsx` and produces **zero warnings
+whose branch starts with `Demand\Freight road\Trucks\PHEV`**. The warning CSV
+still contains 188 unrelated pre-existing reference/model mismatches (178
+model rows absent from the old reference, nine reference rows absent from the
+model, and one region-ID notice); do not misrepresent those as truck-PHEV
+failures or as a globally warning-free workbook.
+
+After the live run, the non-full-pipeline model suite passed 246 tests with 24
+full-pipeline tests deselected, and the interface backend suite passed all 283
+tests (with one dependency deprecation warning):
+
+```powershell
+# leap_road_model worktree
+python -m pytest codebase\tests -q -k "not full_pipeline"
+
+# road_model_inputs_interface worktree
+python -m pytest back-end\tests -q
+```
+
+### Repeatable acceptance criteria for another combination
+
+A future vehicle/drive combination is technically proven only when all of the
+following are true:
+
+1. it is visible with its source and provenance in the browser;
+2. the exported browser package retains every required long-row key;
+3. a local Target + Reference run completes all modules;
+4. the combination is visible in stock, sales, energy, and reconciliation QA;
+5. the canonical reference audit has no missing required key for each scenario;
+6. the generated workbook uses real branch, variable, scenario, and region IDs;
+7. the warnings file has zero `model_row_not_in_leap_reference` rows for the
+   new branch prefix; and
+8. assumptions, proxies, and any remaining caveats are recorded separately
+   from technical feasibility.
+
+Supplemental retained screenshots cover the projected-sales page, the top of
+the simulated-output page, and the truck sales output before scrolling:
+
+- [projected sales evidence](evidence/truck_phev_projected_sales_dashboard_20USA.png)
+- [simulated outputs evidence](evidence/truck_phev_simulated_outputs_dashboard_20USA.png)
+- [truck sales output evidence](evidence/truck_phev_truck_sales_output_dashboard_20USA.png)
 
 ## External technology evidence
 
