@@ -102,6 +102,46 @@ class TestRoadModule1Defaults:
             3: 0.0,
         }
 
+    def test_lifecycle_profiles_collapse_identical_scenario_copies(self):
+        base_rows = [
+            {
+                "economy": "20_USA",
+                "variable": variable,
+                "transport_type": "freight",
+                "vehicle_type": None,
+                "leap_branch_path": f"Demand\\Freight road\\Age {age}",
+                "value": value,
+            }
+            for variable, values in (
+                ("survival_rate", [(0, 100.0), (1, 90.0)]),
+                ("vintage_share", [(0, 0.6), (1, 0.4)]),
+            )
+            for age, value in values
+        ]
+        defaults_df = pd.DataFrame(base_rows + base_rows)
+
+        curves = build_survival_curves(defaults_df, "20_USA")
+        profile = get_vintage_profiles(defaults_df, "20_USA", "freight")
+
+        assert curves["Trucks"].index.tolist() == [0, 1]
+        assert profile["age"].tolist() == [0, 1]
+
+    def test_conflicting_lifecycle_profile_copies_are_rejected(self):
+        defaults_df = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "variable": "survival_rate",
+                "transport_type": "freight",
+                "vehicle_type": None,
+                "leap_branch_path": "Demand\\Freight road\\Age 1",
+                "value": value,
+            }
+            for value in (90.0, 80.0)
+        ])
+
+        with pytest.raises(ValueError, match="Conflicting survival rates"):
+            build_survival_curves(defaults_df, "20_USA")
+
 
 class TestLeapFormatInputParsing:
     def test_stock_scale_millions_is_converted_to_devices(self):

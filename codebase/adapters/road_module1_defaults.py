@@ -772,7 +772,14 @@ def get_survival_curves(
     sub = sub.dropna(subset=["age"])
     sub["age"] = sub["age"].astype(int)
     out = sub[["age", "value"]].rename(columns={"value": "survival_rate"})
-    return out.sort_values("age").reset_index(drop=True)
+    conflicts = out.groupby("age")["survival_rate"].nunique(dropna=False)
+    if conflicts.gt(1).any():
+        conflict_ages = conflicts[conflicts.gt(1)].index.tolist()
+        raise ValueError(
+            "Conflicting survival rates for "
+            f"{economy} / {transport_type} / {vehicle_type} at ages {conflict_ages}"
+        )
+    return out.drop_duplicates(subset=["age"]).sort_values("age").reset_index(drop=True)
 
 
 def get_vintage_profiles(
@@ -819,7 +826,14 @@ def get_vintage_profiles(
     sub = sub.dropna(subset=["age"])
     sub["age"] = sub["age"].astype(int)
     out = sub[["age", "value"]].rename(columns={"value": "vintage_share"})
-    return out.sort_values("age").reset_index(drop=True)
+    conflicts = out.groupby("age")["vintage_share"].nunique(dropna=False)
+    if conflicts.gt(1).any():
+        conflict_ages = conflicts[conflicts.gt(1)].index.tolist()
+        raise ValueError(
+            "Conflicting vintage profile shares for "
+            f"{economy} / {transport_type} / {vehicle_type} at ages {conflict_ages}"
+        )
+    return out.drop_duplicates(subset=["age"]).sort_values("age").reset_index(drop=True)
 
 
 def _cumulative_survival_to_annual(survival: pd.Series) -> pd.Series:
