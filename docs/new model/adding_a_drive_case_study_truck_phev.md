@@ -38,7 +38,7 @@ each boundary can be verified before release.
 | 2. Model branch scope | Which vehicle/size combinations exist? | Implemented for `Trucks` in `medium` and `heavy`. | `vehicle_mappings.yaml`; config test |
 | 3. Vehicle-specific fuels | Does the drive-wide fuel rule fit this vehicle? | Implemented as an override: Electricity, Gas and diesel oil, Biodiesel. LPV/LCV PHEV remains gasoline-family. | `fuel_mappings.yaml`; Module 2 and Module 6 tests |
 | 4. Input adapter | Will valid Module 1 rows survive loading? | Implemented: truck PHEV retained; truck HEV still filtered. | adapter test |
-| 5. Source rows | Are stock, shares, mileage, efficiency, and utilisation sourced? | In progress in the interface worktree. Existing proxy rows require review. | pending |
+| 5. Source rows | Are stock, shares, mileage, efficiency, and utilisation sourced? | In progress in the interface worktree. The model now preserves a vehicle-specific utilisation key with a freight fallback. Existing proxy rows require review. | adapter and Module 6 tests; interface pending |
 | 6. Static contract | Will generated rows reach the browser and model? | Pending. | pending |
 | 7. Sales and turnover | Are drive and size dimensions preserved as intended? | Generic drive path is compatible; targeted run still required. | pending |
 | 8. Reconciliation | Does electric/liquid energy hit the right ESTO pools? | Unit-level diesel-family allocation implemented; economy run pending. | Module 6 tests |
@@ -61,6 +61,9 @@ each boundary can be verified before release.
    truck HEV.
 5. The guidance-only defaults were kept structurally aligned, but they remain
    non-runtime reference values. Production values must still come from Module 1.
+6. A freight-wide PHEV utilisation value is not sufficient when LCV and truck
+   duty cycles differ. The Module 1 adapter and Module 6 resolver now support a
+   `freight:Trucks` value and fall back to `freight` for older packages.
 
 ## Why PHEV is a useful case study
 

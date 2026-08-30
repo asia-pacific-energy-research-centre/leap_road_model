@@ -582,13 +582,26 @@ class TestModule1DefaultsSaturationUnits:
                 "Value": 0.47,
                 "Units": "Share",
             },
+            {
+                "Economy": "20_USA",
+                "Scenario": "Current Accounts",
+                "Branch Path": "Demand\\Freight road\\Trucks\\PHEV",
+                "Variable": "PHEV Electric Driving Share",
+                "Year": 2022,
+                "Value": 0.31,
+                "Units": "Share",
+            },
         ])
         df.to_csv(tmp_path / "road_module1_values_20_USA.csv", index=False)
 
         loaded = load_road_module1_defaults(tmp_path, economy_filter=["20_USA"])
         rates = get_phev_utilisation_rate(loaded, economy="20_USA")
 
-        assert rates == pytest.approx({"passenger": 0.52, "freight": 0.47})
+        assert rates == pytest.approx({
+            "passenger": 0.52,
+            "freight": 0.47,
+            "freight:Trucks": 0.31,
+        })
 
     def test_component_reconciliation_weights_from_pseudo_branches(self, tmp_path: Path):
         rows = []

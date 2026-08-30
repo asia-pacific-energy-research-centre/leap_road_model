@@ -135,6 +135,27 @@ class TestPHEVUtilisationRates:
         assert result["initial_energy_pj"].iloc[0] == 0.0
         assert np.isfinite(result["initial_energy_pj"].iloc[0])
 
+    def test_initial_branch_energy_prefers_vehicle_specific_phev_rate(self):
+        t4 = _make_t4(
+            _branch(
+                "Trucks", "PHEV", "Electricity", stock=100, mileage=20000, efficiency=300,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\PHEV medium\\Electricity",
+            ),
+            _branch(
+                "Trucks", "PHEV", "Gas and diesel oil", stock=100, mileage=20000, efficiency=120,
+                transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\PHEV medium\\Gas and diesel oil",
+            ),
+        )
+        t4["size"] = "medium"
+
+        result = calculate_initial_branch_energy(
+            t4,
+            phev_utilisation_rate={"freight": 0.47, "freight:Trucks": 0.30},
+        )
+
+        assert result.loc[result["fuel"].eq("Electricity"), "mileage_km_per_year"].iloc[0] == pytest.approx(6000)
+        assert result.loc[result["fuel"].eq("Gas and diesel oil"), "mileage_km_per_year"].iloc[0] == pytest.approx(14000)
+
 
 class TestPreReconciliationFuelAttribution:
     def test_multi_fuel_branch_is_attributed_once_by_esto_blend_share(self):

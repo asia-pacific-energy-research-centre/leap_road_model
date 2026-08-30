@@ -1137,9 +1137,10 @@ def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float 
     """
     Extract the PHEV electric driving share for the economy.
 
-    Passenger/freight rows are returned as a transport-type dictionary. Older
-    economy-level packages still return a single float, and missing inputs fall
-    back to 0.50.
+    Passenger/freight rows are returned as a dictionary. Vehicle-specific rows
+    use ``<transport_type>:<vehicle_type>`` keys and transport-level rows use
+    the transport type alone. Older economy-level packages still return a
+    single float, and missing inputs fall back to 0.50.
     """
     mask = (
         (defaults_df["economy"] == economy)
@@ -1153,15 +1154,27 @@ def get_phev_utilisation_rate(defaults_df: pd.DataFrame, economy: str) -> float 
         )
         return 0.50
     if "transport_type" in sub.columns:
-        transport_rows = sub[sub["transport_type"].notna()].copy()
-        if not transport_rows.empty:
-            rates: dict[str, float] = {}
-            for transport_type, group in transport_rows.groupby("transport_type", dropna=True):
+        rates: dict[str, float] = {}
+        if "vehicle_type" in sub.columns:
+            vehicle_rows = sub[
+                sub["transport_type"].notna() & sub["vehicle_type"].notna()
+            ].copy()
+            for (transport_type, vehicle_type), group in vehicle_rows.groupby(
+                ["transport_type", "vehicle_type"],
+                dropna=True,
+            ):
                 rate = float(group["value"].iloc[0])
-                rates[str(transport_type)] = min(1.0, max(0.0, rate))
-            if rates:
-                log.info("Module 1 PHEV utilisation rates for %s by transport type: %s", economy, rates)
-                return rates
+                rates[f"{transport_type}:{vehicle_type}"] = min(1.0, max(0.0, rate))
+
+        transport_rows = sub[sub["transport_type"].notna()].copy()
+        if "vehicle_type" in transport_rows.columns:
+            transport_rows = transport_rows[transport_rows["vehicle_type"].isna()]
+        for transport_type, group in transport_rows.groupby("transport_type", dropna=True):
+            rate = float(group["value"].iloc[0])
+            rates[str(transport_type)] = min(1.0, max(0.0, rate))
+        if rates:
+            log.info("Module 1 PHEV utilisation rates for %s by scope: %s", economy, rates)
+            return rates
 
     if {"vehicle_type", "transport_type"}.issubset(sub.columns):
         economy_level = sub[sub["vehicle_type"].isna() & sub["transport_type"].isna()]

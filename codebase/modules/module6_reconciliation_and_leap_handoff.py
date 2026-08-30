@@ -104,6 +104,7 @@ def _resolve_phev_utilisation_rate(
     """Return the electric driving share for a PHEV row/group."""
     if isinstance(phev_utilisation_rate, dict):
         transport_type = None
+        vehicle_type = None
         if "transport_type" in row_or_group:
             value = row_or_group["transport_type"]
             if isinstance(value, pd.Series):
@@ -111,7 +112,19 @@ def _resolve_phev_utilisation_rate(
                 transport_type = str(non_null.iloc[0]) if not non_null.empty else None
             elif pd.notna(value):
                 transport_type = str(value)
-        for key in (transport_type, "default", "economy"):
+        if "vehicle_type" in row_or_group:
+            value = row_or_group["vehicle_type"]
+            if isinstance(value, pd.Series):
+                non_null = value.dropna()
+                vehicle_type = str(non_null.iloc[0]) if not non_null.empty else None
+            elif pd.notna(value):
+                vehicle_type = str(value)
+        vehicle_key = (
+            f"{transport_type}:{vehicle_type}"
+            if transport_type and vehicle_type
+            else None
+        )
+        for key in (vehicle_key, transport_type, "default", "economy"):
             if key in phev_utilisation_rate:
                 return min(1.0, max(0.0, float(phev_utilisation_rate[key])))
         if phev_utilisation_rate:
