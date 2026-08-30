@@ -20,8 +20,10 @@ Outputs: T8–T12 DataFrames + T11_leap_ready.
 
 Fuel eligibility (coarse gate):
     drive_fuel_eligibility in fuel_mappings.yaml controls which fuels each drive
-    type (ICE, HEV, BEV, PHEV, EREV, FCEV) can receive. HEV is NOT eligible for
-    LPG, LNG, or Natural gas — those are ICE-only fuels.
+    type (ICE, HEV, BEV, PHEV, EREV, FCEV) can receive. Optional
+    vehicle_drive_fuel_eligibility entries replace that drive-wide rule for a
+    specific vehicle/drive pair. HEV is NOT eligible for LPG, LNG, or Natural
+    gas — those are ICE-only fuels.
 
 Priority fuels (_FUEL_ALLOCATION_PRIORITY):
     Fuels listed here are allocated in _PRIORITY_FUEL_ALLOCATION_ORDER before
@@ -95,15 +97,6 @@ _SINGLE_FUEL_DRIVES = {"BEV", "FCEV"}
 _PLUGIN_HYBRID_DRIVES = {"PHEV", "EREV"}
 PHEVUtilisationRate = float | dict[str, float]
 
-# Plug-in hybrid liquid fuels used for the transport-sector liquid blend.
-# PHEVs and EREVs use the gasoline family: motor gasoline, biogasoline, and efuel.
-_PLUGIN_LIQUID_FUELS_BY_DRIVE = {
-    "PHEV": {"Motor gasoline", "Biogasoline", "Efuel"},
-    "EREV": {"Motor gasoline", "Biogasoline", "Efuel"},
-}
-_DEFAULT_PLUGIN_LIQUID_FUELS = {"Motor gasoline", "Biogasoline", "Efuel"}
-
-
 def _resolve_phev_utilisation_rate(
     phev_utilisation_rate: PHEVUtilisationRate,
     row_or_group: pd.Series | pd.DataFrame,
@@ -152,11 +145,12 @@ _PRIORITY_FUEL_ALLOCATION_ORDER = {
 }
 
 _FUEL_ELIGIBILITY: dict[str, list[str]] | None = None
+_VEHICLE_DRIVE_FUEL_ELIGIBILITY: dict[str, dict[str, list[str]]] | None = None
 
 
 def _get_fuel_eligibility() -> dict[str, list[str]]:
     """Return drive_type → [eligible fuels] from fuel_mappings.yaml (cached)."""
-    global _FUEL_ELIGIBILITY
+    global _FUEL_ELIGIBILITY, _VEHICLE_DRIVE_FUEL_ELIGIBILITY
     if _FUEL_ELIGIBILITY is None:
         with open(_CONFIG_DIR / "fuel_mappings.yaml") as fh:
             cfg = yaml.safe_load(fh)
@@ -167,7 +161,36 @@ def _get_fuel_eligibility() -> dict[str, list[str]]:
                 fuels.extend(group_fuels)
             result[drive] = fuels
         _FUEL_ELIGIBILITY = result
+        vehicle_result: dict[str, dict[str, list[str]]] = {}
+        for vehicle_type, drives in cfg.get("vehicle_drive_fuel_eligibility", {}).items():
+            vehicle_result[vehicle_type] = {}
+            for drive, groups in drives.items():
+                fuels: list[str] = []
+                for group_fuels in groups.values():
+                    fuels.extend(group_fuels)
+                vehicle_result[vehicle_type][drive] = fuels
+        _VEHICLE_DRIVE_FUEL_ELIGIBILITY = vehicle_result
     return _FUEL_ELIGIBILITY
+
+
+def _eligible_fuels_for_row(row: pd.Series) -> list[str]:
+    """Return eligible fuels, preferring a vehicle/drive override when present."""
+    default_eligibility = _get_fuel_eligibility()
+    vehicle_eligibility = _VEHICLE_DRIVE_FUEL_ELIGIBILITY or {}
+    vehicle_type = str(row.get("vehicle_type", ""))
+    drive_type = str(row.get("drive_type", ""))
+    return vehicle_eligibility.get(vehicle_type, {}).get(
+        drive_type,
+        default_eligibility.get(drive_type, []),
+    )
+
+
+def _plugin_liquid_fuels_for_group(group: pd.DataFrame) -> set[str]:
+    """Return non-electric eligible fuels for one plug-in-hybrid fleet group."""
+    if group.empty:
+        return set()
+    row = group.iloc[0]
+    return set(_eligible_fuels_for_row(row)) - {"Electricity"}
 
 
 def _tech_path(fuel_branch_path: str) -> str:
@@ -520,9 +543,8 @@ def bootstrap_zero_stock_fuel_branches(
         return branch_energy
 
     out = branch_energy.copy()
-    eligibility = _get_fuel_eligibility()
     out["_module6_fuel_eligible"] = out.apply(
-        lambda row: row["fuel"] in eligibility.get(row["drive_type"], []),
+        lambda row: row["fuel"] in _eligible_fuels_for_row(row),
         axis=1,
     )
     if "stock_bootstrapped_for_reconciliation" not in out.columns:
@@ -841,10 +863,9 @@ def distribute_phev_liquid_by_esto_mix(
     The branch table has one row per eligible liquid fuel. Those rows are fuel
     alternatives, so summing their raw liquid-mode energy would count the same
     PHEV fleet multiple times. Use the transport-sector liquid-fuel mix as the
-    best available split across eligible fuels, but only for the preferred
-    plug-in liquid fuels. PHEV and EREV liquid demand is assigned only to the
-    gasoline family: motor gasoline, biogasoline, and efuel. LPG, CNG, diesel,
-    and biodiesel are intentionally ignored for plug-in hybrids.
+    best available split across the plug-in liquid fuels configured for that
+    vehicle/drive pair. The drive-wide PHEV/EREV rule is gasoline-family; truck
+    PHEV uses the vehicle-specific diesel-family override.
     """
     if phev_liquid_table.empty:
         return phev_liquid_table.copy()
@@ -864,8 +885,7 @@ def distribute_phev_liquid_by_esto_mix(
         group = group.copy()
         group["phev_liquid_pj"] = pd.to_numeric(group["phev_liquid_pj"], errors="coerce").fillna(0.0)
 
-        drive_type = str(group["drive_type"].iloc[0]) if "drive_type" in group.columns else "PHEV"
-        liquid_fuels = _PLUGIN_LIQUID_FUELS_BY_DRIVE.get(drive_type, _DEFAULT_PLUGIN_LIQUID_FUELS)
+        liquid_fuels = _plugin_liquid_fuels_for_group(group)
         preferred_mask = group["fuel"].isin(liquid_fuels)
         if not preferred_mask.any():
             log.warning(
@@ -986,10 +1006,9 @@ def build_pre_reconciliation_fuel_attribution(
     if not required.issubset(branch_energy.columns):
         return pd.DataFrame(columns=cols)
 
-    eligibility = _get_fuel_eligibility()
     df = branch_energy.copy()
     df["initial_energy_pj"] = pd.to_numeric(df["initial_energy_pj"], errors="coerce").fillna(0.0)
-    df = df[df.apply(lambda row: row["fuel"] in eligibility.get(row["drive_type"], []), axis=1)].copy()
+    df = df[df.apply(lambda row: row["fuel"] in _eligible_fuels_for_row(row), axis=1)].copy()
     if df.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1109,11 +1128,9 @@ def allocate_esto_fuel_to_branches(
 
     Returns T8_fuel_allocation DataFrame.
     """
-    eligibility = _get_fuel_eligibility()
-
     # Filter to only (drive_type, fuel) combinations that are eligible
     def _is_eligible(row: pd.Series) -> bool:
-        return row["fuel"] in eligibility.get(row["drive_type"], [])
+        return row["fuel"] in _eligible_fuels_for_row(row)
 
     eligible_mask = branch_energy.apply(_is_eligible, axis=1)
     n_ineligible = (~eligible_mask).sum()

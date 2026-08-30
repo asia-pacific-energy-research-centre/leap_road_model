@@ -77,6 +77,18 @@ drive_fuel_eligibility:
     biofuels:  []
     efuels:    []
 
+# Vehicle-specific overrides for a drive whose fuel family differs by vehicle
+# type. Module 2 and Module 6 use the override instead of the drive-wide entry.
+# Truck PHEVs are represented as diesel-family plug-in hybrids; LPV and LCV
+# PHEVs continue to use the gasoline-family drive-wide rule above.
+vehicle_drive_fuel_eligibility:
+  Trucks:
+    PHEV:
+      electric:  [Electricity]
+      liquid:    [Gas and diesel oil]
+      biofuels:  [Biodiesel]
+      efuels:    []
+
 # Preferred allocation targets by fuel (for Module 6 Step 4)
 # Lists the drive types that a fuel is primarily allocated to.
 fuel_preferred_drives:

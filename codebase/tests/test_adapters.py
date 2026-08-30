@@ -613,7 +613,7 @@ class TestModule1DefaultsSaturationUnits:
 
         assert weights == pytest.approx({"stock": 0.5, "mileage": 0.25, "efficiency": 0.25})
 
-    def test_out_of_scope_truck_hybrid_rows_are_filtered(self, tmp_path: Path):
+    def test_truck_phev_rows_are_retained_while_hev_rows_are_filtered(self, tmp_path: Path):
         df = pd.DataFrame([
             {
                 "Branch Path": "Demand\\Freight road\\Trucks\\PHEV heavy",
@@ -642,10 +642,13 @@ class TestModule1DefaultsSaturationUnits:
         ])
 
         filtered = _filter_out_of_scope_model_rows(df)
-        assert filtered["Branch Path"].tolist() == ["Demand\\Freight road\\Trucks\\BEV heavy"]
+        assert filtered["Branch Path"].tolist() == [
+            "Demand\\Freight road\\Trucks\\PHEV heavy",
+            "Demand\\Freight road\\Trucks\\BEV heavy",
+        ]
 
         csv_path = tmp_path / "road_module1_default_filled_inputs_20USA.csv"
         df.to_csv(csv_path, index=False)
         loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="vtest")
 
-        assert set(loaded["drive_type"]) == {"BEV"}
+        assert set(loaded["drive_type"]) == {"PHEV", "BEV"}

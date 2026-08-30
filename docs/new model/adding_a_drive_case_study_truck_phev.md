@@ -21,10 +21,46 @@ This distinction matters. A branch appearing in Python proves structural
 feasibility; it does not prove that the assumptions, energy reconciliation, or
 LEAP import are valid.
 
-The proof is
-`codebase/tests/test_config_contract.py::test_truck_phev_case_study_proves_configured_branches_reach_t11`.
-It deliberately changes an in-memory copy of the configuration and does not
-enable the feature in production.
+The original proof changed an in-memory copy of the configuration and did not
+enable the feature. The implementation run below replaces it with
+`codebase/tests/test_config_contract.py::test_truck_phev_scope_reaches_t11_with_diesel_family_fuels`,
+which verifies the actual configured scope.
+
+## Implementation run started 30 August 2026
+
+The original investigation above is retained as the before-state. The follow-up
+implementation is being performed in isolated model and interface worktrees so
+each boundary can be verified before release.
+
+| Gate | Reusable question | Truck-PHEV implementation status | Evidence |
+|---|---|---|---|
+| 1. Definition | What does the drive mean for this vehicle? | Chosen for the case study: plug-in electric mode plus diesel-family combustion mode. | Scania and US DOE sources linked below |
+| 2. Model branch scope | Which vehicle/size combinations exist? | Implemented for `Trucks` in `medium` and `heavy`. | `vehicle_mappings.yaml`; config test |
+| 3. Vehicle-specific fuels | Does the drive-wide fuel rule fit this vehicle? | Implemented as an override: Electricity, Gas and diesel oil, Biodiesel. LPV/LCV PHEV remains gasoline-family. | `fuel_mappings.yaml`; Module 2 and Module 6 tests |
+| 4. Input adapter | Will valid Module 1 rows survive loading? | Implemented: truck PHEV retained; truck HEV still filtered. | adapter test |
+| 5. Source rows | Are stock, shares, mileage, efficiency, and utilisation sourced? | In progress in the interface worktree. Existing proxy rows require review. | pending |
+| 6. Static contract | Will generated rows reach the browser and model? | Pending. | pending |
+| 7. Sales and turnover | Are drive and size dimensions preserved as intended? | Generic drive path is compatible; targeted run still required. | pending |
+| 8. Reconciliation | Does electric/liquid energy hit the right ESTO pools? | Unit-level diesel-family allocation implemented; economy run pending. | Module 6 tests |
+| 9. LEAP structure | Do matching branches and metadata exist in LEAP? | Pending; current reference export has no truck-PHEV branch. | workbook inspection |
+| 10. End-to-end release | Can a static package run through a disposable LEAP area? | Pending. | pending |
+
+### Implementation notes recorded while working
+
+1. Adding `PHEV` only to the truck drive list was insufficient. The existing
+   drive-wide PHEV fuel map would have created gasoline branches for trucks.
+2. Vehicle-specific fuel eligibility is therefore a reusable model feature,
+   not a truck-only conditional. Module 2 and Module 6 both resolve the same
+   override and otherwise fall back to the drive-wide rule.
+3. Eligibility must be used consistently by branch creation, zero-stock
+   bootstrapping, pre-reconciliation attribution, liquid-mode distribution, and
+   final fuel allocation. Updating only the skeleton would produce rows that
+   later calculations silently reject or misallocate.
+4. The adapter contained a second vehicle/drive scope gate. Its regression test
+   was updated to distinguish the newly valid truck PHEV from still-invalid
+   truck HEV.
+5. The guidance-only defaults were kept structurally aligned, but they remain
+   non-runtime reference values. Production values must still come from Module 1.
 
 ## Why PHEV is a useful case study
 

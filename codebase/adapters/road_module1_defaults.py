@@ -127,7 +127,7 @@ _VALID_BASE_DRIVES_BY_VEHICLE_TYPE = {
     "LPVs": {"ICE", "HEV", "EREV", "PHEV", "BEV", "FCEV"},
     "Motorcycles": {"ICE", "BEV", "FCEV"},
     "Buses": {"ICE", "BEV", "FCEV"},
-    "Trucks": {"ICE", "BEV", "FCEV"},
+    "Trucks": {"ICE", "PHEV", "BEV", "FCEV"},
     "LCVs": {"ICE", "PHEV", "BEV", "FCEV"},
 }
 

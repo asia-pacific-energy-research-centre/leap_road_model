@@ -82,12 +82,13 @@ vehicle_equivalent_weights:
 # label, e.g. LPVs + ICE + large -> "ICE large" and Trucks + BEV + heavy ->
 # "BEV heavy".
 # HEV and EREV are LPV-only in the current road branch scope.
-# PHEV is currently valid only for LPVs and LCVs.
+# PHEV is valid for LPVs, LCVs, and Trucks. Truck PHEVs use vehicle-specific
+# diesel-family fuel eligibility from fuel_mappings.yaml.
 valid_drive_types_by_vehicle_type:
   LPVs:        [ICE, HEV, EREV, PHEV, BEV, FCEV]
   Motorcycles: [ICE, BEV, FCEV]
   Buses:       [ICE, BEV, FCEV]
-  Trucks:      [ICE, BEV, FCEV]
+  Trucks:      [ICE, PHEV, BEV, FCEV]
   LCVs:        [ICE, PHEV, BEV, FCEV]
 
 # LEAP branch label (used in branch paths)
