@@ -1,409 +1,329 @@
 # Adding a road drive type: truck PHEV case study
 
-## Purpose and result
+## Outcome
 
-This case study records how to add an existing model drive type to a new vehicle
-type. The example is adding `PHEV` to `Trucks`, which already have `medium` and
-`heavy` size branches.
+This case study verifies that the road-model pipeline can add an existing drive
+type to a new vehicle type. The example adds `PHEV` to medium and heavy trucks.
 
-The investigation on 29 August 2026 reached two different conclusions:
+The technical path is complete on the paired `codex/truck-phev-case-study`
+branches:
 
-1. **The software structure can represent a sized truck PHEV.** An executable
-   proof adds `PHEV` to a copy of the truck drive matrix, generates the expected
-   medium/heavy fuel branches, calculates electric and liquid Device Shares, and
-   carries the branches into T11.
-2. **Truck PHEVs are not ready to switch on in the production model.** The
-   current PHEV implementation assumes gasoline-family liquid fuels, the
-   freight utilisation input is an LCV proxy, the current static contract omits
-   truck-PHEV rows, and the LEAP reference workbook has no truck-PHEV branches.
+- the interface builds truck-PHEV inputs for all 21 economies;
+- the model retains, projects, turns over, reconciles, and exports the branches;
+- truck-specific fuel eligibility prevents the LPV/LCV gasoline rule leaking
+  into trucks;
+- a full `20_USA` Target run completes Modules 1--7; and
+- the strict writer matches every active truck-PHEV row to real LEAP IDs in the
+  upstream Target export.
 
-This distinction matters. A branch appearing in Python proves structural
-feasibility; it does not prove that the assumptions, energy reconciliation, or
-LEAP import are valid.
+This proves implementation feasibility. It is not yet an approval to merge the
+case-study assumptions into production. The truck utilisation values are
+explicit LCV proxies with grade-D provenance, the three-fuel scope needs
+modeller approval, and the canonical reference workbook at
+`config/road model leap export.xlsx` has not yet been promoted from the newer
+upstream LEAP export.
 
-The original proof changed an in-memory copy of the configuration and did not
-enable the feature. The implementation run below replaces it with
-`codebase/tests/test_config_contract.py::test_truck_phev_scope_reaches_t11_with_diesel_family_fuels`,
-which verifies the actual configured scope.
+## Scope and decisions
 
-## Implementation run started 30 August 2026
-
-The original investigation above is retained as the before-state. The follow-up
-implementation is being performed in isolated model and interface worktrees so
-each boundary can be verified before release.
-
-| Gate | Reusable question | Truck-PHEV implementation status | Evidence |
-|---|---|---|---|
-| 1. Definition | What does the drive mean for this vehicle? | Chosen for the case study: plug-in electric mode plus diesel-family combustion mode. | Scania and US DOE sources linked below |
-| 2. Model branch scope | Which vehicle/size combinations exist? | Implemented for `Trucks` in `medium` and `heavy`. | `vehicle_mappings.yaml`; config test |
-| 3. Vehicle-specific fuels | Does the drive-wide fuel rule fit this vehicle? | Implemented as an override: Electricity, Gas and diesel oil, Biodiesel. LPV/LCV PHEV remains gasoline-family. | `fuel_mappings.yaml`; Module 2 and Module 6 tests |
-| 4. Input adapter | Will valid Module 1 rows survive loading? | Implemented: truck PHEV retained; truck HEV still filtered. | adapter test |
-| 5. Source rows | Are stock, shares, mileage, efficiency, and utilisation sourced? | In progress in the interface worktree. The model now preserves a vehicle-specific utilisation key with a freight fallback. Existing proxy rows require review. | adapter and Module 6 tests; interface pending |
-| 6. Static contract | Will generated rows reach the browser and model? | Pending. | pending |
-| 7. Sales and turnover | Are drive and size dimensions preserved as intended? | Generic drive path is compatible; targeted run still required. | pending |
-| 8. Reconciliation | Does electric/liquid energy hit the right ESTO pools? | Unit-level diesel-family allocation implemented; economy run pending. | Module 6 tests |
-| 9. LEAP structure | Do matching branches and metadata exist in LEAP? | Pending; current reference export has no truck-PHEV branch. | workbook inspection |
-| 10. End-to-end release | Can a static package run through a disposable LEAP area? | Pending. | pending |
-
-### Implementation notes recorded while working
-
-1. Adding `PHEV` only to the truck drive list was insufficient. The existing
-   drive-wide PHEV fuel map would have created gasoline branches for trucks.
-2. Vehicle-specific fuel eligibility is therefore a reusable model feature,
-   not a truck-only conditional. Module 2 and Module 6 both resolve the same
-   override and otherwise fall back to the drive-wide rule.
-3. Eligibility must be used consistently by branch creation, zero-stock
-   bootstrapping, pre-reconciliation attribution, liquid-mode distribution, and
-   final fuel allocation. Updating only the skeleton would produce rows that
-   later calculations silently reject or misallocate.
-4. The adapter contained a second vehicle/drive scope gate. Its regression test
-   was updated to distinguish the newly valid truck PHEV from still-invalid
-   truck HEV.
-5. The guidance-only defaults were kept structurally aligned, but they remain
-   non-runtime reference values. Production values must still come from Module 1.
-6. A freight-wide PHEV utilisation value is not sufficient when LCV and truck
-   duty cycles differ. The Module 1 adapter and Module 6 resolver now support a
-   `freight:Trucks` value and fall back to `freight` for older packages.
-
-## Why PHEV is a useful case study
-
-Adding a single-fuel drive such as BEV to a new vehicle type mainly requires a
-new branch, inputs, sales shares, and a matching LEAP branch. PHEV exercises
-more of the system because one technology has two operating modes:
-
-- electricity for electric-mode travel;
-- a combustion fuel for the remaining travel;
-- different efficiency for each mode;
-- an electric-driving-share assumption; and
-- reconciliation against two or more ESTO fuel totals.
-
-It therefore exposes the decisions that can be hidden by a simple branch-list
-change.
-
-## Current state of the truck-PHEV path
-
-| Layer | Current evidence | Status before activation |
+| Decision | Case-study choice | Production decision still needed? |
 |---|---|---|
-| Interface source prep | `prepare_road_source.py` excludes PHEV buses and motorcycles, but not trucks. | Partly prepared |
-| Interface source pool | `manually_entered_missing_rows.csv` contains proxy mileage and fuel-economy rows for `PHEV medium` and `PHEV heavy`. | Experimental inputs exist; provenance and values need review |
-| Interface derivation helper | `_PROXY_DRIVES` in `derive_missing_module1_rows.py` maps truck PHEV fossil mode to truck ICE and electric mode to truck BEV. | Mechanism exists |
-| Current static contract | `road_module1_static_contract.csv` has LCV PHEV rows but no truck PHEV rows. | Disabled |
-| Current static bundle | The configured `v2026_06_05_road_module1_sources` bundle has no truck PHEV rows. An older best-guess bundle contains some, but generated history is not an active contract. | Disabled |
-| Model input adapter | `_VALID_BASE_DRIVES_BY_VEHICLE_TYPE` drops truck PHEV rows as out of scope. | Disabled |
-| Module 2 skeleton | `vehicle_mappings.yaml` allows truck `ICE`, `BEV`, and `FCEV`, not `PHEV`. | Disabled |
-| Modules 4 and 5 | Turnover and sales-share logic operate on drive labels generically. Module 5 aggregates size-level input shares to vehicle-type/drive shares. | Structurally compatible |
-| Module 6 | PHEV/EREV electric-mode splitting, electricity reconciliation, liquid subtraction, Device Shares, and diagnostics are generic across passenger/freight and size. | Structurally compatible, but current liquid-fuel rule is not suitable for truck activation without review |
-| LEAP reference workbook | `config/road model leap export.xlsx` contains LCV PHEV branches but no `Demand\Freight road\Trucks\PHEV ...` branches. | Blocking |
+| Vehicle | `Trucks` | No |
+| Sizes | `medium`, `heavy` | No |
+| Drive label | `PHEV` | No |
+| Electric fuel | `Electricity` | No |
+| Combustion family | diesel-family | Confirm |
+| Enabled liquid branches | `Gas and diesel oil`, `Biodiesel` | Confirm |
+| Utilisation granularity | `freight:Trucks`, with older `freight` fallback | Method is implemented; values need review |
+| Sales-share size handling | size inputs aggregate to truck-PHEV, then fan back by stock proportions | Confirm this is adequate for policy work |
+| LEAP structure | existing `PHEV heavy` and `PHEV medium` transport-stock-turnover branches | Promote reviewed export to canonical reference |
 
-## The proposed branch shape
-
-The existing generic PHEV rule would generate this structure after adding
-`PHEV` to the truck drive matrix:
+The selected tree is:
 
 ```text
 Demand\Freight road\Trucks
-  PHEV medium
-    Electricity
-    Motor gasoline
-    Biogasoline
-    Efuel
   PHEV heavy
     Electricity
-    Motor gasoline
-    Biogasoline
-    Efuel
+    Gas and diesel oil
+    Biodiesel
+  PHEV medium
+    Electricity
+    Gas and diesel oil
+    Biodiesel
 ```
 
-That is what the structural proof verifies. It is not yet the recommended
-production fuel tree.
+The upstream LEAP export also contains Motor gasoline, Biogasoline, and Efuel
+under these technologies. They remain outside this case-study model scope. The
+strict writer correctly reports those six scenario-specific Device Share rows
+as reference rows not produced by the model; it reports zero active truck-PHEV
+model rows missing from the reference.
 
-Real truck examples show why the combustion fuel needs an explicit decision.
+## Process map
+
+```text
+1. Define technology and fuel scope
+   -> 2. Check source data and assumptions
+   -> 3. Extend interface source + static contract
+   -> 4. Regenerate and validate 21 economy packages
+   -> 5. Extend model vehicle/drive + fuel scope
+   -> 6. Verify turnover, sales shares, utilisation, and reconciliation
+   -> 7. Verify LEAP transport branches and IDs
+   -> 8. Run strict end-to-end economy export
+   -> 9. Review assumptions and promote the release package
+```
+
+Each gate has a different meaning. Passing Python branch creation does not
+prove that source assumptions are credible. Writing an XLSX does not prove that
+LEAP IDs exist. Finding a LEAP branch does not prove that it uses the Transport
+Stock Turnover demand method.
+
+## Gate record
+
+| Gate | Question | Evidence and result |
+|---|---|---|
+| Definition | What does this drive mean for trucks? | Electric travel plus diesel-family combustion travel; medium and heavy sizes. |
+| Source | Do all required input keys exist? | Generated packages contain stock/sales shares, fuel mileage and efficiency, and a truck utilisation row. Utilisation is an explicit LCV proxy pending review. |
+| Static hand-off | Will rows survive source build, browser load, and model export? | Static contract extended and all 21 economy packages rebuilt successfully. Each contains 1,081 truck-PHEV long rows. |
+| Model scope | Will the adapter and branch builder retain the combination? | Truck PHEV added to both scope gates; truck HEV remains invalid. |
+| Fuel scope | Can one drive have vehicle-specific fuels? | New `(vehicle type, drive)` override selects Electricity, Gas and diesel oil, and Biodiesel for truck PHEV while LPV/LCV PHEV remains unchanged. |
+| Turnover and sales | Do downstream modules preserve it? | Full run reaches Modules 4 and 5. Existing behavior aggregates medium/heavy sales shares, then fans them back by stock. |
+| Reconciliation | Are electric and liquid modes allocated correctly? | Module 6 completes, writes utilisation diagnostics, and all fuel totals are within tolerance. |
+| LEAP metadata | Do correct transport branches and IDs exist? | Upstream Target and Reference exports contain the branches and variables. Read-only audit matches all 20 required Target row keys. |
+| Strict export | Does a complete economy produce an import workbook? | `20_USA` Target run completes Modules 1--7 and writes 66 truck-PHEV reference rows, including all active model rows. |
+| Production approval | Are assumptions and canonical files approved? | Pending utilisation/fuel review and canonical reference promotion. |
+
+## Detailed reusable procedure
+
+### 1. Define the combination before editing
+
+Record:
+
+- exact vehicle, drive, and size labels;
+- physical meaning of the drive;
+- fuel leaves and any blending interpretation;
+- base-year behavior when observed stock is zero;
+- utilisation definition and units;
+- source/proxy policy and quality grade;
+- projected sales-share behavior; and
+- expected LEAP demand method and scenario names.
+
+For a multi-fuel drive, explicitly decide which rule is global to the drive and
+which is specific to the vehicle. Adding diesel to the global `PHEV` list would
+also change LPV and LCV branches, so this case required vehicle-specific fuel
+eligibility.
+
+### 2. Trace every scope gate
+
+Search both repositories for the vehicle, drive, nearest analogue, and fuel
+labels. At minimum inspect:
+
+- interface source-preparation filters and proxy derivation;
+- interface source pools and provenance;
+- static contract and fuel exclusions;
+- model adapter valid-drive scope;
+- model vehicle mapping;
+- model fuel mapping;
+- Module 2 skeleton construction;
+- Modules 4 and 5 dimensions;
+- Module 6 PHEV splitting, fuel eligibility, and reconciliation; and
+- LEAP writer required-row scope.
+
+Truck PHEV exposed two duplicated gates: the model adapter and vehicle mapping
+both constrained valid drives. Updating only one would either drop valid input
+or create unsourced branches.
+
+### 3. Prepare source-backed interface rows
+
+Owner: `road_model_inputs_interface`.
+
+For every size, supply:
+
+- base-year `Stock Share`;
+- base-year and projected `Sales Share`;
+- `Mileage` and `Fuel Economy` for every enabled fuel leaf; and
+- PHEV electric-driving share at a granularity the model can preserve.
+
+The case study uses existing truck proxy rows and adds 21 explicit
+truck-utilisation proxy rows copied from LCV, marked
+`case_study_proxy_from_lcv` with grade D. This makes the uncertainty visible and
+prevents an experimental value being mistaken for reviewed evidence.
+
+### 4. Extend the static contract and regenerate
+
+Add every approved `(Branch Path, Variable)` pair to:
+
+```text
+back-end/data/road_model/config/road_module1_static_contract.csv
+```
+
+Set Current Accounts, projected scenario, units, visibility, and notes
+deliberately. Review the fuel exclusion file, but do not use a zero historical
+technology stock as a reason to omit a future fuel branch.
+
+Regenerate from the interface repository:
+
+```powershell
+$env:ROAD_MODEL_MACRO_CSV = 'C:\Users\Work\github\leap_transport\data\9th_macro_data.csv'
+python back-end\build_road_model_static_defaults.py
+```
+
+The isolated worktree also required the source `leap_import_workbooks` package,
+which is intentionally ignored by Git. Verify the generated backend output,
+frontend static CSVs, and `index.json`; do not hand-edit generated CSVs.
+
+Case-study result: the hard static contract passed for 21 economies. Each
+economy contains the two sizes, three fuels per size, and a truck-specific PHEV
+utilisation row.
+
+### 5. Extend model scope and vehicle-specific fuel eligibility
+
+Owner: `leap_road_model`.
+
+Keep these gates synchronized:
+
+- `codebase/config/vehicle_mappings.yaml`;
+- `codebase/adapters/road_module1_defaults.py`; and
+- guidance-only alignment in `codebase/config/model_defaults.yaml`.
+
+Define the vehicle-specific override in
+`codebase/config/fuel_mappings.yaml`. The same resolver must govern:
+
+- Module 2 branch enumeration;
+- zero-stock bootstrapping;
+- pre-reconciliation attribution;
+- PHEV liquid-mode distribution;
+- ESTO liquid-pool subtraction;
+- ordinary-fuel allocation; and
+- impossible drive/fuel validation.
+
+Using one resolver at every point is critical. Updating only branch creation
+can leave downstream calculations silently excluding or reallocating rows.
+
+### 6. Preserve utilisation and lifecycle inputs
+
+The adapter now retains a vehicle-specific `freight:Trucks` utilisation key.
+Module 6 prefers it and falls back to the legacy freight-wide value for older
+packages. This pattern can be reused for another vehicle without breaking old
+input versions.
+
+The first full run also found identical duplicate survival/vintage ages in the
+generated input. The adapter now collapses identical duplicates and raises on
+conflicting values. This is a general input-integrity rule, not a truck-PHEV
+special case.
+
+### 7. Verify LEAP structure independently
+
+Correct road technologies must use LEAP's Transport Stock Turnover method.
+During this case study, generic COM calls `AddCategory` and `AddTechnology`
+were tested in a disposable copied area. They created ordinary Activity
+Analysis branches with `Activity Level`/`Final Energy Intensity`, not the
+required `Sales Share`/`Stock Share`/`Device Share`/`Fuel Economy`/`Mileage`
+structure.
+
+Therefore:
+
+1. create or copy the technology using LEAP's transport-stock-turnover UI;
+2. export the relevant scenario;
+3. audit the exported IDs; and
+4. never claim generic COM category creation as a valid road-technology step.
+
+The read-only audit is reusable:
+
+```powershell
+python scripts\audit_drive_addition.py <LEAP_EXPORT.xlsx> `
+  --scenario Target `
+  --parent-path 'Demand\Freight road\Trucks' `
+  --drive PHEV `
+  --sizes heavy medium `
+  --fuels Electricity 'Gas and diesel oil' Biodiesel
+```
+
+For the upstream `20_USA` Target export it matched 20 of 20 required projected
+row keys. Important IDs include:
+
+| Branch | BranchID |
+|---|---:|
+| `PHEV heavy` | 1546 |
+| heavy Electricity / diesel / Biodiesel | 1527 / 1528 / 1530 |
+| `PHEV medium` | 1547 |
+| medium Electricity / diesel / Biodiesel | 1533 / 1534 / 1536 |
+
+Relevant VariableIDs are Sales Share `1424`, Stock Share `1428`, Device Share
+`2165`, Fuel Economy `1061`, and Mileage `1185`.
+
+### 8. Run a strict economy export
+
+The workflow now accepts an explicit reviewed reference workbook:
+
+```powershell
+$env:ROAD_MODEL_MACRO_CSV = 'C:\Users\Work\github\leap_transport\data\9th_macro_data.csv'
+python codebase\road_workflow.py 20_USA `
+  --scenario Target `
+  --no-vis `
+  --module1-defaults-dir ..\road_model_inputs_interface\back-end\outputs\road_module1_defaults `
+  --module1-defaults-version v2026_06_05_road_module1_sources `
+  --leap-reference-path ..\road_model_inputs_interface\back-end\data\road_model\leap_import_workbooks\transport_leap_export_combined_20_USA_domestic_international_Target_20260526.xlsx
+```
+
+Case-study result:
+
+- Module 1: 1,879 input rows;
+- Module 2: 137 branches;
+- Modules 3 and 4: 195 rows each;
+- Module 5: 1,989 sales-share rows;
+- Module 6: 1,941 LEAP-ready model rows;
+- Module 7: completed;
+- T11: 120 truck-PHEV year rows across 2022--2060; and
+- strict workbook: all active truck-PHEV rows matched to reference IDs.
+
+The writer was also strengthened so an active configured branch absent from the
+reference produces `model_row_not_in_leap_reference`; it can no longer be
+silently categorized as not needed.
+
+### 9. Review and release as one cross-repository unit
+
+Before production activation:
+
+1. approve or replace the grade-D utilisation proxies;
+2. approve the diesel/Biodiesel fuel scope and treatment of the three unused
+   upstream liquid branches;
+3. decide whether medium/heavy sales trajectories need a preserved size
+   dimension in Module 5;
+4. promote a reviewed LEAP export to the canonical reference path;
+5. rerun the full model and interface test suites;
+6. import the workbook into a disposable correct LEAP area and inspect results;
+7. update current modeller/methodology branch descriptions; and
+8. merge the paired model and interface commits together.
+
+Rollback must also be paired: revert source/contract rows, regenerated static
+files, model scope/fuel rules, and LEAP reference together. Never leave the
+interface offering rows that the model drops or Python emitting paths absent
+from the canonical LEAP reference.
+
+## Reusable checklist
+
+- [ ] Define vehicle, drive, sizes, fuels, labels, and demand method.
+- [ ] Record source quality and proxy policy before coding.
+- [ ] Trace every interface, adapter, model, and writer scope gate.
+- [ ] Decide whether drive-wide fuel rules remain valid for the new vehicle.
+- [ ] Add source rows and provenance, then extend the static contract.
+- [ ] Regenerate all economies and inspect exact long-row keys.
+- [ ] Extend model scope and use one eligibility resolver throughout.
+- [ ] Check turnover and sales-share dimensions, especially size aggregation.
+- [ ] Check multi-fuel utilisation, energy allocation, and reconciliation.
+- [ ] Verify LEAP demand method, branch paths, variables, scenarios, and IDs.
+- [ ] Run the read-only reference audit.
+- [ ] Run one strict end-to-end economy and inspect T11, diagnostics, warnings,
+      and the XLSX.
+- [ ] Obtain assumption approval and promote model/interface/LEAP files as one
+      reviewed release.
+
+## External technology evidence
+
+The diesel-family choice is plausible, but still an APERC modelling decision.
 Scania describes plug-in hybrid trucks paired with diesel engines and operation
 on diesel, HVO, or biodiesel. A US Department of Energy medium-duty PHEV work
-truck demonstration also used a diesel engine. These are evidence that simply
-inheriting the passenger/LCV gasoline-family rule would be a modelling
-assumption, not a neutral implementation detail:
+truck demonstration also used a diesel engine:
 
 - [Scania plug-in hybrid truck product information](https://www.scania.com/es/es/rpeinado/products/trucks/plug-in-hybrid-truck.html)
 - [Scania PHEV and HEV truck description](https://www.scania.com/group/en/home/newsroom/news/2019/news-article-template.html)
 - [US DOE medium-duty PHEV work-truck demonstration](https://www.energy.gov/sites/prod/files/2014/03/f12/vssarravt068_miyasato_2010_p.pdf)
-
-Before activation, choose and document one of these approaches:
-
-1. diesel-family truck PHEV (`Electricity`, `Gas and diesel oil`, and reviewed
-   renewable diesel substitutes);
-2. gasoline-family truck PHEV, if an APEC source supports that scope; or
-3. two explicit truck plug-in-hybrid drive variants if both powertrains need to
-   coexist and cannot be represented safely by Device Shares.
-
-The recommended implementation is vehicle-specific fuel eligibility. Do not
-add diesel to the global `PHEV` fuel list, because that would also add diesel
-branches to LPVs and LCVs. Do not keep the global gasoline-only liquid
-distribution rule for trucks if the approved truck definition is diesel-based.
-
-## Full implementation process
-
-### 1. Write the modelling decision first
-
-Record the following before changing code or data:
-
-- technology definition and LEAP label;
-- eligible vehicle types and sizes;
-- electric and combustion fuels;
-- whether biofuel/e-fuel branches are physical powertrain options or fuel blends;
-- electric-driving-share definition and units;
-- base-year treatment when observed stock is zero;
-- projected sales-share source and scenario behavior; and
-- whether existing LEAP areas already contain the required branches.
-
-For this case, the label is `PHEV`, the vehicle type is `Trucks`, and sizes are
-`medium` and `heavy`. The combustion-fuel decision remains open.
-
-### 2. Add or review source data in the interface repository
-
-Owner: `road_model_inputs_interface`.
-
-Prepare source-backed rows for both truck sizes:
-
-- `Mileage` and `Fuel Economy` at each fuel branch;
-- base-year `Stock Share` at `PHEV medium` and `PHEV heavy`;
-- base-year and projected `Sales Share` at the technology/size branch; and
-- PHEV electric driving share at a granularity the model can preserve.
-
-The existing proxy method is reasonable for a feasibility test:
-
-- electric mode from the corresponding truck BEV size;
-- combustion mode from the corresponding truck ICE size.
-
-It is not automatically a production source. Review the values, units, source
-year, uncertainty, and provenance. Do not promote rows merely because they are
-already present in `manually_entered_missing_rows.csv`.
-
-The current supplemental utilisation file has only LPV and LCV rows. Its
-freight road output is explicitly derived from the LCV rate. A truck PHEV
-therefore needs either:
-
-- reviewed truck-specific utilisation rows and a model interface that preserves
-  vehicle type; or
-- a documented freight-wide aggregation method that combines truck and LCV
-  PHEV activity.
-
-The second option is simpler but cannot represent different truck and LCV duty
-cycles. Medium- and heavy-truck utilisation may also need separate assumptions
-if their routes and charging opportunities differ materially.
-
-### 3. Extend the static hand-off contract
-
-Owner: `road_model_inputs_interface/back-end/data/road_model/config/road_module1_static_contract.csv`.
-
-Add contract rows for each approved technology and fuel branch. At minimum:
-
-- `Sales Share` and `Stock Share` for `PHEV medium` and `PHEV heavy`;
-- `Mileage` and `Fuel Economy` for every eligible fuel leaf; and
-- the utilisation row if its branch or granularity changes.
-
-Set Current Accounts, projected-scenario, visibility, units, and notes
-deliberately. The contract is not just a display list; it is the gate that
-decides which generated rows reach the browser and model.
-
-Review `road_module1_static_fuel_branch_exclusions.csv` after adding branches.
-An exclusion is valid only under the existing ESTO-zero rule. A zero historical
-truck-PHEV stock is not, by itself, a reason to omit a fuel branch required for
-future sales.
-
-### 4. Regenerate and inspect the Module 1 package
-
-Run from `road_model_inputs_interface`:
-
-```powershell
-python back-end\build_road_model_static_defaults.py
-```
-
-Then verify at least one economy in all three places:
-
-```text
-back-end/outputs/road_module1_defaults/<version>/<economy>/
-front-end/road-module1-static/<version>/<economy>.csv
-front-end/road-module1-static/index.json
-```
-
-Check exact row keys, values, units, scales, provenance, scenario coverage, and
-`Shown In Interface`. Do not hand-edit the generated static CSV.
-
-### 5. Extend the model vehicle/drive scope
-
-Owner: `leap_road_model`.
-
-Two current scope gates must remain synchronized:
-
-1. add `PHEV` to `Trucks` in
-   `codebase/config/vehicle_mappings.yaml::valid_drive_types_by_vehicle_type`;
-2. add `PHEV` to `Trucks` in
-   `codebase/adapters/road_module1_defaults.py::_VALID_BASE_DRIVES_BY_VEHICLE_TYPE`.
-
-Also update the guidance-only truck entries in
-`codebase/config/model_defaults.yaml` so the configuration contract test remains
-consistent. Those values are review guidance, not runtime fallbacks.
-
-The duplicated scope gate is a maintenance risk. A future cleanup could load
-the adapter scope from `vehicle_mappings.yaml`, but that refactor should be
-separate from the first production activation unless needed to prevent a real
-mismatch.
-
-### 6. Implement vehicle-specific fuel eligibility
-
-Owner: `codebase/config/fuel_mappings.yaml`, Module 2, and Module 6.
-
-The current fuel eligibility key is drive-only. That is sufficient while every
-PHEV shares the gasoline-family rule, but it cannot express “LPV/LCV PHEV uses
-gasoline while truck PHEV uses diesel.” Add a reviewed vehicle-specific override
-rather than broadening the global PHEV list.
-
-The same rule must control all of these places:
-
-- Module 2 branch enumeration;
-- Module 6 eligibility and zero-stock bootstrapping;
-- PHEV liquid-fuel distribution;
-- subtraction from the correct ESTO liquid pools;
-- ordinary-fuel allocation after PHEV subtraction; and
-- validation of impossible drive/fuel combinations.
-
-If diesel truck PHEV is approved, update tests that currently assert PHEV diesel
-is always excluded. Narrow those assertions to the vehicle types where the rule
-still applies.
-
-### 7. Confirm sales-share and size behavior
-
-Module 5 models shares by `(economy, scenario, year, vehicle_type, drive_type)`.
-If the Module 1 input supplies `PHEV medium` and `PHEV heavy` shares, it sums the
-size rows into one truck-PHEV drive share. When T11 is built, Module 6 fans the
-drive share back to size branches using reconciled stock proportions, with an
-equal split fallback for zero-stock drives.
-
-Decide whether that behavior is acceptable. If policy assumptions need
-different medium- and heavy-truck PHEV trajectories, size must become a
-preserved Module 5 dimension rather than being aggregated away.
-
-### 8. Add the branches to LEAP before strict export
-
-The reference workbook at `config/road model leap export.xlsx` currently has
-LCV PHEV branches but no truck PHEV branches. The strict writer merges T11
-against a LEAP reference export and preserves its metadata. Python cannot make
-an absent LEAP technology importable just by emitting a new path.
-
-Create the approved branches in the LEAP area, export a fresh reference
-workbook, and replace the configured reference through the normal reviewed
-process. Confirm the metadata rows, branch paths, variables, scenarios, region,
-and Level columns follow the LEAP export contract.
-
-### 9. Test each boundary, then run an economy end to end
-
-Minimum automated checks:
-
-- adapter retains truck-PHEV Module 1 rows;
-- Module 2 creates both sizes and only approved fuels;
-- Module 5 includes PHEV in truck sales shares and preserves the intended size
-  behavior;
-- Module 4 turnover keeps truck-PHEV cohorts and sales;
-- Module 6 splits electric/liquid mileage at the approved rate;
-- fuel reconciliation subtracts truck-PHEV liquid energy from the correct ESTO
-  pool;
-- Device Shares sum to 100% for each size;
-- T11 contains Stock Share, Sales Share, Mileage, Fuel Economy, and Device Share
-  on the correct paths; and
-- the strict LEAP writer matches every new row.
-
-Run focused tests first:
-
-```powershell
-python -m pytest codebase\tests\test_config_contract.py codebase\tests\test_module2_base_year.py codebase\tests\test_module4.py codebase\tests\test_module5.py codebase\tests\test_module6.py codebase\tests\test_leap_import_writer.py
-```
-
-Then run a full economy from the current static package:
-
-```powershell
-python codebase\road_workflow.py <ECONOMY> --scenario Target --no-vis
-```
-
-Inspect:
-
-```text
-results/<economy>/module5/T7f_future_shares.csv
-results/<economy>/module6/T11_leap_ready.csv
-results/<economy>/module6/T12_phev_utilisation_diagnostics.csv
-results/<economy>/module6/<economy>_leap_import.xlsx
-```
-
-Finally, import into a disposable copy of the LEAP area and confirm that LEAP
-accepts the branches and produces plausible stock and energy results. A
-successful workbook write alone is not the last verification step.
-
-### 10. Update documentation and release notes
-
-When activation is complete:
-
-- update the branch trees and remove “Truck PHEV is out of scope” from the
-  current methodology and modeller guide;
-- document the selected liquid-fuel and utilisation methods;
-- record the source package/version and LEAP reference export used;
-- retain this case study as the decision history; and
-- mark the pending feature complete only after the cross-repo and LEAP checks
-  pass.
-
-## What the feasibility proof does and does not prove
-
-The automated proof:
-
-- adds `PHEV` to an in-memory copy of the truck drive matrix;
-- generates medium and heavy PHEV branches from the existing fuel map;
-- constructs a synthetic medium-truck electric/liquid split;
-- calculates 40% and 60% Device Shares; and
-- confirms that T11 contains `Demand\Freight road\Trucks\PHEV medium` and its
-  fuel leaves.
-
-It does not:
-
-- change the production branch matrix;
-- approve gasoline as the truck combustion fuel;
-- validate the proxy input values;
-- add truck-specific utilisation data;
-- add branches to the LEAP area/reference workbook; or
-- prove a complete economy run and LEAP import.
-
-Verification performed on 29 August 2026:
-
-```text
-python -m pytest codebase\tests\test_config_contract.py -q
-7 passed
-
-python -m pytest codebase\tests\test_module6.py -q
-46 passed
-```
-
-The LEAP reference workbook was also inspected read-only across its used range
-(`Sheet2!A1:U3377`). It contains LCV PHEV paths and no matching truck-PHEV path.
-
-## Reusable checklist for any new drive/vehicle combination
-
-Use this shorter checklist after reading the case study:
-
-- [ ] Define the technology, sizes, fuels, and labels.
-- [ ] Decide whether existing drive-wide rules are valid for the new vehicle.
-- [ ] Add reviewed source rows with provenance.
-- [ ] Extend the interface static contract and justified exclusions.
-- [ ] Regenerate; never hand-edit the static bundle.
-- [ ] Extend both model scope gates.
-- [ ] Update guidance configuration without creating runtime fallbacks.
-- [ ] Verify Module 4/5 dimensions, especially size aggregation.
-- [ ] Verify Module 6 eligibility, reconciliation, and diagnostics.
-- [ ] Add the same branches to LEAP and refresh the reference export.
-- [ ] Test each boundary and one full economy.
-- [ ] Update current documentation and record the release decision.
-
-## Rollback
-
-Keep the feature in one coherent cross-repository change. If end-to-end checks
-fail, revert the source/contract, model scope, fuel rules, and LEAP reference
-together, regenerate the prior static version, and rerun the smoke economy. Do
-not leave the interface advertising rows that the model drops, or leave Python
-emitting paths absent from LEAP.

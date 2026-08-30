@@ -8,4 +8,4 @@
 
 ## Model scope TODO
 
-- [ ] Decide whether to activate truck PHEVs, following the [truck PHEV drive-addition case study](new%20model/adding_a_drive_case_study_truck_phev.md). Before activation, approve the truck combustion-fuel family and utilisation granularity, add reviewed Module 1 sources and static-contract rows, implement vehicle-specific fuel eligibility, add matching LEAP branches/reference metadata, and pass the documented cross-repo end-to-end checks.
+- [ ] Review and promote the technically verified truck-PHEV case study, following the [truck PHEV drive-addition case study](new%20model/adding_a_drive_case_study_truck_phev.md). The paired feature branches now implement the interface/static contract, vehicle-specific fuel eligibility, truck utilisation hand-off, full economy run, and strict LEAP-ID match. Before production activation, approve or replace the grade-D LCV utilisation proxies, approve the diesel/Biodiesel scope and treatment of unused LEAP liquid branches, promote the newer LEAP export to the canonical reference, perform a disposable-area import review, and merge both repositories together.
