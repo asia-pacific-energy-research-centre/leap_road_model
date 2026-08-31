@@ -20,10 +20,12 @@ branches:
   truck-PHEV row to real LEAP IDs.
 
 This proves technical implementation feasibility across both repositories and
-the locally hosted researcher workflow. It is not yet an approval of the
-case-study assumptions for production. The truck utilisation values are
-explicit LCV proxies with grade-D provenance and the three-fuel scope still
-needs modeller approval.
+the locally hosted researcher workflow. On 31 August 2026 the modelling choices
+were confirmed: truck PHEVs are diesel-family vehicles; Biodiesel remains a
+separate LEAP fuel leaf but represents a blend share rather than a separate
+vehicle choice; Motor gasoline, Biogasoline, and Efuel remain disabled; medium
+and heavy trucks use the same fuel scope; and the explicit LCV-derived
+utilisation proxy is accepted while retaining grade-D provenance.
 
 ## Scope and decisions
 
@@ -33,11 +35,13 @@ needs modeller approval.
 | Sizes | `medium`, `heavy` | No |
 | Drive label | `PHEV` | No |
 | Electric fuel | `Electricity` | No |
-| Combustion family | diesel-family | Confirm |
-| Enabled liquid branches | `Gas and diesel oil`, `Biodiesel` | Confirm |
-| Utilisation granularity | `freight:Trucks`, with older `freight` fallback | Method is implemented; values need review |
+| Combustion family | diesel-family | No; approved 31 August 2026 |
+| Enabled liquid branches | `Gas and diesel oil`, plus separate `Biodiesel` blend-share leaf | No; approved 31 August 2026 |
+| Disabled liquid branches | `Motor gasoline`, `Biogasoline`, `Efuel` | No; explicitly excluded |
+| Utilisation granularity | `freight:Trucks`, using the LCV-derived economy value and older `freight` fallback | No; proxy approved with grade D retained |
 | Sales-share size handling | size inputs aggregate to truck-PHEV, then fan back by stock proportions | Confirm this is adequate for policy work |
-| LEAP structure | existing `PHEV heavy` and `PHEV medium` transport-stock-turnover branches | Technically promoted; retain normal model review |
+| Fuel scope by size | medium and heavy use the same three fuel leaves | No; approved 31 August 2026 |
+| LEAP structure | `PHEV heavy` and `PHEV medium` transport-stock-turnover branches | Synthetic `-1`-ID template verified; actual target-area branches and IDs still required |
 
 The selected tree is:
 
@@ -53,11 +57,11 @@ Demand\Freight road\Trucks
     Biodiesel
 ```
 
-The upstream LEAP export also contains Motor gasoline, Biogasoline, and Efuel
-under these technologies. They remain outside this case-study model scope. The
-strict writer correctly reports those six scenario-specific Device Share rows
-as reference rows not produced by the model; it reports zero active truck-PHEV
-model rows missing from the reference.
+An upstream LEAP export also contained Motor gasoline, Biogasoline, and Efuel
+under these technologies. The confirmed design excludes them, so they are not
+included in the synthetic test template or active model scope. The strict
+writer reports zero active truck-PHEV model rows missing from the selected
+reference.
 
 ## Process map
 
@@ -83,7 +87,7 @@ Stock Turnover demand method.
 | Gate | Question | Evidence and result |
 |---|---|---|
 | Definition | What does this drive mean for trucks? | Electric travel plus diesel-family combustion travel; medium and heavy sizes. |
-| Source | Do all required input keys exist? | Generated packages contain stock/sales shares, fuel mileage and efficiency, and a truck utilisation row. Utilisation is an explicit LCV proxy pending review. |
+| Source | Do all required input keys exist? | Generated packages contain stock/sales shares, fuel mileage and efficiency, and a truck utilisation row. The utilisation value is an approved LCV-derived proxy marked `case_study_proxy_from_lcv` with grade D. |
 | Static hand-off | Will rows survive source build, browser load, and model export? | Static contract extended and all 21 economy packages rebuilt successfully. Each contains 1,081 truck-PHEV long rows. |
 | Model scope | Will the adapter and branch builder retain the combination? | Truck PHEV added to both scope gates; truck HEV remains invalid. |
 | Fuel scope | Can one drive have vehicle-specific fuels? | New `(vehicle type, drive)` override selects Electricity, Gas and diesel oil, and Biodiesel for truck PHEV while LPV/LCV PHEV remains unchanged. |
@@ -92,7 +96,8 @@ Stock Turnover demand method.
 | LEAP metadata | Do correct transport branches and IDs exist? | Upstream Target and Reference exports contain the branches and variables. Read-only audit matches all 20 required Target row keys. |
 | Strict export | Does a complete economy produce an import workbook? | Browser-launched `20_USA` Target + Reference run completes Modules 1--7, writes 86 truck-PHEV import rows, and reports zero truck-PHEV warnings. |
 | Local proof | Can a researcher do this from the hosted interface and inspect the result? | Yes. The interface sent 21,112 long rows, completed in 93.7 seconds, and exposed the workbook and timestamped QA dashboard. |
-| Production approval | Are assumptions approved? | Technical integration is complete; grade-D utilisation and the diesel/Biodiesel scope still require modeller review. |
+| Synthetic LEAP test | Can the full workflow run before live branches have real IDs? | Yes. The synthetic reference contains 98 unique truck-PHEV metadata rows with `BranchID = -1`; the two-scenario workflow writes 86 truck-PHEV import rows, all with `-1`, and zero truck-PHEV warnings. |
+| Production deployment | What remains? | Create the stock-turnover branches in the target LEAP area, export its real IDs, replace the synthetic reference, and perform a disposable-area import review. |
 
 ## Detailed reusable procedure
 
@@ -147,8 +152,9 @@ For every size, supply:
 
 The case study uses existing truck proxy rows and adds 21 explicit
 truck-utilisation proxy rows copied from LCV, marked
-`case_study_proxy_from_lcv` with grade D. This makes the uncertainty visible and
-prevents an experimental value being mistaken for reviewed evidence.
+`case_study_proxy_from_lcv` with grade D. The proxy was approved for use on
+31 August 2026. Grade D remains deliberately visible because approval to use a
+proxy does not turn it into truck-specific empirical evidence.
 
 ### 4. Extend the static contract and regenerate
 
@@ -286,14 +292,16 @@ silently categorized as not needed.
 
 Before production activation:
 
-1. approve or replace the grade-D utilisation proxies;
-2. approve the diesel/Biodiesel fuel scope and treatment of the three unused
-   upstream liquid branches;
-3. decide whether medium/heavy sales trajectories need a preserved size
+1. retain the approved LCV-proxy marker and grade D until truck-specific
+   utilisation evidence replaces it;
+2. decide whether medium/heavy sales trajectories need a preserved size
    dimension in Module 5;
-4. import the workbook into a disposable correct LEAP area and inspect results;
-5. update current modeller/methodology branch descriptions; and
-6. merge the paired model and interface commits together.
+3. create or copy the two correct Transport Stock Turnover branches in the
+   target LEAP area and export their real BranchIDs;
+4. replace the synthetic `-1` reference with the target-area export;
+5. import the workbook into a disposable correct LEAP area and inspect results;
+6. update current modeller/methodology branch descriptions; and
+7. merge the paired model and interface commits together.
 
 Rollback must also be paired: revert source/contract rows, regenerated static
 files, model scope/fuel rules, and LEAP reference together. Never leave the
@@ -423,7 +431,8 @@ model rows absent from the old reference, nine reference rows absent from the
 model, and one region-ID notice); do not misrepresent those as truck-PHEV
 failures or as a globally warning-free workbook.
 
-After the live run, the non-full-pipeline model suite passed 246 tests with 24
+After the synthetic-template addition, the non-full-pipeline model suite passed
+247 tests with 24
 full-pipeline tests deselected, and the interface backend suite passed all 283
 tests (with one dependency deprecation warning):
 
@@ -435,6 +444,66 @@ python -m pytest codebase\tests -q -k "not full_pipeline"
 python -m pytest back-end\tests -q
 ```
 
+### Synthetic pre-LEAP template proof — 31 August 2026
+
+`config/test_templates/road_model_leap_export_truck_phev_synthetic_test.xlsx`
+allows the pipeline to be tested before the two technologies are installed in
+the target LEAP area. It preserves the normal workbook layout and analogous
+stock-turnover metadata while setting all 98 truck-PHEV reference rows to
+`BranchID = -1`.
+
+The template contains:
+
+- `PHEV heavy` and `PHEV medium` technology rows;
+- Electricity, Gas and diesel oil, and Biodiesel leaves for both sizes;
+- Sales Share and Stock Share technology variables;
+- Device Share, Fuel Economy, Mileage, Fuel Economy Correction Factor, and
+  Mileage Correction Factor fuel variables;
+- Current Accounts, Reference, and Target scenario metadata;
+- retained VariableID, ScenarioID, RegionID, scale, units, levels, and
+  expressions; and
+- zero duplicate truck-PHEV `(Branch Path, Variable, Scenario)` keys.
+
+Run the structural checks with:
+
+```powershell
+python scripts\audit_drive_addition.py `
+  config\test_templates\road_model_leap_export_truck_phev_synthetic_test.xlsx `
+  --scenario Target `
+  --parent-path 'Demand\Freight road\Trucks' `
+  --drive PHEV `
+  --sizes heavy medium `
+  --fuels Electricity 'Gas and diesel oil' Biodiesel
+```
+
+Target and Reference each matched 20/20 required keys, all with BranchID `-1`.
+The full test was then run with:
+
+```powershell
+python codebase\road_workflow.py 20_USA `
+  --scenarios Target Reference `
+  --vis `
+  --output results\20_USA_synthetic_template_test `
+  --module1-defaults-dir input_data\module1_defaults `
+  --module1-defaults-version v2026_06_05_road_module1_sources `
+  --leap-reference-path config\test_templates\road_model_leap_export_truck_phev_synthetic_test.xlsx
+```
+
+The run completed Modules 1--7 in 71.9 seconds, generated the dashboard, wrote
+86 truck-PHEV import rows across Current Accounts, Reference, and Target, kept
+all 86 BranchIDs at `-1`, produced no duplicate truck-PHEV keys, and reported
+zero truck-PHEV coverage warnings.
+
+```text
+results/20_USA_synthetic_template_test/diagnostics/dashboard_20260831_111205/index.html
+http://127.0.0.1:8000/road-results/20_USA_synthetic_template_test/diagnostics/dashboard_20260831_111205/index.html
+```
+
+This is a full Python pipeline, writer, workbook, and dashboard test. It is not
+a successful LEAP import test: `-1` deliberately means “branch not installed”.
+Once the branches exist in the target LEAP area, export that area and replace
+the `-1` values with its assigned BranchIDs before attempting the final import.
+
 ### Repeatable acceptance criteria for another combination
 
 A future vehicle/drive combination is technically proven only when all of the
@@ -445,7 +514,8 @@ following are true:
 3. a local Target + Reference run completes all modules;
 4. the combination is visible in stock, sales, energy, and reconciliation QA;
 5. the canonical reference audit has no missing required key for each scenario;
-6. the generated workbook uses real branch, variable, scenario, and region IDs;
+6. a synthetic pre-install test may use BranchID `-1`, but production proof
+   requires real branch, variable, scenario, and region IDs;
 7. the warnings file has zero `model_row_not_in_leap_reference` rows for the
    new branch prefix; and
 8. assumptions, proxies, and any remaining caveats are recorded separately
@@ -460,7 +530,8 @@ the simulated-output page, and the truck sales output before scrolling:
 
 ## External technology evidence
 
-The diesel-family choice is plausible, but still an APERC modelling decision.
+The diesel-family choice is plausible and is now recorded as the APERC
+modelling decision for truck PHEVs.
 Scania describes plug-in hybrid trucks paired with diesel engines and operation
 on diesel, HVO, or biodiesel. A US Department of Energy medium-duty PHEV work
 truck demonstration also used a diesel engine:
