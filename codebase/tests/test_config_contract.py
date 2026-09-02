@@ -135,7 +135,7 @@ def test_truck_phev_scope_reaches_t11_with_diesel_family_fuels():
     assert set(zip(truck_phev["size"], truck_phev["fuel"])) == {
         (size, fuel)
         for size in ("medium", "heavy")
-        for fuel in ("Electricity", "Gas and diesel oil", "Biodiesel")
+        for fuel in ("Electricity", "Gas and diesel oil", "Biodiesel", "Efuel")
     }
 
     # Use one size and the two primary energy streams to prove that the generic

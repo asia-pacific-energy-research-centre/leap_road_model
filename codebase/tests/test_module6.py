@@ -724,11 +724,13 @@ class TestPHEVLiquidDistribution:
             {"economy": "12_NZ", "scenario": "Target", "transport_type": "freight", "vehicle_type": "Trucks", "drive_type": "PHEV", "size": "medium", "fuel": "Electricity", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Target", "transport_type": "freight", "vehicle_type": "Trucks", "drive_type": "PHEV", "size": "medium", "fuel": "Gas and diesel oil", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Target", "transport_type": "freight", "vehicle_type": "Trucks", "drive_type": "PHEV", "size": "medium", "fuel": "Biodiesel", "phev_liquid_pj": 1.0},
+            {"economy": "12_NZ", "scenario": "Target", "transport_type": "freight", "vehicle_type": "Trucks", "drive_type": "PHEV", "size": "medium", "fuel": "Efuel", "phev_liquid_pj": 1.0},
             {"economy": "12_NZ", "scenario": "Target", "transport_type": "freight", "vehicle_type": "Trucks", "drive_type": "PHEV", "size": "medium", "fuel": "Motor gasoline", "phev_liquid_pj": 1.0},
         ])
         esto = _make_esto({
             "Gas and diesel oil": 90.0,
             "Biodiesel": 10.0,
+            "Efuel": 0.0,
             "Motor gasoline": 100.0,
         })
 
@@ -737,6 +739,7 @@ class TestPHEVLiquidDistribution:
 
         assert by_fuel["Gas and diesel oil"] == pytest.approx(0.9)
         assert by_fuel["Biodiesel"] == pytest.approx(0.1)
+        assert by_fuel["Efuel"] == pytest.approx(0.0)
         assert by_fuel["Electricity"] == 0.0
         assert by_fuel["Motor gasoline"] == 0.0
 
@@ -957,6 +960,8 @@ class TestAllocateFuelToBranches:
                     transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\PHEV medium\\Gas and diesel oil"),
             _branch("Trucks", "PHEV", "Biodiesel", stock=100, mileage=5000, efficiency=100,
                     transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\PHEV medium\\Biodiesel"),
+            _branch("Trucks", "PHEV", "Efuel", stock=100, mileage=5000, efficiency=100,
+                    transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\PHEV medium\\Efuel"),
             _branch("Trucks", "PHEV", "Motor gasoline", stock=100, mileage=5000, efficiency=100,
                     transport_type="freight", leap_branch_path="Demand\\Freight road\\Trucks\\PHEV medium\\Motor gasoline"),
         )
@@ -967,6 +972,7 @@ class TestAllocateFuelToBranches:
                 {"fuel": "Electricity", "energy_pj": 1.0},
                 {"fuel": "Gas and diesel oil", "energy_pj": 1.0},
                 {"fuel": "Biodiesel", "energy_pj": 1.0},
+                {"fuel": "Efuel", "energy_pj": 1.0},
                 {"fuel": "Motor gasoline", "energy_pj": 1.0},
             ]),
             pd.DataFrame(),
@@ -974,7 +980,7 @@ class TestAllocateFuelToBranches:
 
         t8 = allocate_esto_fuel_to_branches(branch_energy, remaining, t4)
 
-        assert set(t8["fuel"]) == {"Electricity", "Gas and diesel oil", "Biodiesel"}
+        assert set(t8["fuel"]) == {"Electricity", "Gas and diesel oil", "Biodiesel", "Efuel"}
 
 
 class TestBuildLeapReadyTable:

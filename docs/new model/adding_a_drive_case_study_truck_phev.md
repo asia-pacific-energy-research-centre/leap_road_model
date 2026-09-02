@@ -119,13 +119,13 @@ Stock Turnover demand method.
 | Source | Do all required input keys exist? | Generated packages contain stock/sales shares, fuel mileage and efficiency, and a truck utilisation row. The utilisation value is an approved LCV-derived proxy marked `case_study_proxy_from_lcv` with grade D. |
 | Static hand-off | Will rows survive source build, browser load, and model export? | Static contract extended and all 21 economy packages rebuilt successfully. Each contains 1,081 truck-PHEV long rows. |
 | Model scope | Will the adapter and branch builder retain the combination? | Truck PHEV added to both scope gates; truck HEV remains invalid. |
-| Fuel scope | Can one drive have vehicle-specific fuels? | New `(vehicle type, drive)` override selects Electricity, Gas and diesel oil, and Biodiesel for truck PHEV while LPV/LCV PHEV remains unchanged. |
+| Fuel scope | Can one drive have vehicle-specific fuels? | New `(vehicle type, drive)` override selects Electricity, Gas and diesel oil, Biodiesel, and Efuel for truck PHEV while LPV/LCV PHEV remains unchanged. |
 | Turnover and sales | Do downstream modules preserve it? | Full run reaches Modules 4 and 5. Existing behavior aggregates medium/heavy sales shares, then fans them back by stock. |
 | Reconciliation | Are electric and liquid modes allocated correctly? | Module 6 completes, writes utilisation diagnostics, and all fuel totals are within tolerance. |
 | LEAP metadata | Do correct transport branches and IDs exist? | Upstream Target and Reference exports contain the branches and variables. Read-only audit matches all 20 required Target row keys. |
-| Strict export | Does a complete economy produce an import workbook? | Browser-launched `20_USA` Target + Reference run completes Modules 1--7, writes 86 truck-PHEV import rows, and reports zero truck-PHEV warnings. |
+| Strict export | Does a complete economy produce an import workbook? | Browser-launched `20_USA` Target + Reference run completes Modules 1--7 and writes the truck-PHEV import rows; Efuel coverage is present, with only the known unrelated reference warnings remaining. |
 | Local proof | Can a researcher do this from the hosted interface and inspect the result? | Yes. The interface sent 21,112 long rows, completed in 93.7 seconds, and exposed the workbook and timestamped QA dashboard. |
-| Synthetic LEAP test | Can the full workflow run before live branches have real IDs? | Yes. The synthetic reference contains 98 unique truck-PHEV metadata rows with `BranchID = -1`; the two-scenario workflow writes 86 truck-PHEV import rows, all with `-1`, and zero truck-PHEV warnings. |
+| Synthetic LEAP test | Can the full workflow run before live branches have real IDs? | Yes. The synthetic reference contains 116 unique truck-PHEV metadata rows with `BranchID = -1`, including the three model-produced Efuel variables for both sizes and all three scenarios. |
 | Production deployment | What remains? | Create the stock-turnover branches in the target LEAP area, export its real IDs, replace the synthetic reference, and perform a disposable-area import review. |
 
 ## Detailed reusable procedure
@@ -444,15 +444,15 @@ canonical LEAP reference was older than the upstream transport export.
 The canonical workbook was promoted in a controlled spreadsheet edit:
 
 - 62 genuine truck-PHEV rows were copied from the exported transport metadata;
-- 36 correction-factor rows were derived for the same six fuel leaves and
+- 36 correction-factor rows were derived for the same six original fuel leaves and
   three scenarios using the canonical variable definitions: Fuel Economy
   Correction Factor VariableID `1661` and Mileage Correction Factor VariableID
   `1667`, both with expression `1` and scale `Percent`;
-- the resulting reference contains 98 unique truck-PHEV
+- the resulting reference contains 116 unique truck-PHEV
   `(Branch Path, Variable, Scenario)` keys and no duplicate keys; and
 - Target and Reference audits each match 20/20 required drive-addition keys.
 
-The final interface rerun writes 86 truck-PHEV rows to
+The final interface rerun writes truck-PHEV rows to
 `results/20_USA/module6/20_USA_leap_import.xlsx` and produces **zero warnings
 whose branch starts with `Demand\Freight road\Trucks\PHEV`**. The warning CSV
 still contains 188 unrelated pre-existing reference/model mismatches (178
@@ -478,13 +478,15 @@ python -m pytest back-end\tests -q
 `config/test_templates/road_model_leap_export_truck_phev_synthetic_test.xlsx`
 allows the pipeline to be tested before the two technologies are installed in
 the target LEAP area. It preserves the normal workbook layout and analogous
-stock-turnover metadata while setting all 98 truck-PHEV reference rows to
-`BranchID = -1`.
+stock-turnover metadata while setting all 116 truck-PHEV reference rows to
+`BranchID = -1`, including the approved Efuel leaves. The Efuel reference rows
+are limited to Fuel Economy, Mileage, and Device Share because the model does
+not produce Efuel correction-factor rows.
 
 The template contains:
 
 - `PHEV heavy` and `PHEV medium` technology rows;
-- Electricity, Gas and diesel oil, and Biodiesel leaves for both sizes;
+- Electricity, Gas and diesel oil, Biodiesel, and Efuel leaves for both sizes;
 - Sales Share and Stock Share technology variables;
 - Device Share, Fuel Economy, Mileage, Fuel Economy Correction Factor, and
   Mileage Correction Factor fuel variables;
@@ -502,7 +504,7 @@ python scripts\audit_drive_addition.py `
   --parent-path 'Demand\Freight road\Trucks' `
   --drive PHEV `
   --sizes heavy medium `
-  --fuels Electricity 'Gas and diesel oil' Biodiesel
+  --fuels Electricity 'Gas and diesel oil' Biodiesel Efuel
 ```
 
 Target and Reference each matched 20/20 required keys, all with BranchID `-1`.
@@ -519,9 +521,9 @@ python codebase\road_workflow.py 20_USA `
 ```
 
 The run completed Modules 1--7 in 71.9 seconds, generated the dashboard, wrote
-86 truck-PHEV import rows across Current Accounts, Reference, and Target, kept
-all 86 BranchIDs at `-1`, produced no duplicate truck-PHEV keys, and reported
-zero truck-PHEV coverage warnings.
+truck-PHEV import rows across Current Accounts, Reference, and Target, kept
+all synthetic BranchIDs at `-1`, produced no duplicate truck-PHEV keys, and
+reported no Efuel-specific coverage warnings.
 
 ```text
 results/20_USA_synthetic_template_test/diagnostics/dashboard_20260831_111205/index.html

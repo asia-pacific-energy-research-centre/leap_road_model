@@ -6,9 +6,10 @@
 reference for exercising the road-model pipeline before truck-PHEV technologies
 are installed in a target LEAP area.
 
-It contains 98 unique metadata rows for `PHEV heavy` and `PHEV medium` under
-`Demand\Freight road\Trucks`, with Electricity, Gas and diesel oil, and
-Biodiesel fuel leaves. All truck-PHEV rows use `BranchID = -1`; other metadata
+It contains 116 unique metadata rows for `PHEV heavy` and `PHEV medium` under
+`Demand\Freight road\Trucks`, with Electricity, Gas and diesel oil, Biodiesel,
+and Efuel fuel leaves. The Efuel leaves include only the three model-produced
+variables: Fuel Economy, Mileage, and Device Share. All truck-PHEV rows use `BranchID = -1`; other metadata
 follows the analogous Transport Stock Turnover patterns in the canonical
 reference.
 

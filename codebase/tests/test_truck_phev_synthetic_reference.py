@@ -22,7 +22,7 @@ def test_synthetic_truck_phev_reference_contract() -> None:
         reference["Branch Path"].fillna("").astype(str).str.startswith(TRUCK_PHEV_PREFIX)
     ].copy()
 
-    assert len(truck_phev) == 98
+    assert len(truck_phev) == 116
     assert set(pd.to_numeric(truck_phev["BranchID"])) == {-1}
     assert set(pd.to_numeric(truck_phev["ScenarioID"])) == {1, 2, 3}
     assert set(pd.to_numeric(truck_phev["RegionID"])) == {1}
@@ -41,5 +41,5 @@ def test_synthetic_truck_phev_reference_contract() -> None:
             truck_phev["Branch Path"].str.count(r"\\") == 4,
             "Level 5",
         ]
-    ) == {"Electricity", "Gas and diesel oil", "Biodiesel"}
+    ) == {"Electricity", "Gas and diesel oil", "Biodiesel", "Efuel"}
     assert not truck_phev.duplicated(["Branch Path", "Variable", "Scenario", "Region"]).any()

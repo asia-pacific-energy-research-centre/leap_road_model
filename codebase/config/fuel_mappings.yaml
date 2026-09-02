@@ -87,7 +87,7 @@ vehicle_drive_fuel_eligibility:
       electric:  [Electricity]
       liquid:    [Gas and diesel oil]
       biofuels:  [Biodiesel]
-      efuels:    []
+      efuels:    [Efuel]
 
 # Preferred allocation targets by fuel (for Module 6 Step 4)
 # Lists the drive types that a fuel is primarily allocated to.
