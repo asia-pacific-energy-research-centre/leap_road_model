@@ -23,9 +23,36 @@ This proves technical implementation feasibility across both repositories and
 the locally hosted researcher workflow. On 31 August 2026 the modelling choices
 were confirmed: truck PHEVs are diesel-family vehicles; Biodiesel remains a
 separate LEAP fuel leaf but represents a blend share rather than a separate
-vehicle choice; Motor gasoline, Biogasoline, and Efuel remain disabled; medium
-and heavy trucks use the same fuel scope; and the explicit LCV-derived
-utilisation proxy is accepted while retaining grade-D provenance.
+vehicle choice; Motor gasoline and Biogasoline remain disabled; Efuel is
+retained as an allowed alternative-fuel leaf; medium and heavy trucks use the
+same fuel scope; and the explicit LCV-derived utilisation proxy is accepted
+while retaining grade-D provenance.
+
+### Approved PHEV fuel-family constraint
+
+PHEV technologies must be represented as belonging to one combustion-fuel
+family at a time: a PHEV technology may use a gasoline family or a diesel
+family, but it must not contain both. This is a modelling constraint, not a
+claim that every physical PHEV powertrain is incapable of using both fuels. It
+keeps fuel allocation, reconciliation, and LEAP branch generation tractable.
+
+For truck PHEVs the approved representation is the diesel-family layout shown
+in the LEAP tree:
+
+```text
+PHEV heavy / PHEV medium
+  Gas and diesel oil
+  Biodiesel
+  Efuel
+  Electricity
+```
+
+`Biodiesel` is a blend-share leaf and `Efuel` is an allowed alternative-fuel
+leaf; neither creates a second truck-PHEV vehicle technology. Researchers must
+not add `Motor gasoline` or another gasoline-family leaf to these truck-PHEV
+branches. If a future study needs gasoline-family PHEVs, they must be modelled
+as a separate fuel-family configuration rather than by mixing gasoline and
+diesel leaves under one technology.
 
 ## Scope and decisions
 
@@ -37,7 +64,8 @@ utilisation proxy is accepted while retaining grade-D provenance.
 | Electric fuel | `Electricity` | No |
 | Combustion family | diesel-family | No; approved 31 August 2026 |
 | Enabled liquid branches | `Gas and diesel oil`, plus separate `Biodiesel` blend-share leaf | No; approved 31 August 2026 |
-| Disabled liquid branches | `Motor gasoline`, `Biogasoline`, `Efuel` | No; explicitly excluded |
+| Disabled liquid branches | `Motor gasoline`, `Biogasoline` | No; explicitly excluded |
+| Approved PHEV fuel-family rule | A PHEV technology uses either gasoline-family or diesel-family fuels, never both | Yes; required model constraint |
 | Utilisation granularity | `freight:Trucks`, using the LCV-derived economy value and older `freight` fallback | No; proxy approved with grade D retained |
 | Sales-share size handling | size inputs aggregate to truck-PHEV, then fan back by stock proportions | Confirm this is adequate for policy work |
 | Fuel scope by size | medium and heavy use the same three fuel leaves | No; approved 31 August 2026 |
@@ -51,17 +79,18 @@ Demand\Freight road\Trucks
     Electricity
     Gas and diesel oil
     Biodiesel
+    Efuel
   PHEV medium
     Electricity
     Gas and diesel oil
     Biodiesel
+    Efuel
 ```
 
-An upstream LEAP export also contained Motor gasoline, Biogasoline, and Efuel
-under these technologies. The confirmed design excludes them, so they are not
-included in the synthetic test template or active model scope. The strict
-writer reports zero active truck-PHEV model rows missing from the selected
-reference.
+An upstream LEAP export also contained gasoline-family leaves. The confirmed
+design excludes Motor gasoline and Biogasoline from truck PHEVs, while retaining
+Efuel in the diesel-family layout shown above. The strict writer must report
+zero active truck-PHEV model rows missing from the selected reference.
 
 ## Process map
 

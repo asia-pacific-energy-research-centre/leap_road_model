@@ -261,7 +261,8 @@ This means a change at one level can affect many branches below it. For example,
 Current scope rules (important when comparing to the 9th edition and earlier 10th edition LEAP models):
 
 - `HEV` and `EREV` are LPV-only.
-- Truck `PHEV` is out of scope.
+- Truck `PHEV` is supported for medium and heavy trucks through the approved
+  diesel-family fuel layout.
 - LPVs use `small`, `medium`, and `large` size labels.
 - Trucks use `medium` and `heavy` size labels where truck-size splits are needed.
 - `Fuel Economy` is the canonical Module 1 efficiency variable. `Final On-Road Fuel Economy` can be accepted only as a legacy input alias.

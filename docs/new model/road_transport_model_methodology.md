@@ -128,7 +128,8 @@ This means a change at one level can affect many branches below it. For example,
 Current scope rules (important when comparing to the 9th edition and earlier 10th edition LEAP models):
 
 - `HEV` and `EREV` are LPV-only.
-- Truck `PHEV` is out of scope.
+- Truck `PHEV` is supported for medium and heavy trucks through the approved
+  diesel-family fuel layout.
 - LPVs use `small`, `medium`, and `large` size labels.
 - Trucks use `medium` and `heavy` size labels where truck-size splits are needed.
 - `Fuel Economy` is the canonical Module 1 efficiency variable. `Final On-Road Fuel Economy` can be accepted only as a legacy input alias.
@@ -435,7 +436,12 @@ After electricity use is calculated for PHEVs and EREVs, the corresponding liqui
 
 This prevents the same liquid fuel being allocated twice. For example, if some gasoline is already assigned to PHEV liquid operation, that gasoline should not also be assigned to ordinary ICE vehicles.
 
-In the current methodology, PHEV and EREV liquid fuel is treated as gasoline-family fuel. Diesel and biodiesel are not assigned to PHEV/EREV branches unless the model is changed deliberately.
+In the current methodology, PHEV and EREV liquid fuel is gasoline-family by
+default for passenger and LCV branches. Truck PHEVs are the deliberate
+vehicle-specific exception: they use the diesel-family layout with Gas and
+diesel oil, Biodiesel, Efuel, and Electricity. A PHEV technology must not mix
+gasoline-family and diesel-family liquid fuels; if both families are required,
+they must be represented as separate technology configurations.
 
 ### Step 4 â€” Allocate remaining ESTO fuels to eligible branches
 
