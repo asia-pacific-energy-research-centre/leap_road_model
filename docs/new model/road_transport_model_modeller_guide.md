@@ -984,6 +984,15 @@ The `LEAP` sheet keeps LEAP's import column structure: ID columns,
 Level columns are derived directly from `Branch Path` by splitting on `\`, with
 unused levels left blank.
 
+When adding branches from a new LEAP export, review the `Units` column and the
+numeric values against analogous existing branches before running the strict
+writer. LEAP exports may use different display units even when the branch and
+variable names match. In particular, the road model uses `Kilometer` for
+Mileage and `MJ/100 km` for Fuel Economy; convert supplied Mile and US MPG
+Gasoline-equivalent values rather than changing only their labels. Use
+`kilometres = miles × 1.609344` and `MJ/100 km = 235.2146 / US MPG`, then
+verify the result across all scenarios and fuel leaves.
+
 Lifecycle profile files are written separately by
 `codebase/adapters/lifecycle_profile_exporter.py` because LEAP lifecycle
 profiles use a different workbook layout from the main branch-variable import

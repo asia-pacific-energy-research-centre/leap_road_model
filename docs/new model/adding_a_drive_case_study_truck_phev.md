@@ -288,6 +288,25 @@ row keys. Important IDs include:
 Relevant VariableIDs are Sales Share `1424`, Stock Share `1428`, Device Share
 `2165`, Fuel Economy `1061`, and Mileage `1185`.
 
+### 7a. Review units before using a new LEAP export
+
+Do not assume that a newly exported LEAP workbook uses the same units as the
+road-model interface or the existing reference template. For every new branch,
+compare the `Units` column and the numeric values with an analogous existing
+branch, such as the corresponding ICE, BEV, or PHEV fuel leaf. Check both the
+branch-level and fuel-level rows, and check all scenarios.
+
+In this case-study export, the supplied workbook used `Mile` for Mileage and
+`MPG Gasoline US eq.` for Fuel Economy. The road model expects `Kilometer` and
+`MJ/100 km`, respectively. Convert the values as well as changing the unit
+label: miles × `1.609344` = kilometres, and US MPG converts as
+`235.2146 / MPG` = MJ/100 km. A unit-label-only change would leave the
+assumption numerically wrong by a large factor.
+
+Record the unit review as part of the reference-workbook QA. A new template is
+not ready for strict export until its units, values, expressions, scenario
+labels, regions, and IDs agree with the analogous existing branches.
+
 ### 8. Run a strict economy export
 
 The workflow now accepts an explicit reviewed reference workbook:
