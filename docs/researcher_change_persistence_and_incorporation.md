@@ -7,8 +7,9 @@ losing those edits when the browser closes. The first objective is to preserve
 exactly what they submitted. A later, reviewed process should incorporate
 approved changes into future road-model datasets.
 
-This document is a design description and work specification. It does not
-require the implementation to be built immediately.
+This document began as a design description and work specification. The
+researcher archive path is now implemented in the interface and should be
+validated with the minimum live test below after each deployment.
 
 ## Researcher-facing behaviour
 
@@ -177,6 +178,86 @@ The test must not overwrite the production defaults version, the active static
 bundle, or the real Drive archive. Test submissions should be clearly marked
 as temporary and kept outside the production processing queue.
 
+## Minimum live acceptance test
+
+This is the smallest useful deployed test. It proves that a researcher edit
+travels through the browser, the Module 1 hand-off, the model workflow, and
+the archive notification. Use a harmless, reversible change and record the
+before and after values.
+
+1. Hard-refresh the deployed interface after the HF Space rebuild and select
+   one economy, such as Australia (`01AUS`). Confirm that the packaged economy
+   list loads.
+2. Choose one visible Module 1 value. Record its full row key, units, and
+   original value. For example:
+
+   ```text
+   Economy:       01AUS
+   Scenario:      Current Accounts
+   Branch Path:   Demand\Freight road\Trucks\PHEV heavy\Electricity
+   Variable:      Fuel Economy
+   Year:          2022
+   Units:         MJ/100 km
+   Before:        831.01
+   After:         831.02
+   ```
+
+3. Enter a short source/reason note, such as `Live round-trip test; reversible
+   0.01 MJ/100 km change`, and press `Run Road Model`. Accept the archive
+   warning when it appears.
+4. Preserve proof from the run log. At minimum it should show:
+
+   - `Module 1 CSV saved`;
+   - `Researcher submission archive saved successfully`;
+   - `Module 1 complete` with the loaded row count;
+   - `Module 6 complete` with the LEAP-ready row count; and
+   - `Completed successfully` with links to the dashboard and LEAP workbook.
+
+5. Check the read-only archive status endpoint:
+
+   ```text
+   /api/v1/road-module1/archive-status
+   ```
+
+   The expected response is `available: true`. The run-log archive success
+   message proves that this particular submission was accepted for archiving;
+   the status endpoint proves that the configured archive is reachable.
+6. Download the generated reconciled Module 1 CSV and verify that it remains
+   canonical-long, contains the required columns, and has the changed row.
+   Load that CSV with `load_module1_for_economy()` and run
+   `road_workflow.py` in a temporary output directory. The second run should
+   complete without changing the production defaults or static bundle.
+7. Restore the original value and remove the test note. If the browser upload
+   control is being tested manually, upload the downloaded CSV and confirm
+   that the interface accepts it. Automated browser sessions may be unable to
+   operate the operating system's hidden native file picker; in that case,
+   the loader plus temporary workflow run still verifies the exact processing
+   path, but the manual upload step must be recorded as not automated.
+
+### Recorded example: Australia live test
+
+On 2026-09-03, the deployed HF app was tested using the Australia row above.
+The observed evidence was:
+
+| Check | Result |
+|---|---|
+| Original value | `831.01 MJ/100 km` |
+| Test value | `831.02 MJ/100 km` |
+| Submitted rows | `21,420` canonical-long rows |
+| Module 1 | `948` base input rows loaded |
+| Module 5 | `3,471` future sales-share rows |
+| Module 6 | `22,818` LEAP-ready rows |
+| Workflow | Completed successfully in `54.2 seconds` |
+| Archive | `Researcher submission archive saved successfully` |
+| Archive status | `available: true` |
+| Re-import | Python loader and temporary `road_workflow.py` run completed successfully |
+| Cleanup | Original value and note restored in the deployed UI |
+
+This proves the deployed application can carry a changed value into a model
+run and produce a re-importable package. It does not, by itself, prove the
+contents of the Google Drive file; that requires opening the configured Drive
+archive and checking the timestamped CSV and metadata pair.
+
 ## Important boundaries
 
 - The Drive archive is a record of researcher submissions, not automatically a
@@ -191,7 +272,7 @@ as temporary and kept outside the production processing queue.
 
 ## Current implementation status
 
-The implementation described during this task has intentionally been kept out
-of the active branch. A future agent may inspect the named Git stash in the
-`road_model_inputs_interface` repository and reuse or revise it, but the design
-above is authoritative if the implementation is rebuilt.
+The archive save and review path is implemented in the active
+`road_model_inputs_interface` branch. The Drive archive remains a record of
+submissions rather than an automatic source for new defaults; incorporation
+still requires a separate reviewed promotion process.
