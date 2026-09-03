@@ -155,6 +155,105 @@ complete researcher CSV should not be copied wholesale into processed source
 data, because the CSV may contain generated rows, derived rows, hidden rows,
 or values that belong to a different source category.
 
+## Primary process: promote approved data into website defaults
+
+The normal process for making an approved change appear as a new default in
+the website is not `Upload Filled CSV`. That control is for a researcher
+working copy or recovery. The primary promotion path is:
+
+```text
+Drive submission
+  -> reviewer downloads and validates the CSV/metadata pair
+  -> reviewer compares it with the exact baseline version
+  -> reviewer approves individual rows and chooses the source owner
+  -> reviewer updates the winning source file
+  -> new immutable Module 1 version is generated
+  -> frontend static bundle is generated from that same version
+  -> interface repository is committed and pushed
+  -> GitHub Actions synchronizes the interface snapshot to HF
+  -> deployed website is hard-refreshed and checked
+```
+
+For a source-backed change, the reviewer must first determine which source
+actually wins the source merge. For example, if a row exists in both
+`processed_source/` and `manually_filled_rows/`, changing the lower-priority
+manual row will not change the generated default. Confirm the resulting value
+in the generated package rather than assuming the edited file was authoritative.
+
+The source-version build should be run through the reviewer helper, which
+passes the new version explicitly:
+
+```python
+from pathlib import Path
+from scripts.review_researcher_submission import build_approved_source_version
+
+build_approved_source_version("vYYYY_MM_DD_description")
+```
+
+Do not rebuild an existing immutable version in place. Use a fresh version name
+for every promotion. The command-line entry point of the static builder is
+intended for the configured default version and does not provide the same
+explicit version argument as the reviewer helper.
+
+The build requires the source package available under
+`back-end/data/road_model/`, including the raw LEAP transport workbook inputs
+when the active source method uses them. Those raw workbooks are intentionally
+not part of the HF snapshot; the HF runtime uses the committed processed-source
+outputs. A local promotion therefore needs the source workbooks available in
+the local interface checkout or another approved source-preparation location.
+
+After generation, verify all three layers for the affected row:
+
+1. the generated package under
+   `back-end/outputs/road_module1_defaults/<VERSION>/<ECONOMY>/`;
+2. the static CSV under
+   `front-end/road-module1-static/<VERSION>/`; and
+3. `front-end/road-module1-static/index.json`, whose `default_version` should
+   point to the new version.
+
+Then commit the source update, generated package/static bundle, and
+`UPDATE_METHOD.md` entry in the interface repository. Push its `main` branch,
+wait for `sync_to_hf.yml` to succeed, hard-refresh the website, and confirm the
+new value is displayed. Finally run the affected economy and retain the model
+log, output timestamps, and dashboard/LEAP output links as evidence.
+
+The promotion test must also check that the affected canonical key occurs only
+once in the generated package and static CSV. This catches stale-output
+accumulation and source-priority mistakes before deployment.
+
+### Promotion dry-run findings
+
+The disposable promotion test on 2026-09-03 found two additional checks that
+must not be skipped:
+
+- The review helper correctly compared the Australia test submission and
+  produced the changed-row report, final-override candidate, and source-
+  promotion plan. The plan left the source owner as a reviewer decision, as it
+  should.
+- Running `prepare_road_source.py` against the raw Target and Reference
+  all-economies workbooks wrote 21 processed-source files. This is the required
+  source-preparation step when the accepted value belongs to an upstream LEAP
+  export; editing a generated `processed_source` CSV alone is not sufficient
+  when the builder later overlays the upstream workbook.
+- A clean test checkout did not contain the ignored raw LEAP workbooks, so the
+  source-preparation inputs must be available locally for a source promotion.
+  They are intentionally not copied into the HF snapshot.
+- The current Australia generated package contains 608 duplicate rows across
+  304 canonical `(Branch Path, Variable, Scenario, Year)` keys, while the
+  generated static CSV contains no duplicate keys. The static step currently
+  hides this problem by deduplicating. A conflicting promoted value can
+  therefore remain hidden behind an older duplicate. Generated-package
+  uniqueness must be fixed or made a hard promotion failure before treating a
+  source promotion as fully verified.
+- Rebuilding an immutable version in place can accumulate stale rows. Every
+  promotion test and production update must use a new version directory.
+
+The dry run therefore verified the review and source-preparation artifacts, but
+it did not authorize a production source change or HF deployment. The next
+implementation task is to remove or reject duplicate generated keys, then
+repeat the promotion with a visible before/after value and the full GitHub-to-HF
+verification.
+
 ## Review and testing process
 
 The first implementation should be tested without changing production data:
