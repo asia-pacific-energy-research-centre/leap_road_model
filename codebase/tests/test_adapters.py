@@ -102,6 +102,46 @@ class TestRoadModule1Defaults:
             3: 0.0,
         }
 
+    def test_lifecycle_profiles_collapse_identical_scenario_copies(self):
+        base_rows = [
+            {
+                "economy": "20_USA",
+                "variable": variable,
+                "transport_type": "freight",
+                "vehicle_type": None,
+                "leap_branch_path": f"Demand\\Freight road\\Age {age}",
+                "value": value,
+            }
+            for variable, values in (
+                ("survival_rate", [(0, 100.0), (1, 90.0)]),
+                ("vintage_share", [(0, 0.6), (1, 0.4)]),
+            )
+            for age, value in values
+        ]
+        defaults_df = pd.DataFrame(base_rows + base_rows)
+
+        curves = build_survival_curves(defaults_df, "20_USA")
+        profile = get_vintage_profiles(defaults_df, "20_USA", "freight")
+
+        assert curves["Trucks"].index.tolist() == [0, 1]
+        assert profile["age"].tolist() == [0, 1]
+
+    def test_conflicting_lifecycle_profile_copies_are_rejected(self):
+        defaults_df = pd.DataFrame([
+            {
+                "economy": "20_USA",
+                "variable": "survival_rate",
+                "transport_type": "freight",
+                "vehicle_type": None,
+                "leap_branch_path": "Demand\\Freight road\\Age 1",
+                "value": value,
+            }
+            for value in (90.0, 80.0)
+        ])
+
+        with pytest.raises(ValueError, match="Conflicting survival rates"):
+            build_survival_curves(defaults_df, "20_USA")
+
 
 class TestLeapFormatInputParsing:
     def test_stock_scale_millions_is_converted_to_devices(self):
@@ -582,13 +622,26 @@ class TestModule1DefaultsSaturationUnits:
                 "Value": 0.47,
                 "Units": "Share",
             },
+            {
+                "Economy": "20_USA",
+                "Scenario": "Current Accounts",
+                "Branch Path": "Demand\\Freight road\\Trucks\\PHEV",
+                "Variable": "PHEV Electric Driving Share",
+                "Year": 2022,
+                "Value": 0.31,
+                "Units": "Share",
+            },
         ])
         df.to_csv(tmp_path / "road_module1_values_20_USA.csv", index=False)
 
         loaded = load_road_module1_defaults(tmp_path, economy_filter=["20_USA"])
         rates = get_phev_utilisation_rate(loaded, economy="20_USA")
 
-        assert rates == pytest.approx({"passenger": 0.52, "freight": 0.47})
+        assert rates == pytest.approx({
+            "passenger": 0.52,
+            "freight": 0.47,
+            "freight:Trucks": 0.31,
+        })
 
     def test_component_reconciliation_weights_from_pseudo_branches(self, tmp_path: Path):
         rows = []
@@ -613,7 +666,7 @@ class TestModule1DefaultsSaturationUnits:
 
         assert weights == pytest.approx({"stock": 0.5, "mileage": 0.25, "efficiency": 0.25})
 
-    def test_out_of_scope_truck_hybrid_rows_are_filtered(self, tmp_path: Path):
+    def test_truck_phev_rows_are_retained_while_hev_rows_are_filtered(self, tmp_path: Path):
         df = pd.DataFrame([
             {
                 "Branch Path": "Demand\\Freight road\\Trucks\\PHEV heavy",
@@ -642,10 +695,13 @@ class TestModule1DefaultsSaturationUnits:
         ])
 
         filtered = _filter_out_of_scope_model_rows(df)
-        assert filtered["Branch Path"].tolist() == ["Demand\\Freight road\\Trucks\\BEV heavy"]
+        assert filtered["Branch Path"].tolist() == [
+            "Demand\\Freight road\\Trucks\\PHEV heavy",
+            "Demand\\Freight road\\Trucks\\BEV heavy",
+        ]
 
         csv_path = tmp_path / "road_module1_default_filled_inputs_20USA.csv"
         df.to_csv(csv_path, index=False)
         loaded = _load_single_economy(csv_path, economy_code="20_USA", version_name="vtest")
 
-        assert set(loaded["drive_type"]) == {"BEV"}
+        assert set(loaded["drive_type"]) == {"PHEV", "BEV"}

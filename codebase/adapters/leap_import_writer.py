@@ -121,7 +121,7 @@ VALID_DRIVES_BY_VEHICLE_TYPE = {
     "LPVs": {"ICE", "HEV", "EREV", "PHEV", "BEV", "FCEV"},
     "Motorcycles": {"ICE", "BEV", "FCEV"},
     "Buses": {"ICE", "BEV", "FCEV"},
-    "Trucks": {"ICE", "BEV", "FCEV"},
+    "Trucks": {"ICE", "PHEV", "BEV", "FCEV"},
     "LCVs": {"ICE", "PHEV", "BEV", "FCEV"},
 }
 VALID_SIZES_BY_VEHICLE_TYPE = {
@@ -538,9 +538,6 @@ def build_leap_import_tables(
         if row["_pair_key"] in reference_pairs:
             not_needed_rows.append(_not_needed_row(row, "model", "scenario_only_mismatch", "Branch and variable exist in the reference under another scenario."))
             continue
-        if str(row["Branch Path"]) not in reference_branches:
-            not_needed_rows.append(_not_needed_row(row, "model", "branch_not_in_reference", "Model branch is not present in the reference export."))
-            continue
         warnings.append(
             {
                 "severity": "warning",
@@ -548,7 +545,11 @@ def build_leap_import_tables(
                 "Branch Path": row["Branch Path"],
                 "Variable": row["Variable"],
                 "Scenario": row["Scenario"],
-                "message": "Model produced a row LEAP does not recognise; excluded from import.",
+                "message": (
+                    "Model produced a row LEAP does not recognise; excluded from import."
+                    if str(row["Branch Path"]) in reference_branches
+                    else "Model produced an active-scope branch absent from the LEAP reference; excluded from import."
+                ),
             }
         )
 

@@ -122,6 +122,7 @@ default_mileage_km_per_year:
     FCEV: 25000
   Trucks:
     ICE:  60000
+    PHEV: 60000
     BEV:  60000
     FCEV: 60000
 
@@ -151,5 +152,6 @@ default_efficiency_km_per_gj:
     FCEV:  14000
   Trucks:
     ICE:   2000
+    PHEV:  2500
     BEV:   4000
     FCEV:  3500

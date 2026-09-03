@@ -177,6 +177,57 @@ def test_build_leap_import_tables_merges_ids_and_returns_warnings():
     ).any()
 
 
+def test_truck_phev_missing_reference_branch_is_a_required_warning():
+    t11 = pd.DataFrame([
+        {
+            "leap_branch_path": "Demand\\Freight road\\Trucks\\PHEV heavy\\Electricity",
+            "variable": "Mileage",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 10_000.0,
+            "unit": "Kilometer",
+        },
+        {
+            "leap_branch_path": "Demand\\Freight road",
+            "variable": "Sales",
+            "scenario": "Target",
+            "year": 2022,
+            "value": 1.0,
+            "unit": "Device",
+        },
+    ])
+    reference = pd.DataFrame([
+        {
+            "BranchID": 1,
+            "VariableID": 2,
+            "ScenarioID": 3,
+            "RegionID": 4,
+            "Branch Path": "Demand\\Freight road",
+            "Variable": "Sales",
+            "Scenario": "Target",
+            "Region": "United States of America",
+            "Scale": "",
+            "Units": "Device",
+            "Per...": "",
+        }
+    ])
+
+    _, _, warnings, not_needed = build_leap_import_tables(
+        t11,
+        reference,
+        economy_long_name="United States of America",
+    )
+
+    assert any(
+        warning["type"] == "model_row_not_in_leap_reference"
+        and warning["Branch Path"] == "Demand\\Freight road\\Trucks\\PHEV heavy\\Electricity"
+        for warning in warnings
+    )
+    assert not (
+        not_needed["Branch Path"].eq("Demand\\Freight road\\Trucks\\PHEV heavy\\Electricity")
+    ).any()
+
+
 def test_build_leap_import_tables_applies_scale_to_expression_and_viewing_values():
     t11 = pd.DataFrame([
         {

@@ -194,6 +194,7 @@ def _build_branch_skeleton(vehicle_cfg: dict, fuel_cfg: dict) -> pd.DataFrame:
     For vehicle types with no size split the size cell is None.
     """
     eligibility = fuel_cfg["drive_fuel_eligibility"]
+    vehicle_drive_eligibility = fuel_cfg.get("vehicle_drive_fuel_eligibility", {})
     bucket_transport = vehicle_cfg["bucket_transport_type"]
     vehicle_sizes = vehicle_cfg.get("vehicle_type_sizes", {})
     valid_drives = vehicle_cfg.get("valid_drive_types_by_vehicle_type", {})
@@ -205,9 +206,14 @@ def _build_branch_skeleton(vehicle_cfg: dict, fuel_cfg: dict) -> pd.DataFrame:
         for size in sizes:
             # yaml null → Python None; keep as-is
             actual_size = None if size == "null" or size is None else size
-            for drive_type, fuel_groups in eligibility.items():
+            for drive_type, default_fuel_groups in eligibility.items():
                 if drive_type not in allowed_drives:
                     continue
+                fuel_groups = (
+                    vehicle_drive_eligibility
+                    .get(vehicle_type, {})
+                    .get(drive_type, default_fuel_groups)
+                )
                 all_fuels: list[str] = []
                 for fuel_list in fuel_groups.values():
                     all_fuels.extend(fuel_list)

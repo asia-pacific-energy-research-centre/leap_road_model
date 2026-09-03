@@ -2260,6 +2260,8 @@ Examples:
                         help="Module 6 fuel match tolerance fraction (default: workflow config)")
     parser.add_argument("--lifecycle-factors-path", default=None, dest="lifecycle_factors_path",
                         help="Path to lifecycle calibration factors CSV (default: APEC-wide defaults from back-end/data)")
+    parser.add_argument("--leap-reference-path", default=None, dest="leap_reference_path",
+                        help="LEAP export workbook used for strict branch, variable, and scenario ID matching")
     parser.set_defaults(leap_import_export_values_in_raw_units=None)
     parser.add_argument("--leap-import-raw-values", action="store_true", dest="leap_import_export_values_in_raw_units",
                         help="Write raw-unit values to the LEAP import workbook and clear numeric scale labels")
@@ -2282,6 +2284,7 @@ Examples:
             "write_leap_row_diagnostics": args.write_leap_row_diagnostics,
             "module6_match_tolerance": args.module6_match_tolerance,
             "lifecycle_factors_path": args.lifecycle_factors_path,
+            "leap_reference_path": args.leap_reference_path,
             "leap_import_export_values_in_raw_units": args.leap_import_export_values_in_raw_units,
             **{f"run_m{module_num}": getattr(args, f"run_m{module_num}") for module_num in range(2, 8)},
         }.items()

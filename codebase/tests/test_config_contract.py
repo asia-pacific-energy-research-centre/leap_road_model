@@ -1,4 +1,3 @@
-import copy
 from pathlib import Path
 
 import pandas as pd
@@ -42,7 +41,7 @@ def test_legacy_model_defaults_match_current_branch_matrix():
         "Motorcycles": ["ICE", "BEV", "FCEV"],
         "Buses": ["ICE", "BEV", "FCEV"],
         "LCVs": ["ICE", "PHEV", "BEV", "FCEV"],
-        "Trucks": ["ICE", "BEV", "FCEV"],
+        "Trucks": ["ICE", "PHEV", "BEV", "FCEV"],
     }
     expected_weights = {
         "LPVs": 1.0,
@@ -74,7 +73,7 @@ def test_vehicle_branch_matrix_matches_current_scope():
         "Motorcycles": ["ICE", "BEV", "FCEV"],
         "Buses": ["ICE", "BEV", "FCEV"],
         "LCVs": ["ICE", "PHEV", "BEV", "FCEV"],
-        "Trucks": ["ICE", "BEV", "FCEV"],
+        "Trucks": ["ICE", "PHEV", "BEV", "FCEV"],
     }
     expected_sizes = {
         "LPVs": ["small", "medium", "large"],
@@ -114,19 +113,20 @@ def test_branch_skeleton_uses_current_vehicle_scope():
     assert actual["Motorcycles"] == {"drives": ["BEV", "FCEV", "ICE"], "sizes": [None]}
     assert actual["Buses"] == {"drives": ["BEV", "FCEV", "ICE"], "sizes": [None]}
     assert actual["LCVs"] == {"drives": ["BEV", "FCEV", "ICE", "PHEV"], "sizes": [None]}
-    assert actual["Trucks"] == {"drives": ["BEV", "FCEV", "ICE"], "sizes": ["heavy", "medium"]}
+    assert actual["Trucks"] == {
+        "drives": ["BEV", "FCEV", "ICE", "PHEV"],
+        "sizes": ["heavy", "medium"],
+    }
 
 
-def test_truck_phev_case_study_proves_configured_branches_reach_t11():
-    """Prove structural feasibility without enabling truck PHEVs in production."""
+def test_truck_phev_scope_reaches_t11_with_diesel_family_fuels():
+    """The production scope carries sized truck PHEV branches into T11."""
     with open(CONFIG_DIR / "vehicle_mappings.yaml", encoding="utf-8") as f:
         vehicle_cfg = yaml.safe_load(f)
     with open(CONFIG_DIR / "fuel_mappings.yaml", encoding="utf-8") as f:
         fuel_cfg = yaml.safe_load(f)
 
-    proof_cfg = copy.deepcopy(vehicle_cfg)
-    proof_cfg["valid_drive_types_by_vehicle_type"]["Trucks"].append("PHEV")
-    skeleton = _add_leap_branch_paths(_build_branch_skeleton(proof_cfg, fuel_cfg))
+    skeleton = _add_leap_branch_paths(_build_branch_skeleton(vehicle_cfg, fuel_cfg))
     truck_phev = skeleton[
         skeleton["vehicle_type"].eq("Trucks")
         & skeleton["drive_type"].eq("PHEV")
@@ -135,14 +135,14 @@ def test_truck_phev_case_study_proves_configured_branches_reach_t11():
     assert set(zip(truck_phev["size"], truck_phev["fuel"])) == {
         (size, fuel)
         for size in ("medium", "heavy")
-        for fuel in ("Electricity", "Motor gasoline", "Biogasoline", "Efuel")
+        for fuel in ("Electricity", "Gas and diesel oil", "Biodiesel", "Efuel")
     }
 
     # Use one size and the two primary energy streams to prove that the generic
     # Module 6/T11 machinery accepts a sized truck PHEV technology branch.
     medium_paths = truck_phev[
         truck_phev["size"].eq("medium")
-        & truck_phev["fuel"].isin(["Electricity", "Motor gasoline"])
+        & truck_phev["fuel"].isin(["Electricity", "Gas and diesel oil"])
     ].set_index("fuel")["leap_branch_path"]
     t9 = pd.DataFrame([
         {
@@ -168,8 +168,8 @@ def test_truck_phev_case_study_proves_configured_branches_reach_t11():
             "vehicle_type": "Trucks",
             "drive_type": "PHEV",
             "size": "medium",
-            "fuel": "Motor gasoline",
-            "leap_branch_path": medium_paths["Motor gasoline"],
+            "fuel": "Gas and diesel oil",
+            "leap_branch_path": medium_paths["Gas and diesel oil"],
             "adjusted_stock": 100.0,
             "adjusted_mileage_km_per_year": 12_000.0,
             "adjusted_efficiency_km_per_gj": 2_000.0,
@@ -187,7 +187,7 @@ def test_truck_phev_case_study_proves_configured_branches_reach_t11():
 
     device_rows = t11[t11["variable"].eq("Device Share")].set_index("leap_branch_path")
     assert device_rows.loc[medium_paths["Electricity"], "value"] == pytest.approx(40.0)
-    assert device_rows.loc[medium_paths["Motor gasoline"], "value"] == pytest.approx(60.0)
+    assert device_rows.loc[medium_paths["Gas and diesel oil"], "value"] == pytest.approx(60.0)
     assert (
         t11["leap_branch_path"]
         == "Demand\\Freight road\\Trucks\\PHEV medium"
