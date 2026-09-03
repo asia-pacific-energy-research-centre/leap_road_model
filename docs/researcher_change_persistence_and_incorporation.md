@@ -227,12 +227,14 @@ before and after values.
    Load that CSV with `load_module1_for_economy()` and run
    `road_workflow.py` in a temporary output directory. The second run should
    complete without changing the production defaults or static bundle.
-7. Restore the original value and remove the test note. If the browser upload
-   control is being tested manually, upload the downloaded CSV and confirm
-   that the interface accepts it. Automated browser sessions may be unable to
-   operate the operating system's hidden native file picker; in that case,
-   the loader plus temporary workflow run still verifies the exact processing
-   path, but the manual upload step must be recorded as not automated.
+7. Upload the downloaded CSV through the browser's `Upload Filled CSV` control
+   and confirm that the interface accepts it. This upload is mandatory for the
+   full acceptance test because it verifies the actual researcher re-entry
+   path. Restore the original value and remove the test note afterwards.
+   Automated browser sessions may be unable to operate the operating system's
+   hidden native file picker; in that case, the loader plus temporary workflow
+   run is a useful partial/diagnostic check, but the full acceptance test is
+   incomplete until a person performs and records the upload step.
 
 ### Recorded example: Australia live test
 
@@ -250,13 +252,16 @@ The observed evidence was:
 | Workflow | Completed successfully in `54.2 seconds` |
 | Archive | `Researcher submission archive saved successfully` |
 | Archive status | `available: true` |
-| Re-import | Python loader and temporary `road_workflow.py` run completed successfully |
+| Re-import processing | Python loader and temporary `road_workflow.py` run completed successfully |
+| Browser CSV upload | Not automated; manual upload still required for full acceptance |
 | Cleanup | Original value and note restored in the deployed UI |
 
 This proves the deployed application can carry a changed value into a model
-run and produce a re-importable package. It does not, by itself, prove the
-contents of the Google Drive file; that requires opening the configured Drive
-archive and checking the timestamped CSV and metadata pair.
+run and produce a re-importable package. The recorded run is not a complete
+acceptance test until the downloaded CSV has also been uploaded through the
+browser. It also does not, by itself, prove the contents of the Google Drive
+file; that requires opening the configured Drive archive and checking the
+timestamped CSV and metadata pair.
 
 ## Important boundaries
 
