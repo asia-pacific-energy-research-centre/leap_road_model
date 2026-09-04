@@ -4,6 +4,8 @@ Module 2 — Base-year road structure and calibration preparation.
 Responsibilities:
 - Define the full road branch skeleton: transport_type × vehicle_type × size ×
   drive_type × fuel, enumerated from config.
+- Restrict that configured skeleton to fuel leaves that actually exist in the
+  selected LEAP reference for each requested scenario.
 - Expand the skeleton across all economies × scenarios.
 - Populate base-year stock, mileage, and efficiency from the merged input table (T3).
 - Construct LEAP branch paths including the size-qualified technology label
@@ -61,6 +63,7 @@ def run_module2(
     scenarios: list[str] | None = None,
     base_year: int = 2022,
     leap_workbook_path: str | Path | None = None,
+    leap_reference_path: str | Path | None = None,
     diagnostics_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     """
@@ -81,6 +84,9 @@ def run_module2(
         leap_workbook_path: Optional path to the LEAP import workbook.
             If supplied, branch_id is joined onto T4 and coverage gaps are
             logged.
+        leap_reference_path: Optional canonical LEAP reference export. When
+            supplied, configured fuel leaves absent from the reference for a
+            requested scenario are removed before T4 is populated.
         diagnostics_dir: Optional directory root for Module 2 PNG diagnostic
             charts. When provided, charts are written to
             diagnostics_dir/module2/.
@@ -114,6 +120,12 @@ def run_module2(
     log.info("Expanded branch table: %d rows (%d economies × %d scenarios × %d branch types)",
              len(branches), len(all_economies), len(all_scenarios),
              len(skeleton))
+
+    if leap_reference_path is not None:
+        branches = _filter_to_leap_reference_fuel_branches(
+            branches,
+            leap_reference_path,
+        )
 
     # --- 4. Populate base-year values from T3 ---
     t4 = _populate_base_year_values(branches, merged_inputs, base_year)
@@ -581,3 +593,59 @@ def _join_leap_ids(t4: pd.DataFrame, leap_workbook_path: str | Path) -> pd.DataF
         .drop_duplicates("leap_branch_path")
     )
     return t4.merge(branch_id_map, on="leap_branch_path", how="left")
+
+
+def _filter_to_leap_reference_fuel_branches(
+    branches: pd.DataFrame,
+    leap_reference_path: str | Path,
+) -> pd.DataFrame:
+    """Keep only scenario-specific fuel leaves present in the LEAP reference.
+
+    ``fuel_mappings.yaml`` describes technology capability. The reference
+    export describes the actual branch structure available to the current LEAP
+    model. Both gates are required: a fuel can be valid for ICE in general but
+    absent from a particular vehicle/size leaf in LEAP.
+    """
+    from adapters.leap_import_writer import load_reference_id_table
+
+    reference = load_reference_id_table(leap_reference_path, road_only=True)
+    reference_keys = (
+        reference[["Scenario", "Branch Path"]]
+        .rename(
+            columns={
+                "Scenario": "scenario",
+                "Branch Path": "leap_branch_path",
+            }
+        )
+        .drop_duplicates()
+    )
+
+    requested_scenarios = set(branches["scenario"].dropna().astype(str))
+    available_scenarios = set(reference_keys["scenario"].dropna().astype(str))
+    missing_scenarios = sorted(requested_scenarios - available_scenarios)
+    if missing_scenarios:
+        raise ValueError(
+            "LEAP reference has no road branch rows for requested scenario(s): "
+            + ", ".join(missing_scenarios)
+        )
+
+    original_count = len(branches)
+    filtered = branches.merge(
+        reference_keys,
+        on=["scenario", "leap_branch_path"],
+        how="inner",
+    )
+    if filtered.empty and original_count:
+        raise ValueError(
+            "No configured road fuel branches matched the selected LEAP reference: "
+            f"{leap_reference_path}"
+        )
+
+    removed = original_count - len(filtered)
+    if removed:
+        log.info(
+            "LEAP structural availability removed %d configured fuel branch row(s) "
+            "absent from the selected reference.",
+            removed,
+        )
+    return filtered

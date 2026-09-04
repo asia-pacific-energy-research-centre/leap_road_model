@@ -928,6 +928,19 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         else None
     )
     output_root = Path(config.output_root)
+    reference_path = (
+        Path(config.leap_reference_path)
+        if config.leap_reference_path
+        else _default_leap_reference_path()
+    )
+    if config.run_m2:
+        if reference_path is None or not reference_path.exists():
+            raise FileNotFoundError(
+                "Module 2 requires a LEAP reference export so fuel allocation can be "
+                "restricted to branches that actually exist. Supply --leap-reference-path "
+                "or install the canonical config/road model leap export.xlsx reference."
+            )
+        _validate_reference_export_scenarios(reference_path, config.scenarios)
 
     log_file = output_root / "workflow.log" if config.save_csv_outputs else None
     logger = StructuredLogger("road_workflow", log_file=log_file, print_to_console=False)
@@ -1071,6 +1084,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             economies=[config.economy],
             scenarios=config.scenarios,
             base_year=config.base_year,
+            leap_reference_path=reference_path,
             leap_workbook_path=config.leap_workbook_path,
             diagnostics_dir=diagnostics_dir,
         )
@@ -1447,9 +1461,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             )
             outputs["module1_reimport_reconciled_path"] = module1_reimport_path
             leap_import_path = output_root / "module6" / f"{config.economy}_leap_import.xlsx"
-            reference_path = Path(config.leap_reference_path) if config.leap_reference_path else _default_leap_reference_path()
             if reference_path is not None and reference_path.exists():
-                _validate_reference_export_scenarios(reference_path, config.scenarios)
                 warnings = write_strict_leap_import_workbook(
                     m6["T11"],
                     leap_import_path,

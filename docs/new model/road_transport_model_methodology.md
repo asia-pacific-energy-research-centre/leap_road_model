@@ -445,7 +445,20 @@ they must be represented as separate technology configurations.
 
 ### Step 4 â€” Allocate remaining ESTO fuels to eligible branches
 
-For ordinary fuel allocation, eligibility depends on the vehicle and drive structure. Electricity is handled first for BEV/PHEV/EREV branches, PHEV/EREV liquid fuel is handled separately as gasoline-family fuel, and the remaining liquid or gaseous fuels are allocated to eligible ICE, HEV, and other configured branches.
+For ordinary fuel allocation, eligibility depends on both the vehicle/drive
+capability configuration and the actual fuel leaves in the selected LEAP
+reference export. Module 2 first builds the configured taxonomy, then removes
+each scenario-specific fuel branch path that is absent from the reference.
+Module 6 can only allocate or bootstrap fuel on the retained rows. This is a
+global structural rule for every economy/reference: a generally ICE-compatible
+fuel such as LPG or Natural gas must not be assigned to a vehicle/size leaf that
+does not exist in the target LEAP model. An absent fuel leaf, even when a
+comparison represents its use as zero, is not an allocation candidate.
+
+Electricity is handled first for BEV/PHEV/EREV branches, PHEV/EREV liquid fuel
+is handled separately using its configured fuel family, and the remaining
+liquid or gaseous fuels are allocated to eligible ICE, HEV, and other configured
+branches.
 
 Fuel allocation is not only a mathematical split. It also embeds transport judgement. The allocation needs to reflect likely fuel use by vehicle type, especially where ESTO reports fuel totals but does not say exactly which road branches consumed that fuel.
 

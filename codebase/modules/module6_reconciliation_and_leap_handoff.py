@@ -25,6 +25,13 @@ Fuel eligibility (coarse gate):
     specific vehicle/drive pair. HEV is NOT eligible for LPG, LNG, or Natural
     gas — those are ICE-only fuels.
 
+LEAP branch availability (structural gate):
+    Before Module 6 runs, Module 2 intersects the configured fuel skeleton with
+    the exact scenario/branch paths in the selected LEAP reference export.
+    Therefore a generally valid ICE fuel is not allocated to a vehicle/size
+    leaf that the target LEAP structure does not contain. Zero-stock
+    bootstrapping and all allocation rules operate only on those retained rows.
+
 Priority fuels (_FUEL_ALLOCATION_PRIORITY):
     Fuels listed here are allocated in _PRIORITY_FUEL_ALLOCATION_ORDER before
     any stock-share fuels. Each fuel has one or more tiers: a list of

@@ -814,7 +814,19 @@ PHEV and EREV liquid fuel is gasoline-family only for both passenger and freight
 
 #### Step 4 â€” Allocate remaining ESTO fuel to eligible branches
 
-For each fuel, the remaining ESTO total is allocated across eligible branches. Eligibility is driven by `fuel_mappings.yaml` (`drive_fuel_eligibility`). This creates a provisional `allocated_branch_fuel_energy_pj` for each branch before scalar adjustment.
+For each fuel, the remaining ESTO total is allocated across eligible branches.
+Eligibility has two gates. `fuel_mappings.yaml` defines the broad drive and
+vehicle/drive capabilities. Before T4 is populated, Module 2 intersects that
+configured taxonomy with the exact `(Scenario, Branch Path)` fuel leaves in the
+same LEAP reference export later used by the strict import writer. Module 6 can
+therefore allocate and bootstrap fuel only on branches that actually exist in
+the target LEAP structure. This rule applies to every economy/reference; do not
+add economy-specific exceptions for absent LPG, Natural gas, or other fuel
+leaves. If the reference is missing or unusable, the normal workflow fails
+before Module 2 rather than making an unconstrained allocation.
+
+This creates a provisional `allocated_branch_fuel_energy_pj` for each retained
+branch before scalar adjustment.
 
 Conventional liquid fuels use a vehicle-priority spillover rule before falling back to energy-share allocation:
 
@@ -973,11 +985,13 @@ authoritative source of BranchID, VariableID, ScenarioID, and RegionID for
 every branch × variable × scenario combination. The ID columns must match LEAP's
 own internal IDs or the import will fail. The file must be regenerated from LEAP
 whenever the road transport branch structure is changed (branches added, renamed,
-or removed). All APEC economy LEAP models share the same "clean slate" road
-transport branch structure, so one export file covers all economies. If the
-repo-local reference file is missing, the workflow can fall back only to the
-reviewed full-model export under `leap_utilities`; if no candidate is found, the
-strict writer is bypassed and LEAP cannot import the output.
+or removed). APEC economy LEAP models are expected to share the same "clean
+slate" road transport structure, so the repo-local export is the normal global
+reference. An economy-specific export can instead be supplied with
+`--leap-reference-path`; its branch presence then governs that run. If the
+repo-local reference is missing, the workflow can fall back only to the reviewed
+full-model export under `leap_utilities`. If no candidate is found, the workflow
+fails before Module 2 because it cannot safely determine fuel-leaf availability.
 The `LEAP` sheet keeps LEAP's import column structure: ID columns,
 `Branch Path`, `Variable`, `Scenario`, `Region`, `Scale`, `Units`, `Per...`,
 `Expression`, a blank spacer column, and `Level 1` through `Level 8...`. The
