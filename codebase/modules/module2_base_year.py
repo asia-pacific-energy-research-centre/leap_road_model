@@ -303,19 +303,35 @@ def _populate_base_year_values(
     if has_size:
         base_join_keys.append("size")
 
-    # Pivot each variable into its own wide column
+    # Pivot each variable into its own wide column.  Mileage and efficiency can
+    # be fuel-specific, so retain fuel in their join when the branch table has
+    # fuel-level leaves. Stock remains at the vehicle/technology level.
+    fuel_join_keys = list(base_join_keys)
+    has_fuel = (
+        "fuel" in branches.columns
+        and branches["fuel"].notna().any()
+        and "fuel" in base_data.columns
+        and base_data["fuel"].notna().any()
+    )
+    if has_fuel:
+        fuel_join_keys.append("fuel")
     wide_parts: list[pd.DataFrame] = []
+    fuel_wide_parts: list[pd.DataFrame] = []
     for var, (col_name, flag_col) in _T3_VARIABLES.items():
+        join_keys = fuel_join_keys if has_fuel and var in {"mileage", "efficiency"} else base_join_keys
         sub = (
             base_data[base_data["variable"] == var]
-            [base_join_keys + ["value", "source_flag"]]
+            [join_keys + ["value", "source_flag"]]
             .copy()
         )
         if sub.empty:
             continue
         sub = sub.rename(columns={"value": col_name, "source_flag": flag_col})
-        sub = sub.drop_duplicates(subset=base_join_keys)
-        wide_parts.append(sub.set_index(base_join_keys))
+        sub = sub.drop_duplicates(subset=join_keys)
+        if join_keys == fuel_join_keys:
+            fuel_wide_parts.append(sub.set_index(join_keys))
+        else:
+            wide_parts.append(sub.set_index(join_keys))
 
     if wide_parts:
         wide = wide_parts[0]
@@ -331,6 +347,12 @@ def _populate_base_year_values(
         # Join without size, then handle the size replication
         t4 = branches.merge(wide, on=base_join_keys, how="left")
         t4 = _split_stock_equally_across_sizes(t4)
+
+    if fuel_wide_parts:
+        fuel_wide = fuel_wide_parts[0]
+        for part in fuel_wide_parts[1:]:
+            fuel_wide = fuel_wide.join(part, how="outer")
+        t4 = t4.merge(fuel_wide.reset_index(), on=fuel_join_keys, how="left")
 
     t4 = _apply_technology_stock_shares(t4, base_data, base_year)
 
@@ -387,8 +409,13 @@ def _populate_base_year_values(
         fb_col = f"_fb_{col_name}"
         fb_flag_col = f"_fb_{flag_col}"
         granularity_col = f"{var}_granularity"
+        fallback_source = wide.reset_index()
+        if col_name not in fallback_source.columns and fuel_wide_parts:
+            fallback_source = fuel_wide.reset_index()
+        if col_name not in fallback_source.columns:
+            continue
         fallback = (
-            wide[vt_fallback_keys + [col_name, flag_col]]
+            fallback_source[vt_fallback_keys + [col_name, flag_col]]
             .dropna(subset=[col_name])
             .groupby(vt_fallback_keys)
             .agg(

@@ -78,6 +78,59 @@ def test_vehicle_type_mileage_broadcasts_to_fuel_level_branches():
     assert set(trucks["mileage_granularity"]) == {"vehicle_type_level_broadcast"}
 
 
+def test_fuel_level_mileage_is_not_replaced_by_first_fuel():
+    inputs = pd.DataFrame([
+        {
+            "economy": "20_USA",
+            "scenario": "Target",
+            "year": 2022,
+            "transport_type": "freight",
+            "vehicle_type": "LCVs",
+            "drive_type": None,
+            "variable": "stock",
+            "value": 100_000.0,
+            "source_flag": "test_vehicle_level",
+        },
+        {
+            "economy": "20_USA",
+            "scenario": "Target",
+            "year": 2022,
+            "transport_type": "freight",
+            "vehicle_type": "LCVs",
+            "drive_type": "ICE",
+            "fuel": "Biodiesel",
+            "variable": "mileage",
+            "value": 10_000.0,
+            "source_flag": "test_fuel_level",
+        },
+        {
+            "economy": "20_USA",
+            "scenario": "Target",
+            "year": 2022,
+            "transport_type": "freight",
+            "vehicle_type": "LCVs",
+            "drive_type": "ICE",
+            "fuel": "Motor gasoline",
+            "variable": "mileage",
+            "value": 20_000.0,
+            "source_flag": "test_fuel_level",
+        },
+    ])
+
+    t4 = run_module2(
+        inputs,
+        config_dir=pathlib.Path(__file__).parent.parent / "config",
+        economies=["20_USA"],
+        scenarios=["Target"],
+        base_year=2022,
+        diagnostics_dir=None,
+    )
+
+    lcv = t4[(t4["vehicle_type"] == "LCVs") & (t4["drive_type"] == "ICE")]
+    assert lcv.loc[lcv["fuel"] == "Biodiesel", "mileage_km_per_year"].iloc[0] == pytest.approx(10_000.0)
+    assert lcv.loc[lcv["fuel"] == "Motor gasoline", "mileage_km_per_year"].iloc[0] == pytest.approx(20_000.0)
+
+
 def test_missing_mileage_is_not_filled_from_model_defaults():
     inputs = pd.DataFrame([
         {
