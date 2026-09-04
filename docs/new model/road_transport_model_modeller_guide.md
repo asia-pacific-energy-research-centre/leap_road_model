@@ -236,6 +236,8 @@ Demand
       ICE <size>
         Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
         Biogasoline, Biodiesel, Biogas, Efuel
+      PHEV <size>
+        Electricity, Gas and diesel oil, Biodiesel, Efuel
       BEV <size>
         Electricity
       FCEV <size>
@@ -1438,6 +1440,18 @@ Demand
         Fuels:
           Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG,
           Biogasoline, Biodiesel, Biogas, Efuel
+        Fuel-level measures:
+          Mileage
+          Fuel Economy
+          Mileage correction factor
+          Fuel Economy correction factor
+
+      PHEV <size>
+        Measures:
+          Stock Share
+          Sales Share
+        Fuels:
+          Electricity, Gas and diesel oil, Biodiesel, Efuel
         Fuel-level measures:
           Mileage
           Fuel Economy

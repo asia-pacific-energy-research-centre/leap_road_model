@@ -103,6 +103,8 @@ Demand
       ICE <size>
         Motor gasoline, Gas and diesel oil, Natural gas, LPG, LNG
         Biogasoline, Biodiesel, Biogas, Efuel
+      PHEV <size>
+        Electricity, Gas and diesel oil, Biodiesel, Efuel
       BEV <size>
         Electricity
       FCEV <size>
