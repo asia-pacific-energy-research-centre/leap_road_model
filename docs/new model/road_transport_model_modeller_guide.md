@@ -256,19 +256,12 @@ The intention is to provide detail where it is useful, not to make every branch 
 
 This hierarchy matters because variables are defined at different levels, which is a result of model design decisions, which was sometimes influenced by the way LEAP works.
 
-The hierarchy is a configured superset of possible branches, not a claim that
-every economy contains every listed fuel leaf. LPG and Natural gas are shown
-under generic ICE branches for capability/configuration purposes, but they are
-retained only when the selected LEAP reference contains that exact branch. If
-a reference omits those leaves for a vehicle/size category—such as LPV ICE
-small or Motorcycles ICE in the current USA structure—those leaves are removed
-before allocation and receive no fuel. The economy-specific LEAP reference
-structure takes precedence over this generic diagram.
-
 This means a change at one level can affect many branches below it. For example, changing BEV sales share under LPVs affects future BEV stock, electricity demand, ICE stock share over time, and liquid fuel demand. Changing mileage at a fuel branch affects energy use for that branch, but does not directly change stock or sales.
 
 Current scope rules (important when comparing to the 9th edition and earlier 10th edition LEAP models):
 
+- LPG and Natural gas do not exist under LPV ICE small or Motorcycles ICE and
+  must not be allocated to those branches.
 - `HEV` and `EREV` are LPV-only.
 - Truck `PHEV` is supported for medium and heavy trucks through the approved
   diesel-family fuel layout.
