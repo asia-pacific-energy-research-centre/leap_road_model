@@ -100,10 +100,31 @@ def _series(frame: pd.DataFrame, economy: str, scenario: str, fuel: str) -> list
         & (frame["scenario"] == scenario)
         & (frame["fuel"] == fuel)
     ].set_index("year")["energy_pj"]
-    return [float(subset.get(year, 0.0)) for year in YEARS]
+    return [round(float(subset.get(year, 0.0)), 4) for year in YEARS]
 
 
-def _add_stacked_area(fig: go.Figure, frame: pd.DataFrame, economy: str, scenario: str, row: int, col: int, showlegend: bool) -> None:
+def _total_series(frame: pd.DataFrame, economy: str, scenario: str) -> list[float]:
+    subset = frame[
+        (frame["economy"] == economy)
+        & (frame["scenario"] == scenario)
+        & (frame["year"].isin(YEARS))
+    ]
+    totals = subset.groupby("year")["energy_pj"].sum()
+    return [round(float(totals.get(year, 0.0)), 4) for year in YEARS]
+
+
+def _add_stacked_area(
+    fig: go.Figure,
+    frame: pd.DataFrame,
+    economy: str,
+    scenario: str,
+    row: int,
+    col: int,
+    showlegend: bool,
+    comparison_frame: pd.DataFrame,
+    comparison_label: str,
+    comparison_color: str,
+) -> None:
     for index, fuel in enumerate(FUEL_ORDER):
         fig.add_trace(
             go.Scatter(
@@ -121,6 +142,20 @@ def _add_stacked_area(fig: go.Figure, frame: pd.DataFrame, economy: str, scenari
             row=row,
             col=col,
         )
+    fig.add_trace(
+        go.Scatter(
+            x=YEARS,
+            y=_total_series(comparison_frame, economy, scenario),
+            name=comparison_label,
+            legendgroup=comparison_label,
+            mode="lines",
+            line={"width": 2.4, "dash": "dash", "color": comparison_color},
+            hovertemplate=f"{comparison_label}: %{{y:.2f}} PJ<extra></extra>",
+            showlegend=showlegend,
+        ),
+        row=row,
+        col=col,
+    )
 
 
 def build_dashboard(ninth: pd.DataFrame, model: pd.DataFrame, output: Path) -> None:
@@ -140,8 +175,14 @@ def build_dashboard(ninth: pd.DataFrame, model: pd.DataFrame, output: Path) -> N
     row = 1
     for economy in ECONOMIES:
         for scenario in SCENARIOS:
-            _add_stacked_area(fig, ninth, economy, scenario, row, 1, showlegend=row == 1)
-            _add_stacked_area(fig, model, economy, scenario, row, 2, showlegend=False)
+            _add_stacked_area(
+                fig, ninth, economy, scenario, row, 1, showlegend=row == 1,
+                comparison_frame=model, comparison_label="New model total", comparison_color="#111827",
+            )
+            _add_stacked_area(
+                fig, model, economy, scenario, row, 2, showlegend=False,
+                comparison_frame=ninth, comparison_label="9th edition total", comparison_color="#C2410C",
+            )
             row += 1
 
     fig.update_xaxes(range=[2022, 2060], dtick=10, showgrid=True, gridcolor="rgba(120,120,120,0.18)")
