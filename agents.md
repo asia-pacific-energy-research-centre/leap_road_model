@@ -978,6 +978,14 @@ The reference export supplies LEAP's internal IDs and metadata. T11 supplies the
 new model values. The resulting workbook has metadata rows above the header,
 with the real column header on row index 2 when read with pandas.
 
+The numeric values in the reference export are not model inputs and must not be
+used as Module 6 energy targets. For fuel allocation, the reference contributes
+the structural fact that a `(Scenario, Branch Path, fuel leaf)` exists (or does
+not exist), plus the LEAP identifiers and import metadata. T11 and the ESTO
+reconciliation supply the values written to the generated import workbook. A
+clean-slate balance export used for comparison is likewise read-only; its
+numeric values have no authority over the road-model allocation.
+
 Required `LEAP` sheet columns, in order:
 
 ```text

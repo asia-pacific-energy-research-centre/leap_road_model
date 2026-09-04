@@ -455,6 +455,13 @@ fuel such as LPG or Natural gas must not be assigned to a vehicle/size leaf that
 does not exist in the target LEAP model. An absent fuel leaf, even when a
 comparison represents its use as zero, is not an allocation candidate.
 
+The values in the selected LEAP reference export do not supply Module 6 fuel
+targets. The reference is used only to identify existing branch/fuel leaves and
+to preserve LEAP IDs and import metadata. ESTO totals and the model's T11
+outputs determine the values in the generated import workbook. Clean-slate
+balance exports are comparison artefacts; their numeric values are not inputs
+to the road model.
+
 Electricity is handled first for BEV/PHEV/EREV branches, PHEV/EREV liquid fuel
 is handled separately using its configured fuel family, and the remaining
 liquid or gaseous fuels are allocated to eligible ICE, HEV, and other configured

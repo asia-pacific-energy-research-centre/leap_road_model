@@ -828,6 +828,14 @@ before Module 2 rather than making an unconstrained allocation.
 This creates a provisional `allocated_branch_fuel_energy_pj` for each retained
 branch before scalar adjustment.
 
+The selected LEAP reference export is used for structure, not for numeric fuel
+targets. Its values are ignored when Module 6 allocates energy: only the
+presence of the scenario-specific branch/fuel leaf, together with the LEAP
+identifiers and metadata, is relevant. The ESTO totals and the model's T11
+values determine the numbers written to the generated LEAP import workbook.
+Any clean-slate balance export used to inspect existing LEAP results is a
+read-only comparison file and its numeric values do not drive this workflow.
+
 Conventional liquid fuels use a vehicle-priority spillover rule before falling back to energy-share allocation:
 
 1. Diesel and biodiesel are allocated through the freight priority tiers first:
