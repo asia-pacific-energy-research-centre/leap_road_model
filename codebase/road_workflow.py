@@ -1880,9 +1880,18 @@ def _read_leap_input_table(path: Path) -> pd.DataFrame | None:
 
 def _looks_like_future_sales_share_input(df: pd.DataFrame, base_year: int) -> bool:
     """True when DataFrame appears to contain future LEAP-format Sales Share rows."""
-    required = {"Branch Path", "Variable", "Scenario", "Region"}
-    if not required.issubset(df.columns):
+    required = {"Branch Path", "Variable", "Scenario"}
+    if not required.issubset(df.columns) or not ({"Region", "Economy"} & set(df.columns)):
         return False
+
+    # The interface static bundle uses the canonical long Module 1 contract
+    # (Year/Value), while the legacy Module 5 input expects wide year columns.
+    # Recognise the long form here so it can be converted before parsing.
+    if {"Year", "Value"}.issubset(df.columns):
+        sales_mask = df["Variable"].astype(str).str.strip().str.lower().eq("sales share")
+        years = pd.to_numeric(df["Year"], errors="coerce")
+        values = pd.to_numeric(df["Value"], errors="coerce")
+        return bool((sales_mask & years.gt(base_year) & values.notna()).any())
 
     year_cols: list[int] = []
     for col in df.columns:
@@ -1903,6 +1912,38 @@ def _looks_like_future_sales_share_input(df: pd.DataFrame, base_year: int) -> bo
 
     future_values = df.loc[sales_mask, future_cols].apply(pd.to_numeric, errors="coerce")
     return bool(future_values.notna().any().any())
+
+
+def _canonical_long_to_leap_wide(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert canonical long Module 1 rows to the wide parser input shape."""
+    if not {"Year", "Value"}.issubset(df.columns):
+        return df
+
+    if "Region" not in df.columns and "Economy" in df.columns:
+        df = df.copy()
+        df["Region"] = df["Economy"]
+
+    sales = df[
+        df["Variable"].astype(str).str.strip().str.lower().eq("sales share")
+    ].copy()
+    sales["Year"] = pd.to_numeric(sales["Year"], errors="coerce")
+    sales["Value"] = pd.to_numeric(sales["Value"], errors="coerce")
+    sales = sales.dropna(subset=["Year", "Value"])
+    if sales.empty:
+        return pd.DataFrame()
+
+    index_columns = [
+        column for column in ["Branch Path", "Variable", "Scenario", "Region", "Scale", "Units"]
+        if column in sales.columns
+    ]
+    wide = sales.pivot_table(
+        index=index_columns,
+        columns="Year",
+        values="Value",
+        aggfunc="first",
+    ).reset_index().rename_axis(columns=None)
+    wide.columns = [str(column) if isinstance(column, (int, float)) else column for column in wide.columns]
+    return wide
 
 
 def _candidate_future_sales_paths(repo_root: Path, economy: str, scenario: str) -> list[Path]:
@@ -1939,8 +1980,10 @@ def _candidate_future_sales_paths(repo_root: Path, economy: str, scenario: str) 
     # Sibling road_model_inputs_interface static bundle convention
     static_root = repo_root.parent / "road_model_inputs_interface" / "front-end" / "road-module1-static"
     if static_root.exists():
-        candidates.extend(static_root.glob(f"*/{compact}.json"))
-        candidates.extend(static_root.glob(f"*/{economy}.json"))
+        candidates.extend(sorted(static_root.glob(f"*/{compact}.json"), reverse=True))
+        candidates.extend(sorted(static_root.glob(f"*/{economy}.json"), reverse=True))
+        candidates.extend(sorted(static_root.glob(f"*/{compact}.csv"), reverse=True))
+        candidates.extend(sorted(static_root.glob(f"*/{economy}.csv"), reverse=True))
 
     # Optional explicit path(s) from environment.
     # Supports placeholders {economy} and {economy_compact}.
@@ -1997,6 +2040,13 @@ def _autodiscover_future_sales_shares(
         if df is None or df.empty:
             continue
         if _looks_like_future_sales_share_input(df, base_year=base_year):
+            if "Region" not in df.columns and "Economy" in df.columns:
+                # Static-bundle economy codes are compact (e.g. 19THA), while
+                # Module 5 uses canonical underscored codes (e.g. 19_THA).
+                df = df.copy()
+                df["Region"] = economy
+            if {"Year", "Value"}.issubset(df.columns):
+                df = _canonical_long_to_leap_wide(df)
             return df, path
 
     return None, None
