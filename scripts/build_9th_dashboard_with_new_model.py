@@ -194,24 +194,81 @@ def _model_rows(model_root: Path, economy: str, payload: dict) -> list[list[obje
     return rows
 
 
-def _normalise_released_outcome_units(payload: dict) -> None:
+def _normalise_released_outcome_units(payload: dict) -> list[dict[str, object]]:
     """Correct two scale mismatches in the released dashboard payload.
 
     The released 9th dashboard labels energy as PJ and mileage as km, but its
     embedded outcome values are respectively EJ-sized and thousand-km-sized.
     The comparison copy uses the labels shown by the dashboard and therefore
     converts those two measures to PJ and km. Stock and efficiency are left
-    unchanged.
+    unchanged except where the 2022 fuel-allocated stock total is clearly in
+    raw vehicles rather than millions. That check uses the physical fleet
+    total, so it is not economy-specific.
     """
     columns = payload["data_columns"]
     dataset_i = columns.index("dataset")
+    scenario_i = columns.index("scenario")
     measure_i = columns.index("measure")
+    transport_i = columns.index("transport_type")
+    fuel_i = columns.index("fuel")
+    year_i = columns.index("year")
     value_i = columns.index("value")
+    frame = pd.DataFrame(payload["data_rows"], columns=columns)
+    physical = frame[
+        (frame["dataset"] == "fleet")
+        & (frame["measure"] == "vehicle_stock")
+        & (frame["year"] == 2022)
+    ]
+    physical_totals = physical.groupby("transport_type")["value"].sum().to_dict()
+    outcome_totals = frame[
+        (frame["dataset"] == "outcome")
+        & (frame["measure"] == "stock")
+        & (frame["fuel"] == "Total")
+        & (frame["year"] == 2022)
+    ]
+    raw_stock_transports = {}
+    for row in outcome_totals.itertuples(index=False, name=None):
+        transport = str(row[transport_i])
+        physical_total = float(physical_totals.get(transport, 0))
+        if physical_total > 0 and float(row[value_i]) / physical_total > 100:
+            raw_stock_transports[transport] = float(row[value_i]) / physical_total
+    corrections = []
     for row in payload["data_rows"]:
         if row[dataset_i] != "outcome":
             continue
         if row[measure_i] in {"energy", "mileage"}:
             row[value_i] = float(row[value_i]) * 1000.0
+        elif row[measure_i] == "stock" and row[year_i] == 2022 and str(row[transport_i]) in raw_stock_transports:
+            row[value_i] = float(row[value_i]) / 1_000_000.0
+            if row[fuel_i] == "Total":
+                corrections.append({
+                    "scenario": row[scenario_i],
+                    "transport_type": row[transport_i],
+                    "year": 2022,
+                    "factor_applied": 1_000_000,
+                    "raw_to_physical_ratio": raw_stock_transports[str(row[transport_i])],
+                })
+    return corrections
+
+
+def _total_comparison_rows(payload: dict) -> list[dict[str, object]]:
+    """Return 9th-versus-new-model total rows for automated outlier review."""
+    frame = pd.DataFrame(payload["data_rows"], columns=payload["data_columns"])
+    frame = frame[
+        frame["dataset"].isin(["outcome", "new_model"])
+        & frame["fuel"].eq("Total")
+        & frame["measure"].isin(["energy", "stock", "mileage", "efficiency"])
+    ]
+    keys = ["scenario", "transport_type", "measure", "year"]
+    pivot = frame.pivot_table(index=keys, columns="dataset", values="value", aggfunc="first").reset_index()
+    if "outcome" not in pivot or "new_model" not in pivot:
+        return []
+    pivot = pivot.dropna(subset=["outcome", "new_model"]).copy()
+    pivot["absolute_difference"] = (pivot["new_model"] - pivot["outcome"]).abs()
+    denominator = pivot[["outcome", "new_model"]].abs().max(axis=1).replace(0, pd.NA)
+    pivot["relative_difference"] = pivot["absolute_difference"] / denominator
+    pivot["major_difference"] = pivot["relative_difference"].ge(0.5)
+    return pivot.to_dict("records")
 
 
 def _add_both_transport_rows(payload: dict, additions: list[list[object]]) -> None:
@@ -343,10 +400,14 @@ def build(source: Path, model_root: Path, merged_energy_path: Path, output: Path
         raise FileNotFoundError(f"No economy dashboard pages found in {road_source}")
     merged_energy = _load_merged_energy(merged_energy_path)
     counts = {}
+    stock_corrections = []
+    total_comparisons = []
     for page in pages:
         html = page.read_text(encoding="utf-8")
         payload = _payload_from_html(html)
-        _normalise_released_outcome_units(payload)
+        corrections = _normalise_released_outcome_units(payload)
+        for correction in corrections:
+            stock_corrections.append({"economy": payload["meta"]["economy"], **correction})
         # The released dashboard energy rows use inconsistent scales and omit
         # some alternatives. Replace them with the merged-energy source. Its
         # detailed rows begin in 2023, so 2022 is intentionally absent here.
@@ -358,6 +419,8 @@ def build(source: Path, model_root: Path, merged_energy_path: Path, output: Path
         payload["data_rows"].extend(_merged_energy_rows(merged_energy, payload["meta"]["economy"]))
         payload["data_rows"].extend(additions)
         _add_both_transport_rows(payload, [])
+        for comparison in _total_comparison_rows(payload):
+            total_comparisons.append({"economy": payload["meta"]["economy"], **comparison})
         rebuilt = html.replace(
             re.search(r"const PAYLOAD = \{.*?\};", html, flags=re.S).group(0),
             "const PAYLOAD = " + json.dumps(payload, separators=(",", ":")) + ";",
@@ -377,7 +440,14 @@ def build(source: Path, model_root: Path, merged_energy_path: Path, output: Path
 <p>Each page retains the released 9th-edition dashboard and adds fresh default road-model lines. New-model lines are dashed. Use the transport selector's Both option for combined passenger+freight views; rate measures remain separate.</p>
 <ul>{links}</ul></body></html>"""
     (output / "index.html").write_text(launcher, encoding="utf-8")
-    manifest = {"source_dashboard": str(source), "merged_energy_source": str(merged_energy_path), "model_root": str(model_root), "pages": counts, "note": "9th-edition energy is sourced from detailed merged-energy rows from 2023 onward; 2022 energy is intentionally not shown. Other original dashboard rows are retained."}
+    comparison_frame = pd.DataFrame(total_comparisons)
+    if not comparison_frame.empty:
+        comparison_frame = comparison_frame.sort_values("relative_difference", ascending=False, na_position="last")
+        comparison_frame.to_csv(output / "total_comparison_scan.csv", index=False)
+    corrections_frame = pd.DataFrame(stock_corrections)
+    if not corrections_frame.empty:
+        corrections_frame.to_csv(output / "stock_unit_corrections.csv", index=False)
+    manifest = {"source_dashboard": str(source), "merged_energy_source": str(merged_energy_path), "model_root": str(model_root), "pages": counts, "stock_unit_corrections": stock_corrections, "major_total_differences": int(comparison_frame["major_difference"].sum()) if not comparison_frame.empty else 0, "total_comparison_scan": str(output / "total_comparison_scan.csv"), "note": "9th-edition energy is sourced from detailed merged-energy rows from 2023 onward; 2022 energy is intentionally not shown. 2022 9th-edition stock rows are rescaled only when their total is more than 100 times the physical fleet total. Other original dashboard rows are retained."}
     (output / "comparison_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
 
