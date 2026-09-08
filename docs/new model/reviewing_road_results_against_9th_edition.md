@@ -133,8 +133,28 @@ because it imported successfully.
 
 ## Comparison dashboard
 
-Use `9th_transport_model_dashboards_road_updated.zip` from the shared road
-dashboard folder:
+The actual local combined dashboard created for this comparison is:
+
+- launcher: `results/qa_9th_dashboard_comparison/index.html`;
+- economy pages: `results/qa_9th_dashboard_comparison/<economy>.html`;
+- build evidence: `results/qa_9th_dashboard_comparison/comparison_manifest.json`;
+  and
+- generator: `scripts/build_9th_dashboard_with_new_model.py`.
+
+The generator combines the original 9th-edition dashboard files in
+`C:\Users\Work\Downloads\9th_transport_model_dashboards\transport_dashboards`
+with new-model results in
+`results/qa_9th_comparison/new_model_all_scenarios`. Its default output is
+`results/qa_9th_dashboard_comparison`. The manifest records the exact source
+paths and generated economy pages for a particular build.
+
+The packaged copy named in the handover is also present locally at
+`C:\Users\Work\Downloads\9th_transport_model_dashboards_road_updated.zip`.
+Later local variants named `_v2.zip` and `_v3.zip` also exist, so use the exact
+unversioned filename when reproducing the handover unless a later version is
+explicitly selected and checked.
+
+The same unversioned package is available from the shared road dashboard folder:
 
 - [Shared road dashboard folder](https://drive.google.com/drive/folders/1GFH21NSIFS8mLZUMbt4XgdO7OmrPmtT0?usp=sharing)
 - [Previously shared dashboard file](https://drive.google.com/file/d/1sf4FX3UHRv4UEvCSiwnougJK6ZB4_SJX/view?usp=drive_link)
