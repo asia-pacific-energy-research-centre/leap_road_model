@@ -211,3 +211,34 @@ new fields are not fully propagated through every source-generation path.
 Before each future commit: run focused tests, both full suites, `git diff --check`,
 confirm no production/generated data changed, update docs, and commit only that
 phase's files using a `codex:` prefix.
+
+## Current implementation checkpoint — 2026-09-08
+
+The required-next-work list above is historical. Subsequent interface commits
+implemented the pure resolver, variable-policy registry, original-candidate
+extraction, deterministic review-package generation, checksum manifests,
+multi-vintage staging, and archive validation. These are staging/review
+capabilities; they do not promote a new static package automatically.
+
+The current active frontend static index still advertises only the existing
+2022 package. Its newer ESTO-vintage packages remain staged until their source
+conflicts and static row-count/value differences are reviewed and an operator
+authorises promotion.
+
+Module 5 now accepts the selected workflow base year, uses it when constructing
+base and fallback sales-share trajectories, and receives that value from
+`road_workflow.py`. The focused Module 5/base-year suite passed on this
+checkpoint. The remaining dynamic-year audit must cover every semantic fixed
+historical year in Modules 2–7; do not replace historical dataset endpoints
+such as the 9th-edition 2060 projection horizon.
+
+The researcher interface now preserves provenance per model year, exposes a
+compact source-status filter and a source-details inspector, and marks
+researcher-edited values as `transformed` with derivation method
+`researcher_override` in exported hand-off rows. The source classification and
+original source-data year remain visible rather than being relabelled native.
+
+The current worktree also contains an uncommitted Russia registry change from
+2021 to 2022 with matching tests. Treat that as a separate policy decision:
+the change removes the temporary 2022-to-2021 compatibility bridge but must be
+reviewed and committed deliberately before this handover is considered current.

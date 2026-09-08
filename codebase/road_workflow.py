@@ -1277,6 +1277,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             ev_sales_data=inputs.ev_sales_data,
             researcher_sales_shares=_module1_sales_shares,
             diagnostics_dir=diagnostics_dir,
+            base_year=config.base_year,
         )
         timings["module5_seconds"] = time.perf_counter() - t0
         _print_progress(config, f"Module 5 complete: {len(t7f):,} future sales-share rows.")

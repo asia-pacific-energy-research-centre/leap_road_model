@@ -52,6 +52,12 @@ def _future_sales_rows(economy: str = "United States", scenario: str = "Target")
     )
 
 
+def _future_sales_rows_from_2024() -> pd.DataFrame:
+    rows = _future_sales_rows(economy="20_USA", scenario="Target").copy()
+    rows.loc[rows["year"].eq(2023), "year"] = 2024
+    return rows
+
+
 class TestPrepareFutureSharesAliases:
     def test_accepts_scenario_alias_tgt_for_target(self):
         prepared = _prepare_future_shares(
@@ -77,6 +83,20 @@ class TestPrepareFutureSharesAliases:
 
 
 class TestRunModule5AliasesAndScaling:
+    def test_uses_selected_base_year_for_rows_and_future_filtering(self):
+        t7, t7f = run_module5(
+            base_year_branches=_base_year_branches(scenario="Target"),
+            future_sales_shares=_future_sales_rows_from_2024(),
+            economy="20_USA",
+            scenarios=["Target"],
+            base_year=2023,
+        )
+
+        assert set(t7["year"]) == {2023}
+        assert t7f["year"].min() == 2023
+        assert 2022 not in set(t7f["year"])
+        assert 2024 in set(t7f["year"])
+
     def test_uses_shape_preserve_with_alias_inputs(self):
         t7, t7f = run_module5(
             base_year_branches=_base_year_branches(scenario="TGT"),

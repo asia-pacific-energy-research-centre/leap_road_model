@@ -60,9 +60,7 @@ _DRIVE_COLOURS = {
     "FCEV": "#4CAF50",
 }
 
-# Projection years
-_BASE_YEAR = 2022
-_ANCHOR_YEAR = 2023   # first projected year in 9th edition
+# Projection horizon
 _END_YEAR = 2060
 
 
@@ -78,6 +76,7 @@ def run_module5(
     economy_aliases: list[str] | None = None,
     ev_sales_data: pd.DataFrame | None = None,
     researcher_sales_shares: pd.DataFrame | None = None,
+    base_year: int = 2022,
     charts_dir: str | Path | None = None,
     diagnostics_dir: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -110,25 +109,34 @@ def run_module5(
     """
     scenarios = scenarios or ["Target"]
 
+    base_year = int(base_year)
+    if base_year > _END_YEAR:
+        raise ValueError(f"Module 5 base year {base_year} exceeds projection end year {_END_YEAR}.")
+
     # 1. Prepare future shares — filter/fill from provided tidy DataFrame
     provided_shares = _prepare_future_shares(
         future_sales_shares,
         economy,
         scenarios,
         economy_aliases=economy_aliases,
+        base_year=base_year,
     )
 
     # 2. Compute base-year shares from stock proportions + EV data
     base_shares = _compute_base_year_shares(
-        base_year_branches, ev_sales_data, economy, scenarios
+        base_year_branches, ev_sales_data, economy, scenarios, base_year=base_year,
     )
 
     # 3. Apply researcher overrides to base year if provided
     if researcher_sales_shares is not None:
-        base_shares = _apply_researcher_overrides(base_shares, researcher_sales_shares)
+        base_shares = _apply_researcher_overrides(
+            base_shares, researcher_sales_shares, base_year=base_year,
+        )
 
     # 4. Scale future trajectories
-    future_shares, scaling_flags = _scale_future_shares(base_shares, provided_shares)
+    future_shares, scaling_flags = _scale_future_shares(
+        base_shares, provided_shares, base_year=base_year,
+    )
 
     # 5. Log flags
     flagged = scaling_flags[scaling_flags["fallback_used"]] if not scaling_flags.empty else pd.DataFrame()
@@ -153,7 +161,10 @@ def run_module5(
 
     # 7. Charts
     if charts_dir is not None:
-        _write_charts(base_shares, future_shares, provided_shares, scaling_flags, economy, charts_dir)
+        _write_charts(
+            base_shares, future_shares, provided_shares, scaling_flags,
+            economy, charts_dir, base_year=base_year,
+        )
 
     return base_shares, future_shares
 
@@ -167,6 +178,7 @@ def _prepare_future_shares(
     economy: str,
     scenarios: list[str],
     economy_aliases: list[str] | None = None,
+    base_year: int = 2022,
 ) -> pd.DataFrame:
     """
     Filter and fill the provided future sales shares DataFrame.
@@ -211,9 +223,9 @@ def _prepare_future_shares(
         log.warning("No future sales share data found for economy=%s scenarios=%s", economy, scenarios)
         return pd.DataFrame()
 
-    df = df[df["year"] > _BASE_YEAR].copy()
+    df = df[df["year"] > base_year].copy()
     if df.empty:
-        log.warning("future_sales_shares contains no years after base year %d", _BASE_YEAR)
+        log.warning("future_sales_shares contains no years after base year %d", base_year)
         return pd.DataFrame()
 
     # Aggregate over any extra dimensions (e.g. size) — sum shares within group
@@ -267,6 +279,8 @@ def _compute_base_year_shares(
     ev_sales_data: pd.DataFrame | None,
     economy: str,
     scenarios: list[str],
+    *,
+    base_year: int = 2022,
 ) -> pd.DataFrame:
     """
     Compute base-year (2022) sales shares from stock proportions + EV data.
@@ -302,7 +316,9 @@ def _compute_base_year_shares(
                 log.warning("%s %s %s: zero total stock — using equal shares", economy, scenario, vt)
                 drives = grp["drive_type"].unique()
                 for d in drives:
-                    rows.append(_share_row(economy, scenario, vt, d, 1/len(drives), "stock_proportion"))
+                    rows.append(_share_row(
+                        economy, scenario, vt, d, 1 / len(drives), "stock_proportion", base_year,
+                    ))
                 continue
 
             drive_stocks = dict(zip(grp["drive_type"], grp["stock"]))
@@ -326,7 +342,7 @@ def _compute_base_year_shares(
                 ("PHEV", phev_share), ("FCEV", fcev_share),
             ]:
                 if drive in drive_stocks or share > 0:
-                    rows.append(_share_row(economy, scenario, vt, drive, share, flag))
+                    rows.append(_share_row(economy, scenario, vt, drive, share, flag, base_year))
 
     base = pd.DataFrame(rows)
     if base.empty:
@@ -370,7 +386,7 @@ def _resolve_ev_share_for_vehicle_type(
 
 def _share_row(
     economy: str, scenario: str, vehicle_type: str,
-    drive_type: str, sales_share: float, source_flag: str,
+    drive_type: str, sales_share: float, source_flag: str, base_year: int,
 ) -> dict:
     return {
         "economy": economy,
@@ -380,7 +396,7 @@ def _share_row(
         "sales_share": sales_share,
         "ev_sales_share_used": sales_share if drive_type in _NON_ICE else 0.0,
         "source_flag": source_flag,
-        "year": _BASE_YEAR,
+        "year": base_year,
     }
 
 
@@ -391,6 +407,8 @@ def _share_row(
 def _apply_researcher_overrides(
     base_shares: pd.DataFrame,
     researcher_shares: pd.DataFrame,
+    *,
+    base_year: int = 2022,
 ) -> pd.DataFrame:
     """Replace or add base-year shares with researcher-provided values."""
     if researcher_shares is None or researcher_shares.empty:
@@ -462,7 +480,7 @@ def _apply_researcher_overrides(
             missing["sales_share"],
             0.0,
         )
-        missing["year"] = _BASE_YEAR
+        missing["year"] = base_year
         base_columns = merged.drop(columns=["researcher_share", "override_source_flag"]).columns
         merged = pd.concat(
             [merged.drop(columns=["researcher_share", "override_source_flag"]), missing[base_columns]],
@@ -481,6 +499,8 @@ def _apply_researcher_overrides(
 def _scale_future_shares(
     base_shares: pd.DataFrame,
     future_shares: pd.DataFrame,
+    *,
+    base_year: int = 2022,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Scale provided future trajectories to match new base-year shares.
@@ -499,7 +519,7 @@ def _scale_future_shares(
         log.warning(
             "Cannot scale future shares — missing base or future trajectory data; "
             "using flat fallback projection (%d-%d) from base-year shares",
-            _BASE_YEAR,
+            base_year,
             _END_YEAR,
         )
         if base_shares.empty:
@@ -507,7 +527,7 @@ def _scale_future_shares(
 
         flat_rows: list[dict[str, object]] = []
         for _, row in base_shares.iterrows():
-            for yr in range(_BASE_YEAR, _END_YEAR + 1):
+            for yr in range(base_year, _END_YEAR + 1):
                 flat_rows.append({
                     "economy": row.get("economy", ""),
                     "scenario": row.get("scenario", ""),
@@ -599,7 +619,7 @@ def _scale_future_shares(
                 economy, scenario, vehicle_type, min_ice,
             )
             year_shares = _linear_interpolate_fallback(
-                new_base, terminal_shares, all_years,
+                new_base, terminal_shares, all_years, base_year=base_year,
             )
 
         method = "linear_interpolate" if fallback_used else "shape_preserve_ice_residual"
@@ -661,6 +681,8 @@ def _linear_interpolate_fallback(
     new_base: dict[str, float],
     terminal_shares: dict[str, float],
     all_years: list[int],
+    *,
+    base_year: int = 2022,
 ) -> dict[int, dict[str, float]]:
     """
     Fallback used when shape-preserve method causes ICE to go negative.
@@ -670,10 +692,10 @@ def _linear_interpolate_fallback(
     if not terminal_shares:
         terminal_shares = new_base.copy()
 
-    span = _END_YEAR - _BASE_YEAR
+    span = _END_YEAR - base_year
     year_shares: dict[int, dict[str, float]] = {}
     for yr in all_years:
-        t = (yr - _BASE_YEAR) / span if span > 0 else 1.0
+        t = (yr - base_year) / span if span > 0 else 1.0
         shares: dict[str, float] = {}
         for drive in ["ICE", "HEV", "BEV", "PHEV", "EREV", "FCEV"]:
             b = new_base.get(drive, 0.0)
@@ -698,6 +720,8 @@ def _write_charts(
     scaling_flags: pd.DataFrame,
     economy: str,
     charts_dir: str | Path,
+    *,
+    base_year: int = 2022,
 ) -> None:
     """Write one chart file per vehicle type showing provided vs scaled trajectories."""
     charts_dir = Path(charts_dir)
@@ -710,7 +734,7 @@ def _write_charts(
         for scenario in scenarios:
             _plot_vehicle_type(
                 base_shares, future_shares, provided_shares, scaling_flags,
-                economy, vehicle_type, scenario, charts_dir,
+                economy, vehicle_type, scenario, charts_dir, base_year=base_year,
             )
 
     log.info("Wrote Module 5 charts to %s", charts_dir)
@@ -725,6 +749,8 @@ def _plot_vehicle_type(
     vehicle_type: str,
     scenario: str,
     charts_dir: Path,
+    *,
+    base_year: int = 2022,
 ) -> None:
     """
     3-panel chart:
@@ -734,8 +760,9 @@ def _plot_vehicle_type(
     Plus a plain-English text block below all panels.
     """
     drives = ["ICE", "HEV", "BEV", "PHEV", "EREV", "FCEV"]
-    future_years = list(range(_ANCHOR_YEAR, _END_YEAR + 1))
-    all_years    = list(range(_BASE_YEAR,   _END_YEAR + 1))
+    anchor_year = base_year + 1
+    future_years = list(range(anchor_year, _END_YEAR + 1))
+    all_years = list(range(base_year, _END_YEAR + 1))
 
     # Pull flag row for this vehicle type + scenario
     flag_row = pd.DataFrame()
@@ -782,10 +809,10 @@ def _plot_vehicle_type(
             left_data[d].append(provided_dict.get(d, 0.0))
 
     _draw_stacked_area(ax_left, future_years, left_data, drives)
-    ax_left.set_xlim(_ANCHOR_YEAR, _END_YEAR)
+    ax_left.set_xlim(anchor_year, _END_YEAR)
 
-    # ----------------------------------------------------- middle: 2022 base bar
-    ax_mid.set_title(f"{_BASE_YEAR}\nBase Year", fontsize=10, pad=6)
+    # ----------------------------------------------------- middle: base-year bar
+    ax_mid.set_title(f"{base_year}\nBase Year", fontsize=10, pad=6)
     base_sub = base_shares[
         (base_shares["scenario"] == scenario)
         & (base_shares["vehicle_type"] == vehicle_type)
@@ -832,7 +859,7 @@ def _plot_vehicle_type(
                     sf_labels.append(f"{d}: {base_val:.0%} → {terminal_val:.0%}")
 
     method_note = "  (fallback: linear interpolation)" if fallback_used else ""
-    right_title = f"Scaled Trajectory ({_BASE_YEAR}–{_END_YEAR}){method_note}"
+    right_title = f"Scaled Trajectory ({base_year}–{_END_YEAR}){method_note}"
     ax_right.set_title(right_title, fontsize=10, pad=6)
 
     new_sub = future_shares[
@@ -848,7 +875,7 @@ def _plot_vehicle_type(
             right_data[d].append(row_dict.get(d, 0.0))
 
     _draw_stacked_area(ax_right, all_years, right_data, drives)
-    ax_right.set_xlim(_BASE_YEAR, _END_YEAR)
+    ax_right.set_xlim(base_year, _END_YEAR)
 
     # Scale factor annotation on right panel
     if sf_labels:
@@ -907,7 +934,7 @@ def _plot_vehicle_type(
 
     fallback_note = (
         "\n[FALLBACK METHOD used] Shape-preserving interpolation caused ICE share to go negative. "
-        "Switched to straight-line interpolation for all drives from the new 2022 base year to the 9th edition 2060 terminal shares, then renormalised."
+        f"Switched to straight-line interpolation for all drives from the new {base_year} base year to the 9th edition 2060 terminal shares, then renormalised."
         if fallback_used else ""
     )
 
@@ -916,10 +943,10 @@ def _plot_vehicle_type(
         f"LEFT PANEL — The provided future trajectory for how {vehicle_type} sales will be split by drive type "
         f"(ICE, BEV, PHEV, FCEV) up to {_END_YEAR}. "
         f"These are the input shares, normalised within the {vehicle_type} bucket.\n\n"
-        f"MIDDLE BAR — The {_BASE_YEAR} base-year sales share estimate for {vehicle_type}. "
+        f"MIDDLE BAR — The {base_year} base-year sales share estimate for {vehicle_type}. "
         f"Source: {source_readable}. "
         f"This is the starting point that the new model needs to match.\n\n"
-        f"RIGHT PANEL — The final trajectory that will be loaded into LEAP. Each EV drive type starts at the new {_BASE_YEAR} base-year value "
+        f"RIGHT PANEL — The final trajectory that will be loaded into LEAP. Each EV drive type starts at the new {base_year} base-year value "
         f"and ends at the same {_END_YEAR} terminal share as the provided trajectory, following the same shape in between. "
         f"ICE takes whatever share is left over. "
         f"Drive trajectories: {sf_text}{fallback_note}"
