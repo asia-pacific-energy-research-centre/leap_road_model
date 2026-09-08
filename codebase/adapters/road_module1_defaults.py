@@ -19,6 +19,7 @@ Economy codes are converted to canonical '12_NZ' format on load.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -37,10 +38,6 @@ _DEFAULT_FILE = "road_module1_default_filled_inputs.csv"
 _DEFAULT_FILE_PREFIX = "road_module1_default_filled_inputs_"
 _VALUES_FILE_PREFIX = "road_module1_values_"
 _PACKAGE_MANIFEST_FILE = "road_module1_package_manifest.json"
-_RUSSIA_LEGACY_PACKAGE_ECONOMY = "16_RUS"
-_RUSSIA_LEGACY_SOURCE_BASE_YEAR = 2022
-_RUSSIA_REGISTRY_BASE_YEAR = 2021
-
 _PASSENGER_VEHICLE_TYPES = ("LPVs", "Motorcycles", "Buses")
 _FREIGHT_VEHICLE_TYPES = ("Trucks", "LCVs")
 _VEHICLE_TYPE_STOCK_SHARE_BRANCHES = {
@@ -444,6 +441,25 @@ def load_module1_package_metadata(
                 raise ValueError(f"Module 1 package manifest must be a JSON object: {path}")
             return metadata
     return {}
+
+
+def _validate_package_checksum(
+    defaults_dir: str | Path, economy: str, version: str | None, metadata: dict[str, object],
+) -> None:
+    expected = metadata.get("package_sha256")
+    if expected in (None, ""):
+        return
+    compact_economy = str(economy).replace("_", "")
+    root = Path(defaults_dir) / str(version)
+    economy_dir = root / str(economy)
+    if not economy_dir.is_dir():
+        economy_dir = root / compact_economy
+    csv_path = _find_default_inputs_csv(economy_dir, economy)
+    if csv_path is None:
+        raise ValueError(f"Module 1 package CSV is missing for checksum validation: {economy}")
+    actual = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+    if actual.lower() != str(expected).lower():
+        raise ValueError("Module 1 package checksum does not match its manifest.")
 
 
 def _find_col(df: pd.DataFrame, canonical_name: str) -> str | None:
@@ -1393,49 +1409,6 @@ def load_module1_leap_df(
     return df
 
 
-def _rebase_russia_legacy_package(
-    raw_leap_df: pd.DataFrame,
-    defaults_df: pd.DataFrame,
-    *,
-    economy: str,
-    expected_base_year: int | None,
-    package_metadata: dict[str, object],
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int] | None]:
-    """Apply the approved, explicit 2022-to-2021 Russia legacy-package bridge."""
-    if not (
-        economy == _RUSSIA_LEGACY_PACKAGE_ECONOMY
-        and expected_base_year == _RUSSIA_REGISTRY_BASE_YEAR
-        and not package_metadata
-    ):
-        return raw_leap_df, defaults_df, None
-
-    source_column = str(_RUSSIA_LEGACY_SOURCE_BASE_YEAR)
-    target_column = str(_RUSSIA_REGISTRY_BASE_YEAR)
-    if target_column in raw_leap_df.columns or source_column not in raw_leap_df.columns:
-        raise ValueError(
-            "Russia legacy Module 1 package cannot be rebased: expected a 2022 column "
-            "and no 2021 column. Supply a correctly versioned package instead."
-        )
-    if raw_leap_df[source_column].notna().sum() == 0:
-        raise ValueError("Russia legacy Module 1 package has no usable 2022 values to seed 2021.")
-
-    rebased_raw = raw_leap_df.rename(columns={source_column: target_column}).copy()
-    rebased_defaults = defaults_df.copy()
-    if "year" in rebased_defaults.columns:
-        rebased_defaults.loc[
-            pd.to_numeric(rebased_defaults["year"], errors="coerce").eq(_RUSSIA_LEGACY_SOURCE_BASE_YEAR),
-            "year",
-        ] = _RUSSIA_REGISTRY_BASE_YEAR
-    log.warning(
-        "Russia is using the approved legacy Module 1 compatibility bridge: "
-        "2022 package values are seeded as the 2021 model base year."
-    )
-    return rebased_raw, rebased_defaults, {
-        "source_base_year": _RUSSIA_LEGACY_SOURCE_BASE_YEAR,
-        "target_base_year": _RUSSIA_REGISTRY_BASE_YEAR,
-    }
-
-
 def load_module1_for_economy(
     defaults_dir: str | Path,
     economy: str,
@@ -1473,15 +1446,10 @@ def load_module1_for_economy(
         )
 
     package_metadata = load_module1_package_metadata(defaults_dir, economy, version)
+    _validate_package_checksum(defaults_dir, economy, version, package_metadata)
     selected_base_year = _validate_base_year(
         expected_base_year if expected_base_year is not None else 2022
     )
-    if (
-        economy == _RUSSIA_LEGACY_PACKAGE_ECONOMY
-        and selected_base_year == _RUSSIA_REGISTRY_BASE_YEAR
-        and not package_metadata
-    ):
-        selected_base_year = _RUSSIA_LEGACY_SOURCE_BASE_YEAR
     defaults_df = load_road_module1_defaults(
         defaults_dir,
         version=version,
@@ -1497,18 +1465,10 @@ def load_module1_for_economy(
         )
 
     raw_leap_df = load_module1_leap_df(defaults_dir, economy, version)
-    raw_leap_df, defaults_df, legacy_package_rebase = _rebase_russia_legacy_package(
-        raw_leap_df,
-        defaults_df,
-        economy=economy,
-        expected_base_year=expected_base_year,
-        package_metadata=package_metadata,
-    )
 
     return {
         "raw_leap_df": raw_leap_df,
         "package_metadata": package_metadata,
-        "legacy_package_rebase": legacy_package_rebase,
         "survival_curves": build_survival_curves(defaults_df, economy),
         "vintage_profiles": build_vintage_profiles(defaults_df, economy),
         "phev_utilisation_rate": get_phev_utilisation_rate(defaults_df, economy),
@@ -1521,11 +1481,18 @@ def load_module1_for_economy(
         "vehicle_equivalent_weights": get_vehicle_equivalent_weights(defaults_df, economy),
         "vehicle_equivalent_weight_bounds": get_vehicle_equivalent_weight_bounds(defaults_df, economy),
         "vehicle_type_stock_shares": get_vehicle_type_stock_shares(defaults_df, economy),
-        "lifecycle_factors": get_lifecycle_profile_factors_from_module1(defaults_df, economy),
+        "lifecycle_factors": get_lifecycle_profile_factors_from_module1(
+            defaults_df, economy, data_year=selected_base_year,
+        ),
     }
 
 
-def get_lifecycle_profile_factors_from_module1(defaults_df: pd.DataFrame, economy: str) -> pd.DataFrame:
+def get_lifecycle_profile_factors_from_module1(
+    defaults_df: pd.DataFrame,
+    economy: str,
+    *,
+    data_year: int = 2022,
+) -> pd.DataFrame:
     """
     Convert Module 1 turnover-bound rows to the lifecycle factors shape used by Module 4.
 
@@ -1553,7 +1520,7 @@ def get_lifecycle_profile_factors_from_module1(defaults_df: pd.DataFrame, econom
                 "project_code": economy,
                 "economy": economy,
                 "transport_type": transport_type,
-                "data_year": 2022,
+                "data_year": _validate_base_year(data_year),
                 "turnover_rate_lower": float(lower.iloc[0]),
                 "turnover_rate_upper": float(upper.iloc[0]),
                 "fit_mode": "auto",

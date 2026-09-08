@@ -975,7 +975,6 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         economy=config.economy,
         package_version=config.module1_defaults_version,
         package_rows=m1.get("raw_leap_df"),
-        legacy_package_rebase=m1.get("legacy_package_rebase"),
     )
 
     lifecycle_factors = pd.DataFrame()
@@ -1608,7 +1607,6 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         "base_year": config.base_year,
         "base_year_resolution": config_base_year_provenance,
         "base_year_provenance": package_base_year_provenance,
-        "legacy_package_rebase": m1.get("legacy_package_rebase"),
         "final_year": config.final_year,
         "enable_visualisations": config.enable_visualisations,
         "diagnostics_root": str(diagnostics_dir) if diagnostics_dir else None,

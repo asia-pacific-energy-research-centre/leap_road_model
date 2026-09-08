@@ -83,8 +83,8 @@ python codebase\road_workflow.py 20_USA --module6-match-tolerance 0.02
 
 ## Module 1 data-source contract
 
-Base-year defaults are economy-specific in `codebase/config/economies.yaml`
-(including Russia's existing 2021 exception). `--base-year` is an explicit,
+Base-year defaults are economy-specific in `codebase/config/economies.yaml`.
+Russia is configured for 2022. `--base-year` is an explicit,
 auditable run override. A runtime Module 1 package may include
 `road_module1_package_manifest.json`; if it records a base year that differs
 from the run, the workflow stops before modelling. Older packages without the
@@ -93,9 +93,8 @@ manifest remain readable and are labelled `legacy_inferred`.
 The Module 1 adapter selects the declared run/package base-year column rather
 than assuming 2022. Canonical long packages for later base years are therefore
 converted using their 2023, 2024, or other validated base-year rows. Fractional
-and boolean years are rejected rather than truncated. Russia's documented
-manifest-free 2022-to-2021 compatibility bridge remains a separate explicit
-legacy exception.
+and boolean years are rejected rather than truncated. An explicit Russia 2021
+run requires a package that actually contains 2021 base-year rows.
 
 The researcher interface currently configures ESTO 2024 / base year 2022 as
 the default vintage, with ESTO 2025 / 2023 and preliminary ESTO 2026 / 2024 as

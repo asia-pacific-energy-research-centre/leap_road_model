@@ -7,7 +7,7 @@ Implement a reversible base-year system across `leap_road_model` and its sibling
 
 - The economy registry is the authoritative default base-year source.
 - Per-run overrides are allowed only when explicit and auditable.
-- Keep Russia's configured 2021 exception.
+- Russia uses the same configured 2022 base year as the current package.
 - Exact-year native observations must beat earlier carried-forward observations.
 - A future observation may seed an earlier base year only when there is no
   eligible exact-year or earlier observation; it must be recorded as future
@@ -175,18 +175,12 @@ new fields are not fully propagated through every source-generation path.
   package version, and base year, and its rows must actually include the
   required base year. Packages without a manifest remain explicitly labelled
   `legacy_inferred`; they are never implicitly native.
-- Russia remains a 2021 registry economy. The approved temporary compatibility
-  bridge rebases an unmanifested, 2022-only Russia package to 2021 at load time,
-  without changing the source/static package. It is limited to `16_RUS`, records
-  `future_year_seed` provenance and `{source_base_year: 2022,
-  target_base_year: 2021}` in workflow metadata, and emits a warning on every
-  run. A manifest-bearing package is never rebased.
+- Russia is configured for 2022 and uses its native 2022 package values. The
+  temporary 2022-to-2021 compatibility bridge has been removed; an explicit
+  2021 run now requires a package containing genuine 2021 base-year rows.
 
 - The interface source builder still has many direct `BASE_YEAR = 2022`
   dependencies. Do not claim dynamic source builds work yet.
-- Russia’s bridge is a temporary modelling policy, not evidence that the
-  2022-only package is native 2021 data. Replace it with a reviewed 2021 package
-  before any release or source-data promotion.
 - The runtime package manifest is overwritten in the runtime input cache; this
   is acceptable for the current cache semantics, but archive metadata must later
   pin the exact package checksum/year.
@@ -238,7 +232,6 @@ researcher-edited values as `transformed` with derivation method
 `researcher_override` in exported hand-off rows. The source classification and
 original source-data year remain visible rather than being relabelled native.
 
-The current worktree also contains an uncommitted Russia registry change from
-2021 to 2022 with matching tests. Treat that as a separate policy decision:
-the change removes the temporary 2022-to-2021 compatibility bridge but must be
-reviewed and committed deliberately before this handover is considered current.
+Russia’s registry transition to 2022 is now complete. The model no longer
+renames 2022 values to 2021, and workflow metadata has no compatibility-rebase
+field. Historical source years remain represented through package provenance.

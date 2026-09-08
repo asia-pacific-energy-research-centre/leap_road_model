@@ -66,7 +66,7 @@ economies:
   16_RUS:
     name: Russia
     region: NEA
-    base_year: 2021  # Russia uses 2021 base year
+    base_year: 2022
   17_SGP:
     name: Singapore
     region: SEA
