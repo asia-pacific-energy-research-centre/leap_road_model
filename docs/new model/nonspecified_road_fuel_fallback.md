@@ -82,6 +82,30 @@ No new allocation method or dashboard code should be necessary. The mapping QA
 should surface the new non-zero source pair as unmapped so the required action
 is clear: review and add that one mapping.
 
+### Review record at 8 September 2026
+
+All ESTO road data available in the project as at 8 September 2026 was reviewed
+for fuels that have non-zero demand in the latest year but cannot be assigned to
+a detailed passenger or freight road branch. The review covered the 2025 ESTO
+vintage through 2023 and the preliminary 2026 ESTO vintage through 2024. It did
+not cover the finalised 2026 ESTO vintage, which was not yet available.
+
+Only two fuels required `Nonspecified road` treatment:
+
+| Fuel | Latest-year economies found | Evidence |
+| --- | --- | --- |
+| Kerosene (`07_06_kerosene`) | Chile (`04_CHL`) | Non-zero in 2023 in the 2025 vintage and in 2024 in the preliminary 2026 vintage. |
+| Fuel oil (`07_08_fuel_oil`) | China (`05_PRC`); Chile (`04_CHL`) in the preliminary 2026 vintage | China is non-zero in both reviewed latest-year snapshots. Chile first appears as non-zero in the preliminary 2026 latest year. |
+
+Natural gas liquids (`06.02 Natural gas liquids`) was also found under road for
+the United States (`20_USA`), but only in 2009 and 2010. It is zero in the latest
+year of both reviewed vintages. It therefore does not affect the current base
+year or projection and does not require a `Nonspecified road` mapping at this
+stage.
+
+This is a dated review result. Repeat the check when the finalised 2026 vintage
+or any later ESTO vintage is adopted.
+
 ## Required input shape
 
 The fallback should use the canonical structure expected by the initialisation
