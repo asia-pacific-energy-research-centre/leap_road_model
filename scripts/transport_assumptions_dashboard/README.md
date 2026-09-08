@@ -112,6 +112,9 @@ The validated release artifact from that run is
 `outputs\transport_assumptions_dashboards_repro_2026-09-08.zip` (32,116,046
 bytes). Its sidecar build manifest is
 `outputs\transport_assumptions_dashboards_repro_2026-09-08_manifest.json`.
+The verified ZIP is also stored beside the dashboard and input snapshot in the
+[shared Google Drive folder](https://drive.google.com/drive/folders/1GFH21NSIFS8mLZUMbt4XgdO7OmrPmtT0?usp=sharing):
+[transport_assumptions_dashboards_repro_2026-09-08.zip](https://drive.google.com/file/d/1D_fu7X9idSjijAo_bGI1T5pgKiQeOTvw/view?usp=drivesdk).
 
 ## 9th-versus-current road comparison
 
