@@ -3,6 +3,7 @@ import pytest
 
 from diagnostics.plotly_dashboard import (
     _can_plot,
+    _sales_share_with_dropdown,
     _spread_pre_vs_post_chart,
     module3_figures,
     module5_figures,
@@ -10,6 +11,37 @@ from diagnostics.plotly_dashboard import (
     write_module_pages,
 )
 from road_workflow import run_for_economy
+
+
+@pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
+def test_sales_share_chart_sums_sizes_before_fleet_average():
+    t7f = pd.DataFrame(
+        [
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "ICE", "size": "small", "sales_share": 0.10},
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "ICE", "size": "medium", "sales_share": 0.15},
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "BEV", "size": "small", "sales_share": 0.20},
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "BEV", "size": "medium", "sales_share": 0.25},
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "BEV", "size": "large", "sales_share": 0.30},
+            {"year": 2060, "vehicle_type": "Trucks", "drive_type": "ICE", "size": "medium", "sales_share": 0.30},
+            {"year": 2060, "vehicle_type": "Trucks", "drive_type": "ICE", "size": "heavy", "sales_share": 0.20},
+            {"year": 2060, "vehicle_type": "Trucks", "drive_type": "BEV", "size": "medium", "sales_share": 0.25},
+            {"year": 2060, "vehicle_type": "Trucks", "drive_type": "BEV", "size": "heavy", "sales_share": 0.25},
+            {"year": 2060, "vehicle_type": "Buses", "drive_type": "ICE", "size": None, "sales_share": 0.40},
+            {"year": 2060, "vehicle_type": "Buses", "drive_type": "BEV", "size": None, "sales_share": 0.60},
+        ]
+    )
+
+    fig = _sales_share_with_dropdown(t7f, "Sales share")
+
+    assert fig is not None
+    totals_by_view = {}
+    for trace in fig.data:
+        view = str(trace.legendgroup).split("::", 1)[0]
+        totals_by_view.setdefault(view, 0.0)
+        totals_by_view[view] += float(trace.y[0])
+    assert totals_by_view == pytest.approx(
+        {"All vehicles (fleet avg)": 100.0, "Buses": 100.0, "LPVs": 100.0, "Trucks": 100.0}
+    )
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")

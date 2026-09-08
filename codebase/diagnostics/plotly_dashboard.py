@@ -3368,7 +3368,7 @@ def _sales_share_with_dropdown(t7f: pd.DataFrame, title: str) -> "go.Figure | No
 
     fleet_avg = (
         t7f.groupby(["year", "vehicle_type", "drive_type"])["sales_share"]
-        .mean()
+        .sum()
         .unstack("drive_type", fill_value=0.0)
         .groupby(level="year")
         .mean()
@@ -3382,7 +3382,7 @@ def _sales_share_with_dropdown(t7f: pd.DataFrame, title: str) -> "go.Figure | No
             sub = t7f[t7f["vehicle_type"] == vt]
             vt_data = (
                 sub.groupby(["year", "drive_type"])["sales_share"]
-                .mean()
+                .sum()
                 .unstack("drive_type", fill_value=0.0)
                 .sort_index()
             )
