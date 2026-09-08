@@ -126,7 +126,7 @@ Stock Turnover demand method.
 | Strict export | Does a complete economy produce an import workbook? | Browser-launched `20_USA` Target + Reference run completes Modules 1--7 and writes the truck-PHEV import rows; Efuel coverage is present, with only the known unrelated reference warnings remaining. |
 | Local proof | Can a researcher do this from the hosted interface and inspect the result? | Yes. The interface sent 21,112 long rows, completed in 93.7 seconds, and exposed the workbook and timestamped QA dashboard. |
 | Synthetic LEAP test | Can the full workflow run before live branches have real IDs? | Yes. The synthetic reference contains 116 unique truck-PHEV metadata rows with `BranchID = -1`, including the three model-produced Efuel variables for both sizes and all three scenarios. |
-| Production deployment | What remains? | Create the stock-turnover branches in the target LEAP area, export its real IDs, replace the synthetic reference, and perform a disposable-area import review. |
+| Production deployment | Has the target-LEAP import been validated? | Yes. The final target-area LEAP test was user-confirmed successful on 8 September 2026. |
 
 ## Detailed reusable procedure
 
@@ -338,18 +338,17 @@ silently categorized as not needed.
 
 ### 9. Review and release as one cross-repository unit
 
-Before production activation:
+Production release status:
 
 1. retain the approved LCV-proxy marker and grade D until truck-specific
    utilisation evidence replaces it;
 2. maintain separate medium/heavy sales-share trajectories when researchers
    define size-specific policy assumptions;
-3. create or copy the two correct Transport Stock Turnover branches in the
-   target LEAP area and export their real BranchIDs;
-4. replace the synthetic `-1` reference with the target-area export;
-5. import the workbook into a disposable correct LEAP area and inspect results;
-6. update current modeller/methodology branch descriptions; and
-7. merge the paired model and interface commits together.
+3. **Complete:** create or copy the two correct Transport Stock Turnover branches
+   in the target LEAP area, export their real BranchIDs, replace the synthetic
+   `-1` reference, and perform the target-area import review;
+4. update current modeller/methodology branch descriptions; and
+5. **Complete:** merge the paired model and interface commits together.
 
 Rollback must also be paired: revert source/contract rows, regenerated static
 files, model scope/fuel rules, and LEAP reference together. Never leave the
