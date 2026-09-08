@@ -17,7 +17,11 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from modules.module5_sales_shares import _prepare_future_shares, run_module5
+from modules.module5_sales_shares import (
+    _apply_researcher_overrides,
+    _prepare_future_shares,
+    run_module5,
+)
 
 
 def _base_year_branches(scenario: str = "TGT") -> pd.DataFrame:
@@ -176,3 +180,27 @@ class TestRunModule5AliasesAndScaling:
         lcv = t7[t7["vehicle_type"].eq("LCVs")]
         assert set(lcv["drive_type"]) == {"ICE", "BEV", "PHEV"}
         assert lcv["sales_share"].sum() == pytest.approx(1.0)
+
+    def test_module1_overrides_accept_blank_numeric_size_keys(self):
+        base_shares = pd.DataFrame(
+            [
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LPVs", "drive_type": "ICE", "size": float("nan"), "sales_share": 0.80, "ev_sales_share_used": 0.0, "source_flag": "stock_proportion", "year": 2022},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LPVs", "drive_type": "BEV", "size": float("nan"), "sales_share": 0.20, "ev_sales_share_used": 0.20, "source_flag": "stock_proportion", "year": 2022},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "Trucks", "drive_type": "ICE", "size": "heavy", "sales_share": 1.0, "ev_sales_share_used": 0.0, "source_flag": "stock_proportion", "year": 2022},
+            ]
+        )
+        module1_sales_shares = pd.DataFrame(
+            [
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LPVs", "drive_type": "ICE", "size": float("nan"), "sales_share": 0.75},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "LPVs", "drive_type": "BEV", "size": float("nan"), "sales_share": 0.25},
+                {"economy": "01_AUS", "scenario": "Target", "vehicle_type": "Trucks", "drive_type": "ICE", "size": "heavy", "sales_share": 1.0},
+            ]
+        )
+
+        result = _apply_researcher_overrides(base_shares, module1_sales_shares)
+
+        lpvs = result[result["vehicle_type"].eq("LPVs")]
+        assert lpvs.set_index("drive_type")["sales_share"].to_dict() == pytest.approx(
+            {"ICE": 0.75, "BEV": 0.25}
+        )
+        assert result.loc[result["vehicle_type"].eq("Trucks"), "sales_share"].iloc[0] == 1.0

@@ -423,6 +423,16 @@ def _share_row(
 # Step 3: researcher overrides
 # ---------------------------------------------------------------------------
 
+def _row_key_tuples(df: pd.DataFrame, columns: list[str]) -> pd.Series:
+    """Build stable row keys without pandas ``DataFrame.agg`` dtype coercion."""
+    values = df.loc[:, columns].astype("string").fillna("")
+    return pd.Series(
+        list(values.itertuples(index=False, name=None)),
+        index=df.index,
+        dtype="object",
+    )
+
+
 def _apply_researcher_overrides(
     base_shares: pd.DataFrame,
     researcher_shares: pd.DataFrame,
@@ -457,13 +467,13 @@ def _apply_researcher_overrides(
         ],
         ignore_index=True,
     ).drop_duplicates()
-    complete_keys = set(complete_groups[group_cols].astype(str).agg("\u241f".join, axis=1))
+    complete_keys = set(_row_key_tuples(complete_groups, group_cols))
 
-    all_keys = set(provided_totals[group_cols].astype(str).agg("\u241f".join, axis=1))
+    all_keys = set(_row_key_tuples(provided_totals, group_cols))
     incomplete_keys = all_keys - complete_keys
     if incomplete_keys:
         incomplete_rows = provided_totals[
-            provided_totals[group_cols].astype(str).agg("\u241f".join, axis=1).isin(incomplete_keys)
+            _row_key_tuples(provided_totals, group_cols).isin(incomplete_keys)
         ]
         raise ValueError(
             "Module 1 sales-share override is incomplete for the following "
@@ -475,7 +485,7 @@ def _apply_researcher_overrides(
         )
 
     if complete_keys:
-        base_keys = base_shares[group_cols].astype(str).agg("\u241f".join, axis=1)
+        base_keys = _row_key_tuples(base_shares, group_cols)
         base_shares = base_shares[~base_keys.isin(complete_keys)].copy()
 
     merged = base_shares.merge(
@@ -491,9 +501,9 @@ def _apply_researcher_overrides(
     merged.loc[has_override, "sales_share"] = merged.loc[has_override, "researcher_share"]
     merged.loc[has_override, "source_flag"] = merged.loc[has_override, "override_source_flag"]
 
-    existing_keys = set(merged[key_cols].astype(str).agg("\u241f".join, axis=1))
+    existing_keys = set(_row_key_tuples(merged, key_cols))
     missing = researcher[
-        ~researcher[key_cols].astype(str).agg("\u241f".join, axis=1).isin(existing_keys)
+        ~_row_key_tuples(researcher, key_cols).isin(existing_keys)
     ].copy()
     if not missing.empty:
         missing["ev_sales_share_used"] = np.where(
