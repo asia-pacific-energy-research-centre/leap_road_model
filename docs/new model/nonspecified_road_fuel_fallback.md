@@ -7,11 +7,16 @@ The LEAP mappings retain a first-level demand sector named
 projection when that fuel has historical road demand but is outside the detailed
 road model's projected fuel scope.
 
-This is a proposed initialisation fallback. It is not currently implemented in
-`leap_road_model`, and no matching routing logic was found in the local
-`leap_initialisation` or `leap_mappings` code during preparation of this note.
-Implementation should therefore be verified against the then-current
-initialisation code and mappings before release.
+The maintained mapping contract in the sibling `leap_mappings` repository now
+maps this branch to aggregate road and admits two fuel pairs:
+
+- `Kerosene` / `07_06_kerosene`; and
+- `Fuel oil` / `07_08_fuel_oil`.
+
+These are currently the only historical road fuels that could not be assigned
+to passenger or freight road. The detailed road model does not project them.
+The initialisation workflow must still populate the branch with the applicable
+economy projection; the mapping does not create values by itself.
 
 ## When to use the fallback
 
@@ -29,7 +34,7 @@ Do not use this sector to absorb unexplained reconciliation residuals, duplicate
 a fuel already projected in passenger or freight road, or hide a failed detailed
 road import.
 
-## Proposed routing rule
+## Routing rule
 
 For each `(economy, scenario, fuel)`:
 
@@ -45,6 +50,37 @@ else:
 The detailed and fallback routes must be mutually exclusive. The selection
 should be made at economy/fuel/scenario level before rows are written, with a
 duplicate-energy check after assembly.
+
+## Dashboard treatment
+
+The mapping rolls `Nonspecified road` into the ordinary `Road`, `Transport`, and
+`Total final energy consumption` comparison categories. Therefore, when the
+branch contains data, the Common ESTO dashboard includes it in total road and
+fuel charts without a fuel-specific dashboard rule. It remains unallocated
+between passenger and freight and should not appear as either one.
+
+If the dashboard omits the values, check that the source export contains the
+branch/fuel pair, the mapping pipeline was rerun after the mapping change, and
+the dashboard is using the refreshed Common ESTO output.
+
+## New ESTO vintages and new road fuels
+
+The approved pair list describes the current ESTO vintage, not a permanent
+claim that kerosene and fuel oil are the only possible cases. When a 2026 or
+later ESTO vintage introduces another non-zero fuel under road that the detailed
+road model cannot assign:
+
+1. confirm that the value is genuine road demand and not a subtotal, renamed
+   product, or data error;
+2. confirm that no detailed passenger/freight road branch projects it;
+3. add the corresponding LEAP fuel pair under `Nonspecified road` in
+   `leap_mappings/config/outlook_mappings_single_axis.xlsx`;
+4. rerun the mapping pipeline and its coverage checks; and
+5. refresh the dashboard inputs.
+
+No new allocation method or dashboard code should be necessary. The mapping QA
+should surface the new non-zero source pair as unmapped so the required action
+is clear: review and add that one mapping.
 
 ## Required input shape
 
@@ -98,7 +134,7 @@ After import, compare total road energy by fuel before and after adding the
 fallback. Only the previously missing fuel should change. Passenger road and
 freight road results should remain unchanged.
 
-## Implementation work item
+## Initialisation implementation work item
 
 Implement this near the final assembly of initialisation demand projections,
 where detailed road outputs and other demand-sector series can be compared. Keep
