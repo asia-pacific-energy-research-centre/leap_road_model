@@ -14,7 +14,6 @@ from adapters.leap_expressions import (
     parse_expression_column,
 )
 from adapters import esto_inputs
-from adapters.base_year_contract import validate_package_base_year
 from adapters.combined_exports import parse_branch_path
 from adapters.road_module1_defaults import (
     _find_default_inputs_csv,
@@ -501,7 +500,7 @@ class TestModule1DefaultsSaturationUnits:
         assert loaded.loc[0, "Scale"] == "Millions"
         assert parsed.loc[0, "value"] == pytest.approx(1_250_000.0)
 
-    def test_russia_legacy_package_requires_its_actual_base_year(self, tmp_path: Path):
+    def test_russia_2022_package_rejects_a_2021_run(self, tmp_path: Path):
         economy_dir = tmp_path / "vtest" / "16RUS"
         economy_dir.mkdir(parents=True)
         pd.DataFrame([{
@@ -510,14 +509,9 @@ class TestModule1DefaultsSaturationUnits:
             "Units": "Vehicle", "2022": 100.0,
         }]).to_csv(economy_dir / "road_module1_values_16RUS.csv", index=False)
 
-        loaded = load_module1_for_economy(
-            tmp_path, economy="16_RUS", version="vtest", expected_base_year=2021,
-        )
-
-        assert "2022" in loaded["raw_leap_df"].columns
-        with pytest.raises(ValueError, match="does not contain required base-year rows"):
-            validate_package_base_year(
-                loaded["package_metadata"], 2021, package_rows=loaded["raw_leap_df"],
+        with pytest.raises(ValueError, match="No Module 1 defaults found"):
+            load_module1_for_economy(
+                tmp_path, economy="16_RUS", version="vtest", expected_base_year=2021,
             )
 
     def test_vehicle_type_stock_shares_use_only_exact_vehicle_branches(self):

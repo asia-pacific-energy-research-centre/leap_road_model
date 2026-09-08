@@ -44,6 +44,7 @@ Thumbs.db
 results/*
 plotting_output/
 intermediate_data/
+outputs/
 
 # Git requires each directory level to be explicitly un-ignored when the parent is ignored.
 !results/*/

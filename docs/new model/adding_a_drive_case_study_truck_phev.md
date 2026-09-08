@@ -5,9 +5,6 @@
 This case study verifies that the road-model pipeline can add an existing drive
 type to a new vehicle type. The example adds `PHEV` to medium and heavy trucks.
 
-The technical path was completed on the paired `codex/truck-phev-case-study`
-branches and has since been merged into both repositories' `main` branches:
-
 - the interface builds truck-PHEV inputs for all 21 economies;
 - the model retains, projects, turns over, reconciles, and exports the branches;
 - truck-specific fuel eligibility prevents the LPV/LCV gasoline rule leaking

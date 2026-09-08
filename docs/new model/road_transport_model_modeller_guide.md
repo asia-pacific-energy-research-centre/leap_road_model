@@ -84,7 +84,9 @@ python codebase\road_workflow.py 20_USA --module6-match-tolerance 0.02
 ## Module 1 data-source contract
 
 Base-year defaults are economy-specific in `codebase/config/economies.yaml`.
-Russia is configured for 2022. `--base-year` is an explicit,
+Russia was changed from its legacy 2021 treatment to 2022 so that it uses the
+same base year as the other economies and the workflow remains simpler and
+more consistent. `--base-year` is an explicit,
 auditable run override. A runtime Module 1 package may include
 `road_module1_package_manifest.json`; if it records a base year that differs
 from the run, the workflow stops before modelling. Older packages without the

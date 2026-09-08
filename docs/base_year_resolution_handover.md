@@ -232,6 +232,8 @@ researcher-edited values as `transformed` with derivation method
 `researcher_override` in exported hand-off rows. The source classification and
 original source-data year remain visible rather than being relabelled native.
 
-Russia’s registry transition to 2022 is now complete. The model no longer
+Russia’s registry transition from the legacy 2021 treatment to 2022 is now
+complete. This simplification gives Russia the same base year as the other
+economies. The model no longer
 renames 2022 values to 2021, and workflow metadata has no compatibility-rebase
 field. Historical source years remain represented through package provenance.

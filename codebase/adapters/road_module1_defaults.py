@@ -642,6 +642,10 @@ def load_road_module1_defaults(
 
     result = pd.concat(frames, ignore_index=True)
 
+    if result.empty:
+        log.info("Loaded 0 default rows from %s for base year %d", package_root, base_year)
+        return result
+
     if not include_survival_curves:
         result = result[~result["variable"].isin(["survival_rate", "vintage_share"])].copy()
 
