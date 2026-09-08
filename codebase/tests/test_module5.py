@@ -83,6 +83,42 @@ class TestPrepareFutureSharesAliases:
 
 
 class TestRunModule5AliasesAndScaling:
+    def test_preserves_sized_truck_phev_sales_shares(self):
+        base_year_branches = pd.DataFrame(
+            [
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "heavy", "drive_type": "ICE", "stock": 37.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "medium", "drive_type": "ICE", "stock": 40.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "heavy", "drive_type": "BEV", "stock": 2.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "medium", "drive_type": "BEV", "stock": 6.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "heavy", "drive_type": "PHEV", "stock": 3.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "medium", "drive_type": "PHEV", "stock": 5.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "heavy", "drive_type": "FCEV", "stock": 1.0},
+                {"economy": "20_USA", "scenario": "Target", "vehicle_type": "Trucks", "size": "medium", "drive_type": "FCEV", "stock": 2.0},
+            ]
+        )
+        future_sales_shares = pd.DataFrame(
+            [
+                {"economy": "20_USA", "scenario": "Target", "year": year, "vehicle_type": "Trucks", "size": size, "drive_type": drive, "sales_share": share}
+                for year, values in {
+                    2023: {("ICE", "heavy"): 0.35, ("ICE", "medium"): 0.37, ("BEV", "heavy"): 0.03, ("BEV", "medium"): 0.07, ("PHEV", "heavy"): 0.04, ("PHEV", "medium"): 0.08, ("FCEV", "heavy"): 0.02, ("FCEV", "medium"): 0.04},
+                    2060: {("ICE", "heavy"): 0.10, ("ICE", "medium"): 0.10, ("BEV", "heavy"): 0.18, ("BEV", "medium"): 0.22, ("PHEV", "heavy"): 0.12, ("PHEV", "medium"): 0.16, ("FCEV", "heavy"): 0.05, ("FCEV", "medium"): 0.07},
+                }.items()
+                for (drive, size), share in values.items()
+            ]
+        )
+
+        t7, t7f = run_module5(
+            base_year_branches=base_year_branches,
+            future_sales_shares=future_sales_shares,
+            economy="20_USA",
+            scenarios=["Target"],
+        )
+
+        assert set(t7.loc[t7["drive_type"].eq("PHEV"), "size"]) == {"heavy", "medium"}
+        terminal_phev = t7f[(t7f["year"] == 2060) & t7f["drive_type"].eq("PHEV")]
+        assert terminal_phev.set_index("size")["sales_share"].to_dict() == pytest.approx({"heavy": 0.12, "medium": 0.16})
+        assert t7f.groupby(["scenario", "year", "vehicle_type"])["sales_share"].sum().tolist() == pytest.approx([1.0] * 39)
+
     def test_uses_selected_base_year_for_rows_and_future_filtering(self):
         t7, t7f = run_module5(
             base_year_branches=_base_year_branches(scenario="Target"),

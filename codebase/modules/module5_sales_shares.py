@@ -2,13 +2,13 @@
 Module 5 — Vehicle sales share preparation.
 
 Produces:
-  T7_sales_shares  — base-year sales shares by vehicle type and drive.
+  T7_sales_shares  — base-year sales shares by vehicle type, drive, and size.
   T7f_future_shares — full base-year→end-year sales share trajectories,
       derived by scaling provided future shares to be consistent with the
       new base year.
 
 Input: future_sales_shares — a tidy DataFrame with columns
-    [economy, scenario, year, vehicle_type, drive_type, sales_share]
+    [economy, scenario, year, vehicle_type, drive_type, size, sales_share]
     covering years after the base year (e.g. 2023–2060). Typically loaded
     from the road_model_inputs_interface LEAP-format output via
     parse_leap_format_inputs() in road_workflow.py.
@@ -86,7 +86,7 @@ def run_module5(
     Args:
         base_year_branches: T4_base_year_branches from Module 2.
         future_sales_shares: Optional tidy DataFrame with columns
-            [economy, scenario, year, vehicle_type, drive_type, sales_share]
+            [economy, scenario, year, vehicle_type, drive_type, size, sales_share]
             covering years after the base year (e.g. 2023–2060). Produced by
             parse_leap_format_inputs() in road_workflow.py from the
             road_model_inputs_interface LEAP-format output. When None, no
@@ -183,8 +183,8 @@ def _prepare_future_shares(
     """
     Filter and fill the provided future sales shares DataFrame.
 
-    Expects columns: economy, scenario, year, vehicle_type, drive_type, sales_share.
-    Aggregates over any extra dimensions (e.g. size) by summing, then fills
+    Expects columns: economy, scenario, year, vehicle_type, drive_type, optional
+    size, sales_share. Retains size-labelled technology rows, then fills
     missing intermediate years by linear interpolation between provided points.
 
     Returns a DataFrame with those same columns covering every integer year
@@ -228,8 +228,10 @@ def _prepare_future_shares(
         log.warning("future_sales_shares contains no years after base year %d", base_year)
         return pd.DataFrame()
 
-    # Aggregate over any extra dimensions (e.g. size) — sum shares within group
-    group_cols = ["economy", "scenario", "year", "vehicle_type", "drive_type"]
+    # Preserve size-labelled technologies. Sales shares are still normalised
+    # across the whole vehicle type, so heavy and medium truck rows jointly sum
+    # to one rather than each size independently summing to one.
+    group_cols = ["economy", "scenario", "year", "vehicle_type", "drive_type", "size"]
     group_cols = [c for c in group_cols if c in df.columns]
     df = df.groupby(group_cols, as_index=False)["sales_share"].sum()
 
@@ -246,11 +248,11 @@ def _prepare_future_shares(
 
 def _fill_missing_years(df: pd.DataFrame, end_year: int) -> pd.DataFrame:
     """
-    For each (economy, scenario, vehicle_type, drive_type) group, linearly
+    For each (economy, scenario, vehicle_type, drive_type, size) group, linearly
     interpolate sales_share for any integer year between the first provided
     year and end_year that is not already present in the data.
     """
-    group_cols = ["economy", "scenario", "vehicle_type", "drive_type"]
+    group_cols = ["economy", "scenario", "vehicle_type", "drive_type", "size"]
     group_cols = [c for c in group_cols if c in df.columns]
 
     filled_parts: list[pd.DataFrame] = []
@@ -304,8 +306,11 @@ def _compute_base_year_shares(
         else:
             sub = base_df
 
+        stock_group_cols = ["vehicle_type", "drive_type"]
+        if "size" in sub.columns:
+            stock_group_cols.append("size")
         stock_by_drive = (
-            sub.groupby(["vehicle_type", "drive_type"])["stock"]
+            sub.groupby(stock_group_cols, dropna=False)["stock"]
             .sum()
             .reset_index()
         )
@@ -314,14 +319,15 @@ def _compute_base_year_shares(
             total = grp["stock"].sum()
             if total <= 0:
                 log.warning("%s %s %s: zero total stock — using equal shares", economy, scenario, vt)
-                drives = grp["drive_type"].unique()
-                for d in drives:
+                for _, tech_row in grp.iterrows():
                     rows.append(_share_row(
-                        economy, scenario, vt, d, 1 / len(drives), "stock_proportion", base_year,
+                        economy, scenario, vt, tech_row["drive_type"],
+                        1 / len(grp), "stock_proportion", base_year,
+                        size=tech_row.get("size"),
                     ))
                 continue
 
-            drive_stocks = dict(zip(grp["drive_type"], grp["stock"]))
+            drive_stocks = grp.groupby("drive_type")["stock"].sum().to_dict()
 
             # EV shares: from observed data or stock proportions
             ev_share = _resolve_ev_share_for_vehicle_type(
@@ -341,8 +347,17 @@ def _compute_base_year_shares(
                 ("ICE", ice_share), ("BEV", bev_share),
                 ("PHEV", phev_share), ("FCEV", fcev_share),
             ]:
-                if drive in drive_stocks or share > 0:
+                drive_rows = grp[grp["drive_type"].eq(drive)]
+                if drive_rows.empty and share > 0:
                     rows.append(_share_row(economy, scenario, vt, drive, share, flag, base_year))
+                    continue
+                drive_total = float(drive_rows["stock"].sum())
+                for _, tech_row in drive_rows.iterrows():
+                    size_fraction = float(tech_row["stock"]) / drive_total if drive_total > 0 else 1 / len(drive_rows)
+                    rows.append(_share_row(
+                        economy, scenario, vt, drive, share * size_fraction, flag, base_year,
+                        size=tech_row.get("size"),
+                    ))
 
     base = pd.DataFrame(rows)
     if base.empty:
@@ -387,8 +402,9 @@ def _resolve_ev_share_for_vehicle_type(
 def _share_row(
     economy: str, scenario: str, vehicle_type: str,
     drive_type: str, sales_share: float, source_flag: str, base_year: int,
+    size: str | None = None,
 ) -> dict:
-    return {
+    row = {
         "economy": economy,
         "scenario": scenario,
         "vehicle_type": vehicle_type,
@@ -398,6 +414,9 @@ def _share_row(
         "source_flag": source_flag,
         "year": base_year,
     }
+    if size is not None and not pd.isna(size):
+        row["size"] = size
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +434,8 @@ def _apply_researcher_overrides(
         return base_shares
 
     key_cols = ["economy", "scenario", "vehicle_type", "drive_type"]
+    if "size" in researcher_shares.columns:
+        key_cols.append("size")
     keep_cols = key_cols + ["sales_share"]
     if "source_flag" in researcher_shares.columns:
         keep_cols.append("source_flag")
@@ -528,7 +549,7 @@ def _scale_future_shares(
         flat_rows: list[dict[str, object]] = []
         for _, row in base_shares.iterrows():
             for yr in range(base_year, _END_YEAR + 1):
-                flat_rows.append({
+                flat_row = {
                     "economy": row.get("economy", ""),
                     "scenario": row.get("scenario", ""),
                     "year": yr,
@@ -537,7 +558,10 @@ def _scale_future_shares(
                     "sales_share": row.get("sales_share", 0.0),
                     "scaling_method": "flat_base_fallback",
                     "drive_method": "flat_base_fallback",
-                })
+                }
+                if "size" in row.index:
+                    flat_row["size"] = row["size"]
+                flat_rows.append(flat_row)
 
         return pd.DataFrame(flat_rows), pd.DataFrame()
 
@@ -551,91 +575,98 @@ def _scale_future_shares(
     for (economy, scenario, vehicle_type), base_grp in base_shares.groupby(
         ["economy", "scenario", "vehicle_type"]
     ):
-        new_base = dict(zip(base_grp["drive_type"], base_grp["sales_share"]))
-
-        # Get anchor and terminal shares from provided future data
         future_grp = future_shares[
             (future_shares["economy"] == economy)
             & (future_shares["scenario"] == scenario)
             & (future_shares["vehicle_type"] == vehicle_type)
-        ]
-        anchor_row   = future_grp[future_grp["year"] == anchor_year]
-        terminal_row = future_grp[future_grp["year"] == _END_YEAR]
-        anchor_shares   = dict(zip(anchor_row["drive_type"],   anchor_row["sales_share"]))
-        terminal_shares = dict(zip(terminal_row["drive_type"], terminal_row["sales_share"]))
+        ].copy()
+        has_size = "size" in base_grp.columns or "size" in future_grp.columns
+        if has_size:
+            base_grp["size"] = base_grp.get("size", pd.Series(pd.NA, index=base_grp.index)).fillna("")
+            future_grp["size"] = future_grp.get("size", pd.Series(pd.NA, index=future_grp.index)).fillna("")
 
-        # Build per-year series for this vehicle type
-        future_by_year: dict[int, dict[str, float]] = {}
+        key_cols = ["drive_type"] + (["size"] if has_size else [])
+        technology_keys = list({tuple(row) for row in pd.concat([base_grp[key_cols], future_grp[key_cols]]).itertuples(index=False, name=None)})
+        new_base = dict(zip(base_grp[key_cols].itertuples(index=False, name=None), base_grp["sales_share"]))
+        anchor_row = future_grp[future_grp["year"] == anchor_year]
+        terminal_row = future_grp[future_grp["year"] == _END_YEAR]
+        anchor_shares = dict(zip(anchor_row[key_cols].itertuples(index=False, name=None), anchor_row["sales_share"]))
+        terminal_shares = dict(zip(terminal_row[key_cols].itertuples(index=False, name=None), terminal_row["sales_share"]))
+
+        future_by_year: dict[int, dict[tuple[str, ...], float]] = {}
         for yr in all_years:
             yr_row = future_grp[future_grp["year"] == yr]
-            if yr_row.empty:
-                future_by_year[yr] = {d: 0.0 for d in model_drives}
-            else:
-                future_by_year[yr] = dict(zip(yr_row["drive_type"], yr_row["sales_share"]))
+            future_by_year[yr] = dict(zip(yr_row[key_cols].itertuples(index=False, name=None), yr_row["sales_share"]))
 
-        # Classify each non-ICE drive and compute per-year scaled shares.
-        # Method 3+4: shape-preserving interpolation from new_base → 9th-ed terminal.
-        #   weight(t) = (ninth(t) - anchor) / (terminal - anchor)  →  0 at anchor, 1 at end
-        #   scaled(t) = new_base + weight(t) × (terminal - new_base)
-        drive_method: dict[str, str] = {}
-        for drive in _NON_ICE:
-            anchor   = anchor_shares.get(drive, 0.0)
-            terminal = terminal_shares.get(drive, 0.0)
-            new_b    = new_base.get(drive, 0.0)
+        non_ice_keys = [key for key in technology_keys if key[0] in _NON_ICE]
+        ice_keys = [key for key in technology_keys if key[0] == "ICE"]
+        drive_method: dict[tuple[str, ...], str] = {}
+        for key in non_ice_keys:
+            anchor = anchor_shares.get(key, 0.0)
+            terminal = terminal_shares.get(key, 0.0)
+            new_b = new_base.get(key, 0.0)
             if anchor == terminal == 0.0 and new_b > 0.0:
-                drive_method[drive] = "hold_flat"       # new drive type absent from 9th ed
+                drive_method[key] = "hold_flat"
             elif abs(terminal - anchor) < 1e-9:
-                drive_method[drive] = "hold_at_base"    # flat 9th ed trajectory, no shape to follow
+                drive_method[key] = "hold_at_base"
             else:
-                drive_method[drive] = "shape_preserve"
+                drive_method[key] = "shape_preserve"
 
-        year_shares: dict[int, dict[str, float]] = {}
+        year_shares: dict[int, dict[tuple[str, ...], float]] = {}
         for yr in all_years:
             provided = future_by_year[yr]
-            scaled: dict[str, float] = {}
-            for drive in _NON_ICE:
-                anchor   = anchor_shares.get(drive, 0.0)
-                terminal = terminal_shares.get(drive, 0.0)
-                new_b    = new_base.get(drive, 0.0)
-                method_d = drive_method[drive]
-                if method_d == "hold_flat":
-                    scaled[drive] = new_b
-                elif method_d == "hold_at_base":
-                    scaled[drive] = new_b
+            scaled: dict[tuple[str, ...], float] = {}
+            for key in non_ice_keys:
+                anchor = anchor_shares.get(key, 0.0)
+                terminal = terminal_shares.get(key, 0.0)
+                new_b = new_base.get(key, 0.0)
+                if drive_method[key] in {"hold_flat", "hold_at_base"}:
+                    scaled[key] = new_b
                 else:
-                    weight = (provided.get(drive, 0.0) - anchor) / (terminal - anchor)
-                    scaled[drive] = max(0.0, new_b + weight * (terminal - new_b))
-            scaled["ICE"] = 1.0 - sum(scaled.values())
+                    weight = (provided.get(key, 0.0) - anchor) / (terminal - anchor)
+                    scaled[key] = max(0.0, new_b + weight * (terminal - new_b))
+            ice_remaining = 1.0 - sum(scaled.values())
+            provided_ice_total = sum(provided.get(key, 0.0) for key in ice_keys)
+            base_ice_total = sum(new_base.get(key, 0.0) for key in ice_keys)
+            for key in ice_keys:
+                if provided_ice_total > 0:
+                    ice_weight = provided.get(key, 0.0) / provided_ice_total
+                elif base_ice_total > 0:
+                    ice_weight = new_base.get(key, 0.0) / base_ice_total
+                else:
+                    ice_weight = 1 / len(ice_keys) if ice_keys else 0.0
+                scaled[key] = ice_remaining * ice_weight
             year_shares[yr] = scaled
 
-        # Check if ICE ever goes negative → fallback to linear interpolation
-        min_ice = min(s.get("ICE", 0.0) for s in year_shares.values())
+        min_ice = min(sum(s.get(key, 0.0) for key in ice_keys) for s in year_shares.values())
         fallback_used = min_ice < 0.0
-
         if fallback_used:
-            log.debug(
-                "%s %s %s: ICE share goes negative (%.3f) — switching to "
-                "linear-interpolate fallback",
-                economy, scenario, vehicle_type, min_ice,
-            )
-            year_shares = _linear_interpolate_fallback(
-                new_base, terminal_shares, all_years, base_year=base_year,
-            )
+            log.debug("%s %s %s: ICE share goes negative (%.3f) — switching to linear interpolation", economy, scenario, vehicle_type, min_ice)
+            year_shares = _linear_interpolate_fallback(new_base, terminal_shares, all_years, base_year=base_year)
 
         method = "linear_interpolate" if fallback_used else "shape_preserve_ice_residual"
         for yr, shares in year_shares.items():
-            for drive, share in shares.items():
-                future_rows.append({
-                    "economy":        economy,
-                    "scenario":       scenario,
-                    "year":           yr,
-                    "vehicle_type":   vehicle_type,
-                    "drive_type":     drive,
-                    "sales_share":    max(0.0, share),
+            for key, share in shares.items():
+                row = {
+                    "economy": economy,
+                    "scenario": scenario,
+                    "year": yr,
+                    "vehicle_type": vehicle_type,
+                    "drive_type": key[0],
+                    "sales_share": max(0.0, share),
                     "scaling_method": method,
-                    "drive_method":   drive_method.get(drive, method),
-                })
+                    "drive_method": drive_method.get(key, method),
+                }
+                if has_size:
+                    row["size"] = key[1] or pd.NA
+                future_rows.append(row)
 
+        new_base_by_drive = _aggregate_technology_shares(new_base)
+        terminal_by_drive = _aggregate_technology_shares(terminal_shares)
+        methods_by_drive = {
+            drive: ",".join(sorted({method for key, method in drive_method.items() if key[0] == drive})) or "n/a"
+            for drive in _NON_ICE
+        }
         flag_rows.append({
             "economy":          economy,
             "scenario":         scenario,
@@ -643,25 +674,25 @@ def _scale_future_shares(
             "fallback_used":    fallback_used,
             "min_ice_share":    min_ice,
             # New base-year shares (2022)
-            "new_base_ICE":     new_base.get("ICE",  0.0),
-            "new_base_HEV":     new_base.get("HEV",  0.0),
-            "new_base_BEV":     new_base.get("BEV",  0.0),
-            "new_base_PHEV":    new_base.get("PHEV", 0.0),
-            "new_base_EREV":    new_base.get("EREV", 0.0),
-            "new_base_FCEV":    new_base.get("FCEV", 0.0),
+            "new_base_ICE":     new_base_by_drive.get("ICE",  0.0),
+            "new_base_HEV":     new_base_by_drive.get("HEV",  0.0),
+            "new_base_BEV":     new_base_by_drive.get("BEV",  0.0),
+            "new_base_PHEV":    new_base_by_drive.get("PHEV", 0.0),
+            "new_base_EREV":    new_base_by_drive.get("EREV", 0.0),
+            "new_base_FCEV":    new_base_by_drive.get("FCEV", 0.0),
             # 9th edition terminal shares (2060)
-            "terminal_ICE":     terminal_shares.get("ICE",  0.0),
-            "terminal_HEV":     terminal_shares.get("HEV",  0.0),
-            "terminal_BEV":     terminal_shares.get("BEV",  0.0),
-            "terminal_PHEV":    terminal_shares.get("PHEV", 0.0),
-            "terminal_EREV":    terminal_shares.get("EREV", 0.0),
-            "terminal_FCEV":    terminal_shares.get("FCEV", 0.0),
+            "terminal_ICE":     terminal_by_drive.get("ICE",  0.0),
+            "terminal_HEV":     terminal_by_drive.get("HEV",  0.0),
+            "terminal_BEV":     terminal_by_drive.get("BEV",  0.0),
+            "terminal_PHEV":    terminal_by_drive.get("PHEV", 0.0),
+            "terminal_EREV":    terminal_by_drive.get("EREV", 0.0),
+            "terminal_FCEV":    terminal_by_drive.get("FCEV", 0.0),
             # Per-drive method applied
-            "method_HEV":       drive_method.get("HEV",  "n/a"),
-            "method_BEV":       drive_method.get("BEV",  "n/a"),
-            "method_PHEV":      drive_method.get("PHEV", "n/a"),
-            "method_EREV":      drive_method.get("EREV", "n/a"),
-            "method_FCEV":      drive_method.get("FCEV", "n/a"),
+            "method_HEV":       methods_by_drive["HEV"],
+            "method_BEV":       methods_by_drive["BEV"],
+            "method_PHEV":      methods_by_drive["PHEV"],
+            "method_EREV":      methods_by_drive["EREV"],
+            "method_FCEV":      methods_by_drive["FCEV"],
         })
 
     future_df = pd.DataFrame(future_rows)
@@ -677,13 +708,20 @@ def _scale_future_shares(
     return future_df, flags_df
 
 
+def _aggregate_technology_shares(shares: dict[tuple[str, ...], float]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for key, value in shares.items():
+        totals[key[0]] = totals.get(key[0], 0.0) + value
+    return totals
+
+
 def _linear_interpolate_fallback(
-    new_base: dict[str, float],
-    terminal_shares: dict[str, float],
+    new_base: dict[tuple[str, ...], float],
+    terminal_shares: dict[tuple[str, ...], float],
     all_years: list[int],
     *,
     base_year: int = 2022,
-) -> dict[int, dict[str, float]]:
+) -> dict[int, dict[tuple[str, ...], float]]:
     """
     Fallback used when shape-preserve method causes ICE to go negative.
     Linearly interpolates every drive between new_base (2022) and the
@@ -693,17 +731,18 @@ def _linear_interpolate_fallback(
         terminal_shares = new_base.copy()
 
     span = _END_YEAR - base_year
-    year_shares: dict[int, dict[str, float]] = {}
+    technology_keys = set(new_base) | set(terminal_shares)
+    year_shares: dict[int, dict[tuple[str, ...], float]] = {}
     for yr in all_years:
         t = (yr - base_year) / span if span > 0 else 1.0
-        shares: dict[str, float] = {}
-        for drive in ["ICE", "HEV", "BEV", "PHEV", "EREV", "FCEV"]:
-            b = new_base.get(drive, 0.0)
-            e = terminal_shares.get(drive, 0.0)
-            shares[drive] = max(0.0, b + t * (e - b))
+        shares: dict[tuple[str, ...], float] = {}
+        for key in technology_keys:
+            b = new_base.get(key, 0.0)
+            e = terminal_shares.get(key, 0.0)
+            shares[key] = max(0.0, b + t * (e - b))
         total = sum(shares.values())
         if total > 0:
-            shares = {d: v / total for d, v in shares.items()}
+            shares = {key: value / total for key, value in shares.items()}
         year_shares[yr] = shares
 
     return year_shares
@@ -804,7 +843,7 @@ def _plot_vehicle_type(
     left_data: dict[str, list[float]] = {d: [] for d in drives}
     for yr in future_years:
         row = provided_sub[provided_sub["year"] == yr] if not provided_sub.empty else pd.DataFrame()
-        provided_dict = dict(zip(row["drive_type"], row["sales_share"])) if not row.empty else {}
+        provided_dict = row.groupby("drive_type")["sales_share"].sum().to_dict() if not row.empty else {}
         for d in drives:
             left_data[d].append(provided_dict.get(d, 0.0))
 
@@ -818,7 +857,7 @@ def _plot_vehicle_type(
         & (base_shares["vehicle_type"] == vehicle_type)
     ] if not base_shares.empty else pd.DataFrame()
 
-    base_dict = dict(zip(base_sub["drive_type"], base_sub["sales_share"])) \
+    base_dict = base_sub.groupby("drive_type")["sales_share"].sum().to_dict() \
         if not base_sub.empty else {}
 
     bottom = 0.0
@@ -870,7 +909,7 @@ def _plot_vehicle_type(
     right_data: dict[str, list[float]] = {d: [] for d in drives}
     for yr in all_years:
         row = new_sub[new_sub["year"] == yr] if not new_sub.empty else pd.DataFrame()
-        row_dict = dict(zip(row["drive_type"], row["sales_share"])) if not row.empty else {}
+        row_dict = row.groupby("drive_type")["sales_share"].sum().to_dict() if not row.empty else {}
         for d in drives:
             right_data[d].append(row_dict.get(d, 0.0))
 

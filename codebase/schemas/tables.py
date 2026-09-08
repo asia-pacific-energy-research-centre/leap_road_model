@@ -281,19 +281,20 @@ SCHEMAS: dict[str, dict] = {
     # T7 — Base-year sales share table (Module 5 output)
     # ------------------------------------------------------------------
     "T7_sales_shares": {
-        "purpose": "Base-year sales shares by vehicle type and drive.",
-        "grain": "economy × scenario × vehicle_type × drive_type",
+        "purpose": "Base-year sales shares by vehicle type, drive, and optional size.",
+        "grain": "economy × scenario × vehicle_type × size × drive_type",
         "columns": {
             "economy":           _col("str",   True),
             "scenario":          _col("str",   True),
             "vehicle_type":      _col("str",   True),
+            "size":              _col("str",   False, "Optional technology size label"),
             "drive_type":        _col("str",   True),
-            "sales_share":       _col("float", True,  "Share of new sales (sums to 1 within vehicle_type)"),
+            "sales_share":       _col("float", True,  "Share of new sales (sums to 1 within vehicle_type across sizes)"),
             "ev_sales_share_used": _col("float", True, "EV sales share before remaining allocation"),
             "source_flag":       _col("str",   True),
         },
         "validation_rules": [
-            "sales_share sums to 1.0 within (economy, scenario, vehicle_type)",
+            "sales_share sums to 1.0 within (economy, scenario, vehicle_type), including all sizes",
             "sales_share in [0, 1]",
             "ev_sales_share_used >= 0",
         ],
