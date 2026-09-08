@@ -139,7 +139,15 @@ The actual local combined dashboard created for this comparison is:
 - economy pages: `results/qa_9th_dashboard_comparison/<economy>.html`;
 - build evidence: `results/qa_9th_dashboard_comparison/comparison_manifest.json`;
   and
-- generator: `scripts/build_9th_dashboard_with_new_model.py`.
+- comparison generator: `scripts/build_9th_dashboard_with_new_model.py`.
+
+The maintained dashboard entry point is
+`scripts/transport_assumptions_dashboard/build_transport_assumptions_dashboard.py`.
+It preserves the original domestic non-road, international and road dashboard
+generators, packages their shared review bundle, and exposes the road comparison
+as a separate `--build road-comparison` action. Its usage, input provenance, and
+package validation are documented in
+[`scripts/transport_assumptions_dashboard/README.md`](../../scripts/transport_assumptions_dashboard/README.md).
 
 The generator combines the original 9th-edition dashboard files in
 `C:\Users\Work\Downloads\9th_transport_model_dashboards\transport_dashboards`
@@ -166,9 +174,11 @@ configuration dependencies. It is stored beside the dashboard package and uses
 the same anyone-with-link read access.
 
 The updated dashboard includes comparisons with 9th-edition data. Its new-model
-series are based on the road model's defaults. They show what the current
-starting assumptions produce; they do not remove the researcher's responsibility
-to review and, where justified, change those assumptions for their economy.
+series are based on the road model's defaults and Python mirror calculations.
+They show what the current starting assumptions produce; they are not a
+substitute for a recalculated LEAP result and do not remove the researcher's
+responsibility to review and, where justified, change those assumptions for
+their economy.
 
 ## Ownership during initialisation
 
