@@ -144,9 +144,10 @@ The actual local combined dashboard created for this comparison is:
 The maintained dashboard entry point is
 `scripts/transport_assumptions_dashboard/build_transport_assumptions_dashboard.py`.
 It preserves the original domestic non-road, international and road dashboard
-generators, packages their shared review bundle, and exposes the road comparison
-as a separate `--build road-comparison` action. Its usage, input provenance, and
-package validation are documented in
+generators, packages their shared review bundle, and uses
+`--integrate-road-comparison` to replace the packaged road section with the
+road comparison. `--build road-comparison` remains available for an isolated
+comparison working folder. Its usage, input provenance, and package validation are documented in
 [`scripts/transport_assumptions_dashboard/README.md`](../../scripts/transport_assumptions_dashboard/README.md).
 
 The generator combines the original 9th-edition dashboard files in
@@ -197,10 +198,20 @@ current-model LEAP result. The 9th-edition code/configuration remains an
 external dependency retained under the original August task workspace; move it
 to a maintained shared location before that workspace is removed.
 
-The validated release ZIP is
+The validated baseline release ZIP is
 `outputs\transport_assumptions_dashboards_repro_2026-09-08.zip`, with its
 source/stage record in
 `outputs\transport_assumptions_dashboards_repro_2026-09-08_manifest.json`.
+For the distributable comparison release, use the documented
+`--integrate-road-comparison` build. It replaces the package's `road\` landing
+page and 21 economy pages with the dashed Python-mirror comparison, while
+keeping `nr\`, `intl\`, the launcher and supporting data intact. It is still
+not a calculated LEAP result.
+
+The validated integrated release ZIP is
+`outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08.zip`;
+the companion manifest is
+`outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08_manifest.json`.
 
 ## Ownership during initialisation
 

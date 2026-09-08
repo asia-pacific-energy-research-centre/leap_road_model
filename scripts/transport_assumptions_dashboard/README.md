@@ -20,16 +20,18 @@ The distributable `transport_dashboards` folder contains:
 | --- | --- | --- |
 | Domestic non-road (`nr`) | Air, rail and domestic navigation assumptions, intensity, activity and final fuels. | `nr\index.html` |
 | International (`intl`) | International aviation and shipping outputs and the assumptions/exception registry. | `intl\index.html` |
-| Road (`road`) | The original 9th-edition road outcomes, fleet transition diagnostics and explanatory assumptions for each economy. | `road\index.html` |
+| Road (`road`) | The 9th-edition road outcomes, fleet transition diagnostics, explanatory assumptions and, in an integrated release, dashed current-road-model comparison lines. | `road\index.html` |
 
 `open.html` opens the domestic non-road page first. Each dashboard is a
 self-contained HTML page and the package retains its supporting CSV/JSON files
 under `data\` for audit and reuse.
 
-The current-road-model comparison is deliberately a separate build. It uses
-`scripts\build_9th_dashboard_with_new_model.py` through this entry point to
-append dashed, current-road-model lines to a copy of the preserved 9th road
-pages. It does not alter the original three-part dashboard package.
+Use `--integrate-road-comparison` for a review release. It runs
+`scripts\build_9th_dashboard_with_new_model.py`, replaces the package's
+`road\index.html` and economy pages with the 9th-versus-current-road-model
+comparison pages, and preserves the domestic non-road, international, launcher
+and supporting-data sections. The integrated road landing page links back to
+the other two dashboard sections and to all 21 economy pages.
 
 ## Inputs and provenance
 
@@ -77,6 +79,19 @@ Build individual sections with `--build domestic-non-road`, `international`,
 or `road`. After all three have been generated, use `--build package` to
 repackage them, and `--build validate` to validate the saved package structure.
 
+For the integrated review release, add the comparison inputs and flag:
+
+```powershell
+  --integrate-road-comparison `
+  --model-root C:\path\to\new_model_all_scenarios `
+  --merged-energy C:\path\to\merged_file_energy_ALL.csv
+```
+
+Validation then requires all 21 road pages to include `new_model` rows and the
+`LEAP/new model` source marker, a comparison landing page, and the copied road
+comparison manifest/scan data. Without this flag, the command still produces
+the source-preserving original road package.
+
 ### Locally verified reproduction
 
 The following is the exact 8 September 2026 clean-build command. The input ZIP
@@ -112,6 +127,37 @@ The validated release artifact from that run is
 `outputs\transport_assumptions_dashboards_repro_2026-09-08.zip` (32,116,046
 bytes). Its sidecar build manifest is
 `outputs\transport_assumptions_dashboards_repro_2026-09-08_manifest.json`.
+
+### Integrated road-comparison release
+
+Use this command for the distributable review package. It has the same
+domestic non-road and international sections as the baseline build, but its
+`road\` section is the 9th-edition-versus-current-road-model comparison:
+
+```powershell
+python scripts\transport_assumptions_dashboard\build_transport_assumptions_dashboard.py `
+  --build all `
+  --replace `
+  --integrate-road-comparison `
+  --output C:\Users\Work\github\leap_road_model\outputs\transport_dashboard_integrated_repro_2026-09-08\build `
+  --data-dir C:\Users\Work\github\leap_road_model\outputs\transport_dashboard_repro_2026-09-08\input_snapshot\data `
+  --code-root C:\Users\Work\Documents\Codex\2026-08-12\wiht\work\transport_model_9th_edition_code\transport_model_9th_edition `
+  --international-source 'C:\Users\Work\github\leap_transport\data\archive\international_bunker_outputs_20250421 - POSTHOC CHANGES MADE.csv' `
+  --road-chart-dir C:\Users\Work\github\leap_transport\results\diagnostics\transport_results_series_comparison\charts `
+  --road-stock-dir C:\Users\Work\github\leap_transport\results\diagnostics\stock_projection_exploration `
+  --model-root C:\Users\Work\github\leap_road_model\results\qa_9th_comparison\new_model_all_scenarios `
+  --merged-energy C:\Users\Work\github\leap_initialisation\data\merged_file_energy_ALL_20251106.csv
+```
+
+The comparison lines use the current model's Python mirror outputs and are
+therefore a review aid, not calculated LEAP results. The comparison manifest,
+total-comparison scan and any stock-unit-correction record are included under
+`data\road\` in the resulting package.
+
+The validated integrated release is
+`outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08.zip`
+(39,799,212 bytes). Its source/stage manifest is
+`outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08_manifest.json`.
 The verified ZIP is also stored beside the dashboard and input snapshot in the
 [shared Google Drive folder](https://drive.google.com/drive/folders/1GFH21NSIFS8mLZUMbt4XgdO7OmrPmtT0?usp=sharing):
 [transport_assumptions_dashboards_repro_2026-09-08.zip](https://drive.google.com/file/d/1D_fu7X9idSjijAo_bGI1T5pgKiQeOTvw/view?usp=drivesdk).

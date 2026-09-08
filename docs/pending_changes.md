@@ -26,6 +26,15 @@
   a durable shared source before that workspace is removed. See
   [the dashboard README](../scripts/transport_assumptions_dashboard/README.md#locally-verified-reproduction).
 
+- [x] Integrate the 9th-edition-versus-current-road-model comparison into the
+  distributable package's `road\` section. The 8 September 2026 integrated
+  release has the comparison landing page, 21 economy pages with dashed
+  `LEAP/new model` Python-mirror lines, and copied comparison manifest/scan
+  data; its `nr\`, `intl\`, launcher and original support files are retained.
+  Package validation now requires those markers and support files when
+  `--integrate-road-comparison` is selected. The release is
+  `outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08.zip`.
+
 - [ ] Complete initialisation-side population and end-to-end testing of `Demand\Nonspecified road`. The maintained mappings now admit kerosene (`07_06_kerosene`) and fuel oil (`07_08_fuel_oil`) and include the branch in dashboard road totals, but initialisation must still write the economy projection values. Prevent duplicate detailed-plus-fallback energy and require explicit projection provenance. See [the nonspecified-road fallback design](new%20model/nonspecified_road_fuel_fallback.md).
 
 - [ ] Install and release the technically verified truck-PHEV case study, following the [truck PHEV drive-addition case study](new%20model/adding_a_drive_case_study_truck_phev.md). The LCV-derived utilisation proxy is approved while retaining grade D; truck PHEVs are confirmed as diesel-family vehicles; Biodiesel is a separate LEAP fuel leaf used as a blend share; Efuel is retained as an allowed alternative-fuel leaf; Motor gasoline and Biogasoline are excluded; medium/heavy use the same fuel scope; and every PHEV technology must use either gasoline-family or diesel-family fuels, never both. The synthetic reference and full Target + Reference workflow now pass with `BranchID = -1`. The supplied `trucks rows.xlsx` must be merged by `(Branch Path, Variable, Scenario, Region)`, not appended blindly: it contains overlapping truck rows, different expressions/units, and additional Efuel metadata. Remaining work is to create the two Transport Stock Turnover branches in the target LEAP area, export their real IDs, reconcile the supplied rows against the current template, replace the synthetic IDs, perform a disposable-area import review, decide whether Module 5 needs size-specific sales trajectories, and merge both repositories together.
