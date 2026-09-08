@@ -96,6 +96,33 @@ log = logging.getLogger(__name__)
 
 _CONFIG_DIR = pathlib.Path(__file__).parent.parent / "config"
 
+# These ESTO road fuels are intentionally projected in LEAP under
+# Demand\Nonspecified road, outside the detailed passenger/freight road model.
+_NONSPECIFIED_ROAD_FUELS = frozenset({"Kerosene", "Fuel oil"})
+
+
+def exclude_nonspecified_road_fuels_from_reconciliation(
+    esto_fuel_totals: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return the ESTO targets that belong to the detailed road model.
+
+    Kerosene and fuel oil are carried by LEAP's ``Nonspecified road`` branch,
+    so Module 6 must neither allocate them to detailed vehicle branches nor
+    report their absence there as a reconciliation failure. Unknown future
+    fuels remain in scope and will continue to surface through normal QA.
+    """
+    if esto_fuel_totals.empty or "fuel" not in esto_fuel_totals.columns:
+        return esto_fuel_totals.copy()
+
+    excluded = esto_fuel_totals["fuel"].isin(_NONSPECIFIED_ROAD_FUELS)
+    if excluded.any():
+        excluded_fuels = sorted(esto_fuel_totals.loc[excluded, "fuel"].astype(str).unique())
+        log.info(
+            "Module 6: excluding nonspecified-road fuel(s) from detailed reconciliation: %s",
+            ", ".join(excluded_fuels),
+        )
+    return esto_fuel_totals.loc[~excluded].copy().reset_index(drop=True)
+
 
 # Single-fuel drive types: device_share is always 1.0
 _SINGLE_FUEL_DRIVES = {"BEV", "FCEV"}
@@ -413,6 +440,8 @@ def run_module6(
         )
     weights = reconciliation_weights
     assert abs(sum(weights.values()) - 1.0) < 1e-6, "Reconciliation weights must sum to 1.0"
+
+    esto_fuel_totals = exclude_nonspecified_road_fuels_from_reconciliation(esto_fuel_totals)
 
     # Step 1
     branch_energy = calculate_initial_branch_energy(

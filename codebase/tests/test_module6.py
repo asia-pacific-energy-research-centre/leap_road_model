@@ -34,6 +34,7 @@ from modules.module6_reconciliation_and_leap_handoff import (
     reconcile_stock_mileage_efficiency,
     allocate_esto_fuel_to_branches,
     distribute_phev_liquid_by_esto_mix,
+    exclude_nonspecified_road_fuels_from_reconciliation,
 )
 
 
@@ -80,6 +81,22 @@ def _make_t4(*branch_dicts) -> pd.DataFrame:
 
 def _make_esto(fuels_pj: dict[str, float]) -> pd.DataFrame:
     return pd.DataFrame([{"fuel": f, "energy_pj": pj} for f, pj in fuels_pj.items()])
+
+
+def test_nonspecified_road_fuels_are_excluded_from_detailed_reconciliation():
+    esto = _make_esto({
+        "Motor gasoline": 100.0,
+        "Kerosene": 2.0,
+        "Fuel oil": 3.0,
+        "Unexpected future fuel": 4.0,
+    })
+
+    result = exclude_nonspecified_road_fuels_from_reconciliation(esto)
+
+    assert result["fuel"].tolist() == ["Motor gasoline", "Unexpected future fuel"]
+    assert esto["fuel"].tolist() == [
+        "Motor gasoline", "Kerosene", "Fuel oil", "Unexpected future fuel",
+    ]
 
 
 # ---------------------------------------------------------------------------

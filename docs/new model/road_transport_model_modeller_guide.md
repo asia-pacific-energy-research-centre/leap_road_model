@@ -946,7 +946,12 @@ Fuel eligibility is config-driven (`fuel_mappings.yaml`), not hard-coded. Key ru
 | E-fuels | ICE, HEV, PHEV, EREV | Not expected in most base years; follows ordinary liquid-fuel ICE-style branches unless a narrower reviewed rule exists |
 | Ammonia | Not assigned to road unless a reviewed branch rule exists and the code is adjusted where necessary | â€” |
 
-Any fuel present in ESTO but with no valid branch is flagged in T12.
+Any fuel present in ESTO but with no valid detailed branch is flagged in T12,
+except `Kerosene` and `Fuel oil`. Those two fuels are intentionally outside the
+detailed passenger/freight road model and are handled in LEAP under
+`Demand\Nonspecified road`, so Module 6 removes them from its reconciliation
+targets. The exception is an exact two-fuel list; an unfamiliar fuel from a new
+ESTO vintage will still be flagged for review.
 
 ### PHEV Treatment
 

@@ -18,6 +18,13 @@ to passenger or freight road. The detailed road model does not project them.
 The initialisation workflow must still populate the branch with the applicable
 economy projection; the mapping does not create values by itself.
 
+Module 6 explicitly excludes these two canonical fuel names from its detailed
+road reconciliation targets. They are therefore not allocated to passenger or
+freight vehicle branches and are not reported as unreconciled in T12 or the
+road dashboard. This exclusion is deliberately an exact two-fuel list: any new
+fuel appearing in a later ESTO vintage will still be reported by reconciliation
+QA until its classification and mapping have been reviewed.
+
 ## When to use the fallback
 
 Use `Demand\Nonspecified road` only when all of the following are true:
