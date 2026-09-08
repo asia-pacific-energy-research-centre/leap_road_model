@@ -158,6 +158,8 @@ The validated integrated release is
 `outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08.zip`
 (39,799,212 bytes). Its source/stage manifest is
 `outputs\transport_assumptions_dashboards_integrated_repro_2026-09-08_manifest.json`.
+This is the recommended review package and is available from
+[Google Drive](https://drive.google.com/file/d/1VbHmgwzZYHkXENu410k_8k2h9PSoeROJ/view?usp=drivesdk).
 The verified ZIP is also stored beside the dashboard and input snapshot in the
 [shared Google Drive folder](https://drive.google.com/drive/folders/1GFH21NSIFS8mLZUMbt4XgdO7OmrPmtT0?usp=sharing):
 [transport_assumptions_dashboards_repro_2026-09-08.zip](https://drive.google.com/file/d/1D_fu7X9idSjijAo_bGI1T5pgKiQeOTvw/view?usp=drivesdk).

@@ -169,6 +169,7 @@ The same unversioned package is available from the shared road dashboard folder:
 - [Previously shared dashboard file](https://drive.google.com/file/d/1sf4FX3UHRv4UEvCSiwnougJK6ZB4_SJX/view?usp=drive_link)
 - [Preserved 12 August dashboard input snapshot](https://drive.google.com/file/d/15ROt5VPkvaTAdVjmwGwWvNGSiG9l2YN-/view?usp=drivesdk)
 - [Verified reproducible dashboard package](https://drive.google.com/file/d/1D_fu7X9idSjijAo_bGI1T5pgKiQeOTvw/view?usp=drivesdk)
+- [Recommended integrated package with road-model comparisons](https://drive.google.com/file/d/1VbHmgwzZYHkXENu410k_8k2h9PSoeROJ/view?usp=drivesdk)
 
 The input snapshot contains the task-local domestic non-road source files and a
 manifest of the separately maintained international, road, concordance, and
