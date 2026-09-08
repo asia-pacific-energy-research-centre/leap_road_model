@@ -1199,6 +1199,12 @@ Use `multinode_road_module1_repo_guide.md` in `road_model_inputs_interface/docs/
 
 Use `transition_audit_report.md` only for historical migration context. It is not the current implementation source of truth.
 
+Use `reviewing_road_results_against_9th_edition.md` as the operational guide for
+initialisation reviewers comparing the new projection with the 9th edition. Use
+`nonspecified_road_fuel_fallback.md` for the proposed treatment of historical
+road fuels that are intentionally outside the detailed road model's projection
+scope; that fallback is a design note, not currently implemented behaviour.
+
 ## Appendix A: Road Branch Tree and Module 1 Measures
 
 This appendix summarizes the implemented road branch structure and the Module 1
