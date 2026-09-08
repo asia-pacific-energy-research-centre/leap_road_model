@@ -42,9 +42,11 @@ bunker output, or road chart/fleet diagnostics.
 The modules under `legacy/` are source-preserving copies of the original task
 `Transport dashboards · extraction fixed`
 (`019ff3d4-7e17-7510-a8c9-95b8be59cebf`, 12 August 2026). The only migration
-changes are package-relative imports and disabling their old import-time
-notebook run blocks. Do not run those modules directly; the entry point
-performs input checks and controlled packaging.
+changes to their execution are package-relative imports and disabling their old
+import-time notebook run blocks. The entry point also accepts the snapshot's
+`data` root, resolves its `raw_all` input folder, and retains the original
+economy-exceptions guidance during packaging. Do not run the modules directly;
+the entry point performs input checks and controlled packaging.
 
 ## Full original-package build
 
@@ -74,6 +76,42 @@ folder is sufficient.
 Build individual sections with `--build domestic-non-road`, `international`,
 or `road`. After all three have been generated, use `--build package` to
 repackage them, and `--build validate` to validate the saved package structure.
+
+### Locally verified reproduction
+
+The following is the exact 8 September 2026 clean-build command. The input ZIP
+must first be extracted so that `input_snapshot\data\raw_all` exists; pass the
+`data` parent, not `raw_all`, because the entry point resolves the snapshot
+layout itself. The 9th-edition code copy is retained in the original task
+workspace, while the other external inputs are maintained in `leap_transport`.
+
+```powershell
+python scripts\transport_assumptions_dashboard\build_transport_assumptions_dashboard.py `
+  --build all `
+  --replace `
+  --output C:\Users\Work\github\leap_road_model\outputs\transport_dashboard_repro_2026-09-08\build `
+  --data-dir C:\Users\Work\github\leap_road_model\outputs\transport_dashboard_repro_2026-09-08\input_snapshot\data `
+  --code-root C:\Users\Work\Documents\Codex\2026-08-12\wiht\work\transport_model_9th_edition_code\transport_model_9th_edition `
+  --international-source 'C:\Users\Work\github\leap_transport\data\archive\international_bunker_outputs_20250421 - POSTHOC CHANGES MADE.csv' `
+  --road-chart-dir C:\Users\Work\github\leap_transport\results\diagnostics\transport_results_series_comparison\charts `
+  --road-stock-dir C:\Users\Work\github\leap_transport\results\diagnostics\stock_projection_exploration
+```
+
+It generated all 21 road economy pages and the required `open.html`, domestic
+non-road, international, and road landing pages. The rebuilt package had the
+same 124 files and the same section/data counts as the preserved August bundle:
+21 road economy pages, 85 road data files, 8 domestic non-road data files, and
+5 international data files. The ZIP's structural validation also passed.
+
+This is a reproduction of the original review package, not a recalculated LEAP
+run. The external 9th-edition code copy is still a required input and should be
+relocated to a maintained shared source before the original task workspace is
+archived or removed.
+
+The validated release artifact from that run is
+`outputs\transport_assumptions_dashboards_repro_2026-09-08.zip` (32,116,046
+bytes). Its sidecar build manifest is
+`outputs\transport_assumptions_dashboards_repro_2026-09-08_manifest.json`.
 
 ## 9th-versus-current road comparison
 

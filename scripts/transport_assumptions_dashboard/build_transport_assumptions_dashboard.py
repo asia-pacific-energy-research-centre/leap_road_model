@@ -29,7 +29,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 LEGACY_DIR = SCRIPT_DIR / "legacy"
 DEFAULT_OUTPUT = REPO_ROOT / "results" / "transport_assumptions_dashboard"
-EXPECTED_PACKAGE_FILES = ("open.html", "README.txt", "nr/index.html", "intl/index.html", "road/index.html")
+EXPECTED_PACKAGE_FILES = (
+    "open.html",
+    "README.txt",
+    "nr/index.html",
+    "intl/index.html",
+    "road/index.html",
+    "data/nr/exceptions_notes.md",
+)
 
 
 def require_path(path: Path | None, description: str, *, directory: bool = False) -> Path:
@@ -75,6 +82,12 @@ def code_paths(code_root: Path) -> tuple[Path, Path]:
     return concordance, parameters
 
 
+def domestic_raw_dir(data_dir: Path) -> Path:
+    """Accept either the snapshot's data root or its raw_all input folder."""
+    raw_all = data_dir / "raw_all"
+    return raw_all if raw_all.is_dir() else data_dir
+
+
 def build_domestic_non_road(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     data_dir = require_path(args.data_dir, "domestic non-road input directory", directory=True)
     code_root = require_path(args.code_root, "9th-edition code root", directory=True)
@@ -84,7 +97,7 @@ def build_domestic_non_road(args: argparse.Namespace, root: Path) -> dict[str, A
     clean_known_directory(target, root, replace=args.replace)
     target.mkdir(parents=True, exist_ok=True)
     summary = domestic.run_all_economies_workflow(
-        raw_dir=data_dir,
+        raw_dir=domestic_raw_dir(data_dir),
         concordance_path=concordance,
         template_path=LEGACY_DIR / "dashboard_template.html",
         dashboard_fragment_path=fragment,
@@ -114,7 +127,7 @@ def build_international(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         parameters_path=parameters,
         non_road_code_path=code_root / "model_code" / "calculation_functions" / "run_non_road_model.py",
         international_code_path=code_root / "model_code" / "calculation_functions" / "international_bunkers.py",
-        domestic_raw_dir=data_dir,
+        domestic_raw_dir=domestic_raw_dir(data_dir),
         template_path=LEGACY_DIR / "international_transport_dashboard_template.html",
         fragment_path=fragment,
         output_dir=target,
@@ -169,6 +182,7 @@ def package_dashboards(output: Path, *, replace: bool, make_zip: bool) -> dict[s
         economy = source.stem.removeprefix("road_transport_assumptions_dashboard_")
         legacy_package.copy_html(source, package_dir / "road" / f"{economy}.html")
     legacy_package.copy_data_files(root / "non_road_assumptions_dashboard", package_dir / "data" / "nr", include_all=False)
+    shutil.copy2(LEGACY_DIR / "economy_exceptions_section_plan.md", package_dir / "data" / "nr" / "exceptions_notes.md")
     legacy_package.copy_data_files(root / "international_transport_assumptions_dashboard", package_dir / "data" / "intl")
     legacy_package.copy_data_files(root / "road_transport_assumptions_dashboard" / "data", package_dir / "data" / "road")
     legacy_package.write_entry_page(package_dir)

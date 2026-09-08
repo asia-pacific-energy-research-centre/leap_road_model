@@ -180,6 +180,27 @@ substitute for a recalculated LEAP result and do not remove the researcher's
 responsibility to review and, where justified, change those assumptions for
 their economy.
 
+### Original-package reproducibility check
+
+On 8 September 2026 the original domestic non-road, international and road
+package was rebuilt cleanly from the preserved input snapshot and the retained
+external 9th-edition/chart sources. The rebuilt ZIP passed integrity and
+structure checks, including `open.html`, all three landing pages, 21 road
+economy pages, and 98 supporting data files. Its package layout matched the
+preserved August bundle (124 files in total).
+
+The exact command and source locations are maintained in the [transport
+assumptions dashboard README](../../scripts/transport_assumptions_dashboard/README.md#locally-verified-reproduction).
+This validates the dashboard-generation workflow, not the calculation of a
+current-model LEAP result. The 9th-edition code/configuration remains an
+external dependency retained under the original August task workspace; move it
+to a maintained shared location before that workspace is removed.
+
+The validated release ZIP is
+`outputs\transport_assumptions_dashboards_repro_2026-09-08.zip`, with its
+source/stage record in
+`outputs\transport_assumptions_dashboards_repro_2026-09-08_manifest.json`.
+
 ## Ownership during initialisation
 
 Researchers should raise uncertain results with the road-model contact. The
