@@ -1245,7 +1245,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
             _sales_rows = _parsed_future[_parsed_future["variable"] == "sales_share"].copy()
             if not _sales_rows.empty:
                 group_cols = [c for c in
-                    ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type"]
+                    ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type", "size"]
                     if c in _sales_rows.columns]
                 _future_sales = (
                     _sales_rows.groupby(group_cols, as_index=False)["value"]
@@ -1762,7 +1762,7 @@ def _module1_future_sales_share_rows(
 
     group_cols = [
         c for c in
-        ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type"]
+        ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type", "size"]
         if c in sales_rows.columns
     ]
     return (
@@ -1796,13 +1796,17 @@ def _module1_sales_share_overrides(
     if df.empty:
         return pd.DataFrame()
 
-    group_cols = ["scenario", "vehicle_type", "drive_type"]
+    group_cols = [
+        c for c in ["scenario", "vehicle_type", "drive_type", "size"]
+        if c in df.columns
+    ]
     df = df.groupby(group_cols, as_index=False)["sales_share"].sum()
     if df["sales_share"].max() > 1.0:
         df["sales_share"] = df["sales_share"] / 100.0
     df["economy"] = economy
     df["source_flag"] = "module1_input"
-    return df[["economy", "scenario", "vehicle_type", "drive_type", "sales_share", "source_flag"]]
+    output_cols = ["economy", "scenario", "vehicle_type", "drive_type", "size", "sales_share", "source_flag"]
+    return df[[c for c in output_cols if c in df.columns]]
 
 
 def _module6_reconciliation_summary(module6_outputs: dict[str, Any]) -> list[str]:

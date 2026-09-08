@@ -67,7 +67,7 @@ diesel leaves under one technology.
 | Disabled liquid branches | `Motor gasoline`, `Biogasoline` | No; explicitly excluded |
 | Approved PHEV fuel-family rule | A PHEV technology uses either gasoline-family or diesel-family fuels, never both | Yes; required model constraint |
 | Utilisation granularity | `freight:Trucks`, using the LCV-derived economy value and older `freight` fallback | No; proxy approved with grade D retained |
-| Sales-share size handling | size inputs aggregate to truck-PHEV, then fan back by stock proportions | Confirm this is adequate for policy work |
+| Sales-share size handling | medium and heavy trajectories are preserved as separate truck-PHEV sales-share rows | No |
 | Fuel scope by size | medium and heavy use the same three fuel leaves | No; approved 31 August 2026 |
 | LEAP structure | `PHEV heavy` and `PHEV medium` transport-stock-turnover branches | Synthetic `-1`-ID template verified; actual target-area branches and IDs still required |
 
@@ -342,8 +342,8 @@ Before production activation:
 
 1. retain the approved LCV-proxy marker and grade D until truck-specific
    utilisation evidence replaces it;
-2. decide whether medium/heavy sales trajectories need a preserved size
-   dimension in Module 5;
+2. maintain separate medium/heavy sales-share trajectories when researchers
+   define size-specific policy assumptions;
 3. create or copy the two correct Transport Stock Turnover branches in the
    target LEAP area and export their real BranchIDs;
 4. replace the synthetic `-1` reference with the target-area export;

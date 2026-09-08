@@ -526,7 +526,7 @@ def _split_vehicle_turnover_to_technology(
         return sales_turnover.copy()
 
     share_cols = [
-        c for c in ["economy", "scenario", "transport_type", "vehicle_type", "drive_type", "year"]
+        c for c in ["economy", "scenario", "transport_type", "vehicle_type", "drive_type", "size", "year"]
         if c in sales_shares.columns
     ]
     share_lookup = sales_shares[share_cols + ["sales_share"]].copy()
@@ -575,7 +575,9 @@ def _split_vehicle_turnover_to_technology(
                     vt_key=vt_key,
                     year=year,
                 )
-                current_stock = current_stock + new_sales * sales_by_drive * tech_rows["_size_share"]
+                size_specific_sales = "size" in share_lookup.columns and share_lookup["size"].notna().any()
+                allocation = sales_by_drive if size_specific_sales else sales_by_drive * tech_rows["_size_share"]
+                current_stock = current_stock + new_sales * allocation
 
                 current_total = current_stock.sum()
                 if row_total_stock > 0 and current_total > 0:
@@ -598,7 +600,7 @@ def _sales_share_for_technology_rows(
     vt_key: tuple[Any, ...],
     year: int,
 ) -> pd.Series:
-    """Return one drive-level sales share per technology row."""
+    """Return one technology-level sales share per row, retaining size when supplied."""
     mask = sales_shares["year"].eq(year)
     for col, value in zip(vt_keys, vt_key):
         if col in sales_shares.columns:
@@ -609,6 +611,16 @@ def _sales_share_for_technology_rows(
         base_drive = tech_rows.groupby("drive_type")["base_stock"].sum()
         total = base_drive.sum()
         share_map = (base_drive / total).to_dict() if total > 0 else {}
+    elif "size" in year_shares.columns and "size" in tech_rows.columns:
+        share_map = (
+            year_shares.groupby(["drive_type", "size"], dropna=False)["sales_share"]
+            .sum()
+            .to_dict()
+        )
+        return pd.Series(
+            [share_map.get((row.drive_type, row.size), 0.0) for row in tech_rows.itertuples()],
+            index=tech_rows.index,
+        )
     else:
         share_map = (
             year_shares.groupby("drive_type")["sales_share"]
