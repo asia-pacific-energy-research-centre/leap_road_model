@@ -204,3 +204,25 @@ class TestRunModule5AliasesAndScaling:
             {"ICE": 0.75, "BEV": 0.25}
         )
         assert result.loc[result["vehicle_type"].eq("Trucks"), "sales_share"].iloc[0] == 1.0
+
+    def test_prepare_future_shares_preserves_unsized_vehicle_types(self):
+        future_shares = pd.DataFrame(
+            [
+                {"economy": "20_USA", "scenario": "Target", "year": 2023, "vehicle_type": "Buses", "drive_type": "ICE", "size": float("nan"), "sales_share": 0.5},
+                {"economy": "20_USA", "scenario": "Target", "year": 2023, "vehicle_type": "Buses", "drive_type": "BEV", "size": float("nan"), "sales_share": 0.5},
+                {"economy": "20_USA", "scenario": "Target", "year": 2060, "vehicle_type": "Buses", "drive_type": "ICE", "size": float("nan"), "sales_share": 0.0},
+                {"economy": "20_USA", "scenario": "Target", "year": 2060, "vehicle_type": "Buses", "drive_type": "BEV", "size": float("nan"), "sales_share": 1.0},
+                {"economy": "20_USA", "scenario": "Target", "year": 2023, "vehicle_type": "Trucks", "drive_type": "BEV", "size": "heavy", "sales_share": 0.2},
+                {"economy": "20_USA", "scenario": "Target", "year": 2060, "vehicle_type": "Trucks", "drive_type": "BEV", "size": "heavy", "sales_share": 0.9},
+            ]
+        )
+        prep = _prepare_future_shares(
+            future_shares,
+            economy="20_USA",
+            scenarios=["Target"],
+            base_year=2022,
+        )
+        assert set(prep["vehicle_type"].unique()) == {"Buses", "Trucks"}
+        buses_2060 = prep[(prep["vehicle_type"] == "Buses") & (prep["year"] == 2060)]
+        assert buses_2060.set_index("drive_type")["sales_share"].to_dict() == pytest.approx({"ICE": 0.0, "BEV": 1.0})
+

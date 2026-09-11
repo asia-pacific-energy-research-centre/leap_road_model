@@ -233,7 +233,7 @@ def _prepare_future_shares(
     # to one rather than each size independently summing to one.
     group_cols = ["economy", "scenario", "year", "vehicle_type", "drive_type", "size"]
     group_cols = [c for c in group_cols if c in df.columns]
-    df = df.groupby(group_cols, as_index=False)["sales_share"].sum()
+    df = df.groupby(group_cols, as_index=False, dropna=False)["sales_share"].sum()
 
     # Normalise within each (economy, scenario, year, vehicle_type) so shares sum to 1
     totals = df.groupby(["economy", "scenario", "year", "vehicle_type"])["sales_share"].transform("sum")
@@ -256,7 +256,7 @@ def _fill_missing_years(df: pd.DataFrame, end_year: int) -> pd.DataFrame:
     group_cols = [c for c in group_cols if c in df.columns]
 
     filled_parts: list[pd.DataFrame] = []
-    for keys, grp in df.groupby(group_cols):
+    for keys, grp in df.groupby(group_cols, dropna=False):
         grp = grp.set_index("year")["sales_share"].sort_index()
         first_year = int(grp.index.min())
         all_years = range(first_year, end_year + 1)
@@ -1047,7 +1047,7 @@ def _renormalise(
     share_col: str,
 ) -> pd.DataFrame:
     """Renormalise share_col to sum to 1 within each group."""
-    totals = df.groupby(group_cols)[share_col].transform("sum")
+    totals = df.groupby(group_cols, dropna=False)[share_col].transform("sum")
     mask = totals > 0
     df = df.copy()
     df.loc[mask, share_col] = df.loc[mask, share_col] / totals[mask]

@@ -1247,7 +1247,7 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
                     ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type", "size"]
                     if c in _sales_rows.columns]
                 _future_sales = (
-                    _sales_rows.groupby(group_cols, as_index=False)["value"]
+                    _sales_rows.groupby(group_cols, as_index=False, dropna=False)["value"]
                     .sum()
                     .rename(columns={"value": "sales_share"})
                 )
@@ -1764,7 +1764,7 @@ def _module1_future_sales_share_rows(
         if c in sales_rows.columns
     ]
     return (
-        sales_rows.groupby(group_cols, as_index=False)["value"]
+        sales_rows.groupby(group_cols, as_index=False, dropna=False)["value"]
         .sum()
         .rename(columns={"value": "sales_share"})
     )
@@ -1798,7 +1798,7 @@ def _module1_sales_share_overrides(
         c for c in ["scenario", "vehicle_type", "drive_type", "size"]
         if c in df.columns
     ]
-    df = df.groupby(group_cols, as_index=False)["sales_share"].sum()
+    df = df.groupby(group_cols, as_index=False, dropna=False)["sales_share"].sum()
     if df["sales_share"].max() > 1.0:
         df["sales_share"] = df["sales_share"] / 100.0
     df["economy"] = economy
