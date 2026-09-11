@@ -3353,11 +3353,16 @@ def _stacked_share_chart_with_dropdown(
     return fig
 
 
-def _sales_share_with_dropdown(t7f: pd.DataFrame, title: str) -> "go.Figure | None":
+def _sales_share_with_dropdown(
+    t7f: pd.DataFrame,
+    title: str,
+    stock: pd.DataFrame | None = None,
+) -> "go.Figure | None":
     """Sales share by drive type with a dropdown to filter by vehicle type.
 
-    The default view shows the fleet-average drive-type sales mix. Each subsequent
-    dropdown option shows the drive-type trajectory for a single vehicle type.
+    The default view weights each vehicle type's drive mix by its stock in the
+    same year. Each subsequent dropdown option shows the drive-type trajectory
+    for a single vehicle type.
     """
     if t7f is None or t7f.empty:
         return None
@@ -3366,20 +3371,40 @@ def _sales_share_with_dropdown(t7f: pd.DataFrame, title: str) -> "go.Figure | No
 
     grouping_defs: list[tuple[str, pd.DataFrame]] = []
 
-    fleet_avg = (
+    vehicle_drive = (
         t7f.groupby(["year", "vehicle_type", "drive_type"])["sales_share"]
         .sum()
-        .unstack("drive_type", fill_value=0.0)
-        .groupby(level="year")
-        .mean()
-        .sort_index()
+        .reset_index()
     )
-    if not fleet_avg.empty:
-        grouping_defs.append(("All vehicles (fleet avg)", fleet_avg))
+    if (
+        stock is not None
+        and not stock.empty
+        and {"year", "vehicle_type", "mirror_stock"}.issubset(stock.columns)
+    ):
+        vehicle_stock = (
+            stock.assign(mirror_stock=pd.to_numeric(stock["mirror_stock"], errors="coerce").fillna(0.0))
+            .groupby(["year", "vehicle_type"], as_index=False)["mirror_stock"]
+            .sum()
+        )
+        vehicle_stock["total_stock"] = vehicle_stock.groupby("year")["mirror_stock"].transform("sum")
+        weighted = vehicle_drive.merge(vehicle_stock, on=["year", "vehicle_type"], how="inner")
+        weighted["weighted_sales_share"] = np.where(
+            weighted["total_stock"] > 0,
+            weighted["sales_share"] * weighted["mirror_stock"] / weighted["total_stock"],
+            0.0,
+        )
+        fleet_avg = (
+            weighted.groupby(["year", "drive_type"])["weighted_sales_share"]
+            .sum()
+            .unstack("drive_type", fill_value=0.0)
+            .sort_index()
+        )
+        if not fleet_avg.empty:
+            grouping_defs.append(("All vehicles (stock weighted)", fleet_avg))
 
     if "vehicle_type" in t7f.columns:
         for vt in sorted(t7f["vehicle_type"].dropna().unique(), key=str):
-            sub = t7f[t7f["vehicle_type"] == vt]
+            sub = vehicle_drive[vehicle_drive["vehicle_type"] == vt]
             vt_data = (
                 sub.groupby(["year", "drive_type"])["sales_share"]
                 .sum()
@@ -3514,13 +3539,13 @@ def module7_figures(
             ))
 
     if t7f is not None and not t7f.empty and {"year", "drive_type", "sales_share"}.issubset(t7f.columns):
-        sales_share_fig = _sales_share_with_dropdown(t7f, "Sales share")
+        sales_share_fig = _sales_share_with_dropdown(t7f, "Sales share", stock=t13)
         if sales_share_fig is not None:
             figs.append((
                 "Sales share",
                 sales_share_fig,
                 "half",
-                "Use the dropdown to view the drive-type mix for all vehicles (fleet average) or a specific vehicle type.",
+                "Use the dropdown to view the stock-weighted drive-type mix for all vehicles or a specific vehicle type.",
             ))
 
     if not t13.empty and {"mirror_energy_pj", "leap_energy_pj", "year"}.issubset(t13.columns):

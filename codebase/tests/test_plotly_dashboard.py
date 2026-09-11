@@ -31,7 +31,18 @@ def test_sales_share_chart_sums_sizes_before_fleet_average():
         ]
     )
 
-    fig = _sales_share_with_dropdown(t7f, "Sales share")
+    stock = pd.DataFrame(
+        [
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "ICE", "mirror_stock": 25.0},
+            {"year": 2060, "vehicle_type": "LPVs", "drive_type": "BEV", "mirror_stock": 75.0},
+            {"year": 2060, "vehicle_type": "Trucks", "drive_type": "ICE", "mirror_stock": 10.0},
+            {"year": 2060, "vehicle_type": "Trucks", "drive_type": "BEV", "mirror_stock": 10.0},
+            {"year": 2060, "vehicle_type": "Buses", "drive_type": "ICE", "mirror_stock": 4.0},
+            {"year": 2060, "vehicle_type": "Buses", "drive_type": "BEV", "mirror_stock": 6.0},
+        ]
+    )
+
+    fig = _sales_share_with_dropdown(t7f, "Sales share", stock=stock)
 
     assert fig is not None
     totals_by_view = {}
@@ -40,8 +51,14 @@ def test_sales_share_chart_sums_sizes_before_fleet_average():
         totals_by_view.setdefault(view, 0.0)
         totals_by_view[view] += float(trace.y[0])
     assert totals_by_view == pytest.approx(
-        {"All vehicles (fleet avg)": 100.0, "Buses": 100.0, "LPVs": 100.0, "Trucks": 100.0}
+        {"All vehicles (stock weighted)": 100.0, "Buses": 100.0, "LPVs": 100.0, "Trucks": 100.0}
     )
+    fleet = {
+        trace.name: float(trace.y[0])
+        for trace in fig.data
+        if str(trace.legendgroup).startswith("All vehicles (stock weighted)::")
+    }
+    assert fleet == pytest.approx({"ICE": 30.0, "BEV": 70.0})
 
 
 @pytest.mark.skipif(not _can_plot(), reason="plotly not installed")
