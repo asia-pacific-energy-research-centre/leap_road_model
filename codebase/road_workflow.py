@@ -701,8 +701,8 @@ class RoadWorkflowInputs:
 
     # Module 5 input — future sales share trajectories in LEAP workbook format
     # (Branch Path, Variable="Sales Share", Scenario, Region, year columns).
-    # Produced by road_model_inputs_interface. When None, Module 5 returns
-    # base-year shares only with no future projection.
+    # Explicit caller/configured override. When None, Module 5 first uses projected
+    # Sales Share rows from the selected Module 1 package.
     future_sales_shares: pd.DataFrame | None = None
 
     # Optional Module 5 supplementary data
@@ -715,6 +715,10 @@ class RoadWorkflowInputs:
     module7_mileage_adjustment_variables: pd.DataFrame | None = None
     module7_efficiency_adjustment_variables: pd.DataFrame | None = None
     module7_scrappage_by_year: pd.DataFrame | dict[str, dict[int, float]] | None = None
+
+    # Legacy auto-discovered fallback. Kept last to preserve positional compatibility.
+    # Consulted only when no explicit override or Module 1 projections are available.
+    legacy_future_sales_shares: pd.DataFrame | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1235,27 +1239,13 @@ def run_with_config(config: RoadWorkflowConfig, inputs: RoadWorkflowInputs) -> d
         if t4 is None:
             raise ValueError("Module 5 requires T4 from Module 2")
 
-        # Parse future sales shares from LEAP format if provided
-        _future_sales: pd.DataFrame | None = None
-        if inputs.future_sales_shares is not None:
-            _parsed_future = parse_leap_format_inputs(
-                inputs.future_sales_shares,
-            )
-            _sales_rows = _parsed_future[_parsed_future["variable"] == "sales_share"].copy()
-            if not _sales_rows.empty:
-                group_cols = [c for c in
-                    ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type", "size"]
-                    if c in _sales_rows.columns]
-                _future_sales = (
-                    _sales_rows.groupby(group_cols, as_index=False, dropna=False)["value"]
-                    .sum()
-                    .rename(columns={"value": "sales_share"})
-                )
-        else:
-            _future_sales = _module1_future_sales_share_rows(
-                m1["raw_leap_df"],
-                base_year=config.base_year,
-            )
+        _future_sales, _future_sales_source = _select_future_sales_share_rows(
+            explicit_table=inputs.future_sales_shares,
+            module1_table=m1["raw_leap_df"],
+            legacy_fallback_table=inputs.legacy_future_sales_shares,
+            base_year=config.base_year,
+        )
+        logger.info("module5_future_sales_source", source=_future_sales_source)
         _module1_sales_shares = _module1_sales_share_overrides(
             _merged,
             economy=config.economy,
@@ -1770,6 +1760,50 @@ def _module1_future_sales_share_rows(
     )
 
 
+def _parse_future_sales_share_rows(table: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Parse a LEAP-format future sales-share table for Module 5."""
+    if table is None or table.empty:
+        return None
+
+    parsed = parse_leap_format_inputs(table)
+    sales_rows = parsed[parsed["variable"] == "sales_share"].copy()
+    if sales_rows.empty:
+        return None
+
+    group_cols = [
+        c for c in
+        ["economy", "scenario", "year", "transport_type", "vehicle_type", "drive_type", "size"]
+        if c in sales_rows.columns
+    ]
+    return (
+        sales_rows.groupby(group_cols, as_index=False, dropna=False)["value"]
+        .sum()
+        .rename(columns={"value": "sales_share"})
+    )
+
+
+def _select_future_sales_share_rows(
+    *,
+    explicit_table: pd.DataFrame | None,
+    module1_table: pd.DataFrame,
+    legacy_fallback_table: pd.DataFrame | None,
+    base_year: int,
+) -> tuple[pd.DataFrame | None, str]:
+    """Select future shares using explicit, Module 1, then legacy precedence."""
+    if explicit_table is not None:
+        return _parse_future_sales_share_rows(explicit_table), "explicit"
+
+    module1_rows = _module1_future_sales_share_rows(module1_table, base_year=base_year)
+    if not module1_rows.empty:
+        return module1_rows, "module1"
+
+    legacy_rows = _parse_future_sales_share_rows(legacy_fallback_table)
+    if legacy_rows is not None:
+        return legacy_rows, "legacy_fallback"
+
+    return None, "none"
+
+
 def _module1_sales_share_overrides(
     module1_inputs: pd.DataFrame,
     economy: str,
@@ -1949,7 +1983,14 @@ def _canonical_long_to_leap_wide(df: pd.DataFrame) -> pd.DataFrame:
     return wide
 
 
-def _candidate_future_sales_paths(repo_root: Path, economy: str, scenario: str) -> list[Path]:
+def _candidate_future_sales_paths(
+    repo_root: Path,
+    economy: str,
+    scenario: str,
+    *,
+    include_environment: bool = True,
+    include_standard: bool = True,
+) -> list[Path]:
     """Build candidate file paths for convenience auto-loading."""
     compact = economy.replace("_", "")
     candidates: list[Path] = []
@@ -1962,35 +2003,9 @@ def _candidate_future_sales_paths(repo_root: Path, economy: str, scenario: str) 
     _seen_labels: set[str] = set()
     scenario_labels = [s for s in scenario_labels if not (s in _seen_labels or _seen_labels.add(s))]
 
-    # Primary deterministic source: leap_transport domestic exports.
-    # This is the same upstream source used for other road assumptions.
-    leap_transport_root = repo_root.parent / "leap_transport" / "results" / "domestic_exports"
-    for scen in scenario_labels:
-        candidates.append(leap_transport_root / f"{economy}_transport_leap_export_{scen}.xlsx")
-
-    # Local convention inside leap_road_model
-    local_dir = repo_root / "input_data" / "future_sales_shares"
-    for stem in (economy, compact):
-        candidates.extend([
-            local_dir / f"{stem}.csv",
-            local_dir / f"{stem}.xlsx",
-            local_dir / f"{stem}.json",
-            local_dir / f"future_sales_shares_{stem}.csv",
-            local_dir / f"future_sales_shares_{stem}.xlsx",
-            local_dir / f"future_sales_shares_{stem}.json",
-        ])
-
-    # Sibling road_model_inputs_interface static bundle convention
-    static_root = repo_root.parent / "road_model_inputs_interface" / "front-end" / "road-module1-static"
-    if static_root.exists():
-        candidates.extend(sorted(static_root.glob(f"*/{compact}.json"), reverse=True))
-        candidates.extend(sorted(static_root.glob(f"*/{economy}.json"), reverse=True))
-        candidates.extend(sorted(static_root.glob(f"*/{compact}.csv"), reverse=True))
-        candidates.extend(sorted(static_root.glob(f"*/{economy}.csv"), reverse=True))
-
     # Optional explicit path(s) from environment.
     # Supports placeholders {economy} and {economy_compact}.
-    env_paths = os.getenv("ROAD_MODEL_FUTURE_SALES_SHARES_PATH", "").strip()
+    env_paths = os.getenv("ROAD_MODEL_FUTURE_SALES_SHARES_PATH", "").strip() if include_environment else ""
     if env_paths:
         for token in env_paths.split(os.pathsep):
             token = token.strip()
@@ -2011,6 +2026,33 @@ def _candidate_future_sales_paths(repo_root: Path, economy: str, scenario: str) 
             else:
                 candidates.append(p)
 
+    if include_standard:
+        # Generated interface package fallback. The selected Module 1 package is
+        # checked before these candidates are consulted.
+        static_root = repo_root.parent / "road_model_inputs_interface" / "front-end" / "road-module1-static"
+        if static_root.exists():
+            candidates.extend(sorted(static_root.glob(f"*/{compact}.json"), reverse=True))
+            candidates.extend(sorted(static_root.glob(f"*/{economy}.json"), reverse=True))
+            candidates.extend(sorted(static_root.glob(f"*/{compact}.csv"), reverse=True))
+            candidates.extend(sorted(static_root.glob(f"*/{economy}.csv"), reverse=True))
+
+        # Local legacy convention inside leap_road_model.
+        local_dir = repo_root / "input_data" / "future_sales_shares"
+        for stem in (economy, compact):
+            candidates.extend([
+                local_dir / f"{stem}.csv",
+                local_dir / f"{stem}.xlsx",
+                local_dir / f"{stem}.json",
+                local_dir / f"future_sales_shares_{stem}.csv",
+                local_dir / f"future_sales_shares_{stem}.xlsx",
+                local_dir / f"future_sales_shares_{stem}.json",
+            ])
+
+        # Old upstream exports are retained only as the last compatibility fallback.
+        leap_transport_root = repo_root.parent / "leap_transport" / "results" / "domestic_exports"
+        for scen in scenario_labels:
+            candidates.append(leap_transport_root / f"{economy}_transport_leap_export_{scen}.xlsx")
+
     # Stable de-dup, preserve order
     seen: set[Path] = set()
     ordered: list[Path] = []
@@ -2027,6 +2069,8 @@ def _autodiscover_future_sales_shares(
     economy: str,
     base_year: int,
     scenario: str = "Target",
+    include_environment: bool = True,
+    include_standard: bool = True,
 ) -> tuple[pd.DataFrame | None, Path | None]:
     """Try to find and load a future-sales-share LEAP table for one economy."""
     if os.getenv("ROAD_MODEL_DISABLE_AUTO_FUTURE_SALES_SHARES", "").strip() in {"1", "true", "True"}:
@@ -2036,6 +2080,8 @@ def _autodiscover_future_sales_shares(
         repo_root=repo_root,
         economy=economy,
         scenario=scenario,
+        include_environment=include_environment,
+        include_standard=include_standard,
     ):
         if not path.exists() or not path.is_file():
             continue
@@ -2155,9 +2201,10 @@ def run_for_economy(
         future_sales_shares:   Optional LEAP-format future sales-share table
                                (Branch Path / Variable / Scenario / Region + year cols).
         auto_load_future_sales_shares:
-                               If True and future_sales_shares is None, attempt to
-                               auto-discover a future sales-share input file. Defaults
-                               to workflow_defaults.yaml.
+                               If True and future_sales_shares is None, honor a
+                               configured environment path, then discover a legacy
+                               fallback used only when Module 1 has no projections.
+                               Defaults to workflow_defaults.yaml.
         workflow_config_path:  Optional YAML file with workflow defaults.
         esto_csv:              Explicit ESTO table for historical road energy and
                                base-year fuel reconciliation. Defaults to the
@@ -2233,23 +2280,37 @@ def run_for_economy(
         config_kwargs["module1_defaults_dir"] = _resolve_repo_relative_path(config_kwargs["module1_defaults_dir"])
     config = RoadWorkflowConfig(**config_kwargs)
 
-    auto_source: Path | None = None
+    explicit_auto_source: Path | None = None
+    legacy_auto_source: Path | None = None
+    legacy_future_sales_shares: pd.DataFrame | None = None
     if future_sales_shares is None and auto_load_future_sales_shares:
-        future_sales_shares, auto_source = _autodiscover_future_sales_shares(
+        future_sales_shares, explicit_auto_source = _autodiscover_future_sales_shares(
             repo_root=_repo_root,
             economy=economy,
             base_year=base_year,
             scenario=scenario,
+            include_environment=True,
+            include_standard=False,
         )
+        if future_sales_shares is None:
+            legacy_future_sales_shares, legacy_auto_source = _autodiscover_future_sales_shares(
+                repo_root=_repo_root,
+                economy=economy,
+                base_year=base_year,
+                scenario=scenario,
+                include_environment=False,
+                include_standard=True,
+            )
 
-    if auto_source is not None:
-        print(f"[road_workflow] Auto-loaded future sales shares from: {auto_source}")
+    if explicit_auto_source is not None:
+        print(f"[road_workflow] Loaded configured future sales shares from: {explicit_auto_source}")
 
     inputs = RoadWorkflowInputs(
         population=population,
         gdp=gdp,
         esto_road_energy_pj=esto_road_energy,
         future_sales_shares=future_sales_shares,
+        legacy_future_sales_shares=legacy_future_sales_shares,
         esto_fuel_totals=esto_fuel_totals,
     )
     return run_with_config(config, inputs)

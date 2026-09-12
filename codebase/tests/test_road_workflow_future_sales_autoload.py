@@ -9,6 +9,7 @@ from road_workflow import (
     _autodiscover_future_sales_shares,
     _candidate_future_sales_paths,
     _module1_future_sales_share_rows,
+    _select_future_sales_share_rows,
 )
 
 
@@ -85,9 +86,14 @@ def test_autodiscover_finds_static_json_with_future_years(tmp_path: Path, monkey
     assert "2030" in df.columns
 
 
-def test_candidate_paths_prioritise_leap_transport_domestic_export(tmp_path: Path) -> None:
+def test_candidate_paths_put_interface_before_leap_transport(tmp_path: Path, monkeypatch) -> None:
     repo_root = tmp_path / "leap_road_model"
     repo_root.mkdir(parents=True)
+    static_dir = tmp_path / "road_model_inputs_interface" / "front-end" / "road-module1-static" / "v1"
+    static_dir.mkdir(parents=True)
+    static_file = static_dir / "20USA.csv"
+    static_file.touch()
+    monkeypatch.delenv("ROAD_MODEL_FUTURE_SALES_SHARES_PATH", raising=False)
 
     candidates = _candidate_future_sales_paths(
         repo_root=repo_root,
@@ -95,15 +101,91 @@ def test_candidate_paths_prioritise_leap_transport_domestic_export(tmp_path: Pat
         scenario="Target",
     )
 
-    assert candidates, "Expected at least one candidate path"
-    expected = (
-        tmp_path
-        / "leap_transport"
-        / "results"
-        / "domestic_exports"
+    leap_transport_file = (
+        tmp_path / "leap_transport" / "results" / "domestic_exports"
         / "20_USA_transport_leap_export_Target.xlsx"
     )
-    assert candidates[0] == expected
+    assert candidates.index(static_file) < candidates.index(leap_transport_file)
+
+
+def test_candidate_paths_prioritise_configured_environment_path(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "leap_road_model"
+    repo_root.mkdir(parents=True)
+    configured = tmp_path / "configured_20_USA.csv"
+    monkeypatch.setenv(
+        "ROAD_MODEL_FUTURE_SALES_SHARES_PATH",
+        str(tmp_path / "configured_{economy}.csv"),
+    )
+
+    candidates = _candidate_future_sales_paths(
+        repo_root=repo_root,
+        economy="20_USA",
+        scenario="Target",
+    )
+
+    assert candidates[0] == configured
+
+
+def test_module1_future_sales_rows_beat_legacy_fallback() -> None:
+    module1 = pd.DataFrame([_future_sales_row(year_col="2060")])
+    legacy = pd.DataFrame([{**_future_sales_row(year_col="2060"), "2060": 99.0}])
+
+    selected, source = _select_future_sales_share_rows(
+        explicit_table=None,
+        module1_table=module1,
+        legacy_fallback_table=legacy,
+        base_year=2022,
+    )
+
+    assert source == "module1"
+    assert selected is not None
+    assert selected.loc[selected["year"].eq(2060), "sales_share"].iloc[0] == 25.0
+
+
+def test_explicit_future_sales_rows_beat_module1() -> None:
+    explicit = pd.DataFrame([{**_future_sales_row(year_col="2060"), "2060": 10.0}])
+    module1 = pd.DataFrame([_future_sales_row(year_col="2060")])
+
+    selected, source = _select_future_sales_share_rows(
+        explicit_table=explicit,
+        module1_table=module1,
+        legacy_fallback_table=None,
+        base_year=2022,
+    )
+
+    assert source == "explicit"
+    assert selected is not None
+    assert selected.loc[selected["year"].eq(2060), "sales_share"].iloc[0] == 10.0
+
+
+def test_empty_explicit_table_does_not_silently_fall_back() -> None:
+    module1 = pd.DataFrame([_future_sales_row(year_col="2060")])
+
+    selected, source = _select_future_sales_share_rows(
+        explicit_table=pd.DataFrame(),
+        module1_table=module1,
+        legacy_fallback_table=None,
+        base_year=2022,
+    )
+
+    assert source == "explicit"
+    assert selected is None
+
+
+def test_legacy_future_sales_rows_are_used_when_module1_has_no_projection() -> None:
+    module1 = pd.DataFrame([_future_sales_row(year_col="2022")])
+    legacy = pd.DataFrame([{**_future_sales_row(year_col="2060"), "2060": 40.0}])
+
+    selected, source = _select_future_sales_share_rows(
+        explicit_table=None,
+        module1_table=module1,
+        legacy_fallback_table=legacy,
+        base_year=2022,
+    )
+
+    assert source == "legacy_fallback"
+    assert selected is not None
+    assert selected.loc[selected["year"].eq(2060), "sales_share"].iloc[0] == 40.0
 
 
 def test_module1_long_rows_feed_future_sales_share_projection() -> None:
